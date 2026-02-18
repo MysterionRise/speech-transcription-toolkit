@@ -88,7 +88,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        # Note: Python 3.12 blocked by openai-whisper==20240930 (uses pkg_resources without setuptools build dep)
+        python-version: ['3.10', '3.11']
 
     steps:
     - uses: actions/checkout@v4
@@ -114,7 +115,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip setuptools
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
       timeout-minutes: 30
