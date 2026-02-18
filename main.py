@@ -26,6 +26,7 @@ List available backends and models:
     python main.py --list-models --backend voxtral
 
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,7 +49,7 @@ except ModuleNotFoundError:  # pragma: no cover
 ###############################################################################
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # pragma: no cover
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="transcribe",
         description="Transcribe audio with multiple backend support (Whisper, Voxtral) "
@@ -205,6 +206,9 @@ def merge_diarization(
 
     output: List[Dict[str, Any]] = []
     for seg in transcription_result.get("segments", []):
+        if "start" not in seg or "end" not in seg:
+            output.append({**seg, "speaker": "unknown"})
+            continue
         mid = (seg["start"] + seg["end"]) / 2.0
         speaker_id = "unknown"
         for s_start, s_end, label in indexed:
@@ -224,15 +228,15 @@ def write_outputs(result: Dict[str, Any], args: argparse.Namespace) -> None:  # 
     """Write transcript/plain text and optional JSON to disk or stdout."""
     if args.diarize and "speaker_segments" in result:
         # Pretty print with speaker labels
-        lines: List[str] = []
+        parts: List[str] = []
         current_spk: Optional[str] = None
         for seg in result["speaker_segments"]:
             spk = seg["speaker"]
             if spk != current_spk:
-                lines.append(f"\n[{spk}] ")
+                parts.append(f"\n[{spk}]")
                 current_spk = spk
-            lines.append(seg["text"].strip())
-        transcript = " ".join(lines).strip()
+            parts.append(seg["text"].strip())
+        transcript = " ".join(parts).strip()
     else:
         transcript = result.get("text", "").strip()
 

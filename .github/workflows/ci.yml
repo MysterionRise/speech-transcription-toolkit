@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.10', '3.11', '3.12']
 
     steps:
     - uses: actions/checkout@v4
@@ -171,7 +171,7 @@ jobs:
       timeout-minutes: 10
 
     - name: Run mypy (static type checking)
-      run: mypy main.py convert.py --ignore-missing-imports --no-strict-optional
+      run: mypy main.py convert.py backends/ --ignore-missing-imports --no-strict-optional
 
   integration-test:
     name: Integration Tests

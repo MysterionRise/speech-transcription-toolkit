@@ -37,4 +37,4 @@ per-file-ignores =
 
 # Import order
 import-order-style = google
-application-import-names = whisper_danger_zone
+application-import-names = backends,main,convert

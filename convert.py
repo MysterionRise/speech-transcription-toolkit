@@ -16,6 +16,7 @@ Convert an entire folder into ./wav, resampling to 16 kHz mono:
 Overwrite existing WAVs:
     python convert.py *.ogg --overwrite
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,7 @@ from pydub import AudioSegment  # type: ignore  # requires ffmpeg in PATH
 ###############################################################################
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:  # pragma: no cover
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="prepare-audio",
         description="Convert .ogg/opus files to WAV for Whisper/ASR.",
@@ -96,6 +97,9 @@ def convert_file(
     overwrite: bool = False,
 ) -> None:
     """Convert *src* OGG to WAV with requested parameters."""
+    if rate <= 0:
+        raise ValueError(f"Sample rate must be positive, got {rate}")
+
     dest_dir = outdir if outdir is not None else src.parent
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{src.stem}.wav"

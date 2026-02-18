@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Tests for convert.py audio conversion functionality."""
+
 from __future__ import annotations
 
 import pathlib
-import tempfile
 from typing import List
 from unittest.mock import MagicMock, patch
 
@@ -249,6 +249,17 @@ class TestConvertFile:
         captured = capsys.readouterr()
         assert "Failed to convert" in captured.err
         assert "Corrupt audio file" in captured.err
+
+    def test_convert_file_rejects_invalid_rate(self, tmp_path: pathlib.Path):
+        """Test that zero or negative sample rate raises ValueError."""
+        src = tmp_path / "input.ogg"
+        src.touch()
+
+        with pytest.raises(ValueError, match="Sample rate must be positive"):
+            convert_file(src, None, 0, 1)
+
+        with pytest.raises(ValueError, match="Sample rate must be positive"):
+            convert_file(src, None, -16000, 1)
 
 
 class TestIntegration:

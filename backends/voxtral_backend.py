@@ -185,8 +185,6 @@ class VoxtralBackend(TranscriptionBackend):
             RuntimeError: If no model is loaded.
             FileNotFoundError: If audio file doesn't exist.
         """
-        self._check_dependencies()
-
         if self._pipe is None:
             raise RuntimeError("No model loaded. Call load_model() first.")
 
@@ -194,7 +192,7 @@ class VoxtralBackend(TranscriptionBackend):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Load audio with librosa (resamples to 16kHz)
-        audio, sr = librosa.load(str(audio_path), sr=16000)
+        audio, _sr = librosa.load(str(audio_path), sr=16000)
 
         # Build generation kwargs
         generate_kwargs: Dict[str, Any] = {}

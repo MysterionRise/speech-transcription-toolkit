@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for main.py speech-to-text functionality."""
+
 from __future__ import annotations
 
 import json
@@ -97,6 +98,11 @@ class TestParseArgs:
         args = parse_args(["--list-models", "--backend", "voxtral"])
         assert args.list_models is True
         assert args.backend == "voxtral"
+
+    def test_parse_args_no_audio_raises_error(self):
+        """Test that missing audio argument (without --list-* flags) raises SystemExit."""
+        with pytest.raises(SystemExit):
+            parse_args([])
 
 
 class TestMergeDiarization:
@@ -221,6 +227,23 @@ class TestMergeDiarization:
         result = merge_diarization(transcription_result, [(0.0, 1.0, "SPEAKER_00")])
 
         assert len(result) == 0
+
+    def test_merge_malformed_segment_missing_timestamps(self):
+        """Test that segments missing start/end are labeled 'unknown' instead of crashing."""
+        transcription_result: Dict[str, Any] = {
+            "segments": [
+                {"text": "no timestamps"},
+                {"start": 0.0, "end": 2.0, "text": "has timestamps"},
+            ]
+        }
+        spk_segments = [(0.0, 5.0, "SPEAKER_00")]
+
+        result = merge_diarization(transcription_result, spk_segments)
+
+        assert len(result) == 2
+        assert result[0]["speaker"] == "unknown"
+        assert result[0]["text"] == "no timestamps"
+        assert result[1]["speaker"] == "SPEAKER_00"
 
 
 class TestWriteOutputs:

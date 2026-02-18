@@ -1,6 +1,7 @@
 """Tests for the pluggable backend system."""
 
 import pathlib
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from backends import (
     register_backend,
 )
 from backends.base import TranscriptionBackend as BaseBackend
+from backends.voxtral_backend import VoxtralBackend
 from backends.whisper_backend import WhisperBackend
 
 
@@ -109,8 +111,9 @@ class TestBackendRegistry:
         """Test that default backend is whisper."""
         assert DEFAULT_BACKEND == "whisper"
 
-    def test_register_custom_backend(self):
+    def test_register_custom_backend(self, monkeypatch):
         """Test registering a custom backend."""
+        from backends import _BACKENDS
 
         class CustomBackend(TranscriptionBackend):
             name = "custom"
@@ -126,11 +129,48 @@ class TestBackendRegistry:
             def transcribe(self, audio_path, language=None, task="transcribe", verbose=True):
                 return TranscriptionResult(text="custom", segments=[])
 
+        monkeypatch.setattr("backends._BACKENDS", {**_BACKENDS})
+
         register_backend("custom_test", CustomBackend)
         assert "custom_test" in list_backends()
 
         backend = get_backend("custom_test")
         assert isinstance(backend, CustomBackend)
+
+    def test_register_backend_rejects_non_subclass(self):
+        """Test that registering a non-TranscriptionBackend class raises TypeError."""
+        with pytest.raises(TypeError, match="must be a subclass"):
+            register_backend("bad", str)  # type: ignore
+
+    def test_register_backend_rejects_duplicate(self):
+        """Test that registering over an existing backend raises ValueError."""
+        from backends.whisper_backend import WhisperBackend
+
+        with pytest.raises(ValueError, match="already registered"):
+            register_backend("whisper", WhisperBackend)
+
+    def test_register_backend_force_overwrite(self, monkeypatch):
+        """Test that force=True allows overwriting an existing backend."""
+        from backends import _BACKENDS
+
+        monkeypatch.setattr("backends._BACKENDS", {**_BACKENDS})
+
+        class AltWhisper(TranscriptionBackend):
+            name = "alt_whisper"
+            description = "Alternative"
+
+            @classmethod
+            def available_models(cls):
+                return ["model1"]
+
+            def load_model(self, model_name, device=None):
+                pass
+
+            def transcribe(self, audio_path, language=None, task="transcribe", verbose=True):
+                return TranscriptionResult(text="", segments=[])
+
+        register_backend("whisper", AltWhisper, force=True)
+        assert get_backend_class("whisper") is AltWhisper
 
 
 class TestWhisperBackend:
@@ -296,6 +336,84 @@ class TestWhisperBackend:
         assert call_kwargs["task"] == "translate"
 
 
+class TestVoxtralBackend:
+    """Tests for VoxtralBackend."""
+
+    def test_available_models(self):
+        """Test available models list."""
+        models = VoxtralBackend.available_models()
+        assert "voxtral-mini" in models
+        assert "voxtral-small" in models
+
+    def test_default_model(self):
+        """Test default model is voxtral-mini."""
+        assert VoxtralBackend.default_model() == "voxtral-mini"
+
+    def test_backend_properties_before_load(self):
+        """Test backend properties before model is loaded."""
+        backend = VoxtralBackend()
+        assert backend.is_loaded is False
+        assert backend.model_name is None
+        assert backend.device is None
+
+    @patch("backends.voxtral_backend._HAS_TORCH", False)
+    def test_check_dependencies_missing_torch(self):
+        """Test dependency check raises ImportError when torch is missing."""
+        with pytest.raises(ImportError, match="torch"):
+            VoxtralBackend._check_dependencies()
+
+    @patch("backends.voxtral_backend._HAS_TRANSFORMERS", False)
+    def test_check_dependencies_missing_transformers(self):
+        """Test dependency check raises ImportError when transformers is missing."""
+        with pytest.raises(ImportError, match="transformers"):
+            VoxtralBackend._check_dependencies()
+
+    @patch("backends.voxtral_backend._HAS_LIBROSA", False)
+    def test_check_dependencies_missing_librosa(self):
+        """Test dependency check raises ImportError when librosa is missing."""
+        with pytest.raises(ImportError, match="librosa"):
+            VoxtralBackend._check_dependencies()
+
+    def test_load_model_invalid(self):
+        """Test loading invalid model raises error."""
+        backend = VoxtralBackend()
+        with pytest.raises((ValueError, ImportError)):
+            backend.load_model("invalid_model")
+
+    def test_transcribe_without_model(self):
+        """Test transcribing without loading model raises error."""
+        backend = VoxtralBackend()
+        backend._pipe = None
+        with pytest.raises((RuntimeError, ImportError)):
+            backend.transcribe(pathlib.Path("audio.mp3"))
+
+    @patch("backends.voxtral_backend._HAS_TORCH", True)
+    @patch("backends.voxtral_backend._HAS_TRANSFORMERS", True)
+    @patch("backends.voxtral_backend._HAS_LIBROSA", True)
+    def test_load_model_no_hf_token_warns(self):
+        """Test that loading a model without HF token emits a warning."""
+        import backends.voxtral_backend as vmod
+
+        mock_model_cls = MagicMock()
+        mock_model_cls.from_pretrained.side_effect = RuntimeError("no token")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.float32 = "float32"
+
+        backend = VoxtralBackend()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(vmod, "torch", mock_torch),
+            patch.object(vmod, "AutoModelForSpeechSeq2Seq", mock_model_cls, create=True),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            warnings.simplefilter("always")
+            with pytest.raises(RuntimeError):
+                backend.load_model("voxtral-mini")
+            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
+            assert any("No Hugging Face token" in str(x.message) for x in user_warnings)
+
+
 class TestBaseBackend:
     """Tests for base TranscriptionBackend class."""
 
@@ -322,3 +440,17 @@ class TestBaseBackend:
                 return TranscriptionResult(text="", segments=[])
 
         assert EmptyBackend.default_model() == ""
+
+    def test_to_dict_standard_fields_override_raw(self):
+        """Test that standardized fields take priority over raw data in to_dict()."""
+        result = TranscriptionResult(
+            text="standardized text",
+            segments=[{"start": 0.0, "end": 1.0, "text": "clean"}],
+            language="en",
+            raw={"text": "RAW", "segments": [{"raw": True}], "language": "xx", "extra": "data"},
+        )
+        d = result.to_dict()
+        assert d["text"] == "standardized text"
+        assert d["segments"] == [{"start": 0.0, "end": 1.0, "text": "clean"}]
+        assert d["language"] == "en"
+        assert d["extra"] == "data"

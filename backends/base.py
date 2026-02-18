@@ -36,10 +36,10 @@ class TranscriptionResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            "text": self.text,
+            **self.raw,  # Backend-specific fields first
+            "text": self.text,  # Standardized fields override raw
             "segments": self.segments,
             "language": self.language,
-            **self.raw,  # Include any backend-specific fields
         }
 
 

@@ -79,12 +79,17 @@ def get_backend_class(name: str) -> Type[TranscriptionBackend]:
     return _BACKENDS[name]
 
 
-def register_backend(name: str, backend_class: Type[TranscriptionBackend]) -> None:
+def register_backend(name: str, backend_class: Type[TranscriptionBackend], *, force: bool = False) -> None:
     """Register a custom backend.
 
     Args:
         name: Name to register the backend under.
-        backend_class: The backend class to register.
+        backend_class: The backend class to register (must subclass TranscriptionBackend).
+        force: If True, allow overwriting an existing backend.
+
+    Raises:
+        TypeError: If backend_class is not a subclass of TranscriptionBackend.
+        ValueError: If name is already registered and force is False.
 
     Example:
         from backends import register_backend
@@ -92,6 +97,10 @@ def register_backend(name: str, backend_class: Type[TranscriptionBackend]) -> No
 
         register_backend("custom", MyBackend)
     """
+    if not (isinstance(backend_class, type) and issubclass(backend_class, TranscriptionBackend)):
+        raise TypeError(f"backend_class must be a subclass of TranscriptionBackend, got {backend_class}")
+    if name in _BACKENDS and not force:
+        raise ValueError(f"Backend '{name}' is already registered. Use force=True to overwrite.")
     _BACKENDS[name] = backend_class
 
 
