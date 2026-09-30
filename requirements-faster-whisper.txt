@@ -1,0 +1,2 @@
+# faster-whisper backend (-b faster-whisper); does not need torch
+faster-whisper>=1.2

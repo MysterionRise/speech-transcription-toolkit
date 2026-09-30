@@ -1,6 +1,6 @@
 [tool.black]
 line-length = 120
-target-version = ['py310', 'py311', 'py312']
+target-version = ['py310']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -60,19 +60,15 @@ module = "tests.*"
 ignore_errors = true
 
 [tool.pytest.ini_options]
-# Pytest configuration (duplicated from pytest.ini for compatibility)
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = [
-    "--verbose",
     "--strict-markers",
     "--tb=short",
     "--cov=.",
     "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
     "--cov-branch",
 ]
 
@@ -83,7 +79,6 @@ omit = [
     "setup.py",
     ".venv/*",
     "venv/*",
-    "backends/voxtral_backend.py",  # Optional backend requiring torch/transformers/librosa
 ]
 
 [tool.coverage.report]

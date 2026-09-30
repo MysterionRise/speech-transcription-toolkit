@@ -1,4 +1,5 @@
-# Development and testing dependencies for speech-transcription-toolkit
+# Development and testing tools. Unit tests mock the model libraries,
+# so they run with just this file (no torch needed).
 
 # Pre-commit hooks
 pre-commit>=3.6.0
@@ -9,6 +10,10 @@ pytest-cov==6.0.0
 pytest-mock==3.14.0
 pytest-xdist==3.6.1  # Parallel test execution
 
+# Imported by convert.py
+pydub>=0.25.1
+audioop-lts>=0.2.1; python_version >= "3.13"
+
 # Code quality
 black==24.10.0
 flake8==7.1.1
@@ -16,8 +21,4 @@ isort==5.13.2
 mypy==1.13.0
 
 # Security scanning
-bandit==1.8.0
-safety==3.2.11
-
-# Type stubs
-types-requests==2.32.0.20241016
+bandit[toml]==1.9.4
