@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import pathlib
-from typing import List
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from convert import collect_ogg_files, convert_file, parse_args
+from convert import collect_ogg_files, convert_file, main, parse_args
 
 
 class TestParseArgs:
@@ -59,8 +58,7 @@ class TestCollectOggFiles:
         ogg_file.touch()
 
         result = collect_ogg_files([ogg_file])
-        assert len(result) == 1
-        assert result[0] == ogg_file
+        assert result == [(ogg_file, pathlib.Path("test.ogg"))]
 
     def test_collect_from_directory(self, tmp_path: pathlib.Path):
         """Test collecting OGG files from a directory."""
@@ -71,7 +69,7 @@ class TestCollectOggFiles:
 
         result = collect_ogg_files([tmp_path])
         assert len(result) == 2
-        assert all(f.suffix == ".ogg" for f in result)
+        assert all(f.suffix == ".ogg" for f, _ in result)
 
     def test_collect_recursive(self, tmp_path: pathlib.Path):
         """Test recursive collection from nested directories."""
@@ -82,7 +80,7 @@ class TestCollectOggFiles:
         (subdir / "nested.ogg").touch()
 
         result = collect_ogg_files([tmp_path])
-        assert len(result) == 2
+        assert [relative for _, relative in result] == [pathlib.Path("root.ogg"), pathlib.Path("subdir/nested.ogg")]
 
     def test_collect_mixed_inputs(self, tmp_path: pathlib.Path):
         """Test collecting from both files and directories."""
@@ -97,12 +95,22 @@ class TestCollectOggFiles:
         assert len(result) == 2
 
     def test_collect_case_insensitive(self, tmp_path: pathlib.Path):
-        """Test OGG file collection with different case extensions."""
-        upper = tmp_path / "upper.OGG"
-        upper.touch()
+        """Test OGG file collection with any extension case, each file listed once."""
+        for name in ("upper.OGG", "mixed.oGg", "title.Ogg"):
+            (tmp_path / name).touch()
 
         result = collect_ogg_files([tmp_path])
-        assert len(result) == 1
+        assert sorted(f.name for f, _ in result) == ["mixed.oGg", "title.Ogg", "upper.OGG"]
+
+    def test_collect_opus_and_oga(self, tmp_path: pathlib.Path):
+        """Opus and .oga files are OGG containers too."""
+        (tmp_path / "voice.opus").touch()
+        (tmp_path / "old.oga").touch()
+        explicit = tmp_path / "note.OPUS"
+        explicit.touch()
+
+        result = collect_ogg_files([tmp_path, explicit])
+        assert sorted(f.name for f, _ in result) == ["note.OPUS", "old.oga", "voice.opus"]
 
     def test_collect_non_ogg_file_warning(self, tmp_path: pathlib.Path, capsys):
         """Test warning message for non-OGG files."""
@@ -244,7 +252,7 @@ class TestConvertFile:
         # Simulate conversion error
         mock_audio_segment.from_file.side_effect = Exception("Corrupt audio file")
 
-        convert_file(src, None, 16000, 1)
+        assert convert_file(src, None, 16000, 1) is False
 
         captured = capsys.readouterr()
         assert "Failed to convert" in captured.err
@@ -287,8 +295,66 @@ class TestIntegration:
 
         # Convert all files
         outdir = tmp_path / "output"
-        for ogg_file in ogg_files:
-            convert_file(ogg_file, outdir, 16000, 1)
+        for ogg_file, relative in ogg_files:
+            assert convert_file(ogg_file, outdir, 16000, 1, relative=relative) is True
 
         # Verify conversion was called for each file
         assert mock_audio_segment.from_file.call_count == 2
+
+
+def _mock_audio(mock_audio_segment: MagicMock) -> MagicMock:
+    """Make AudioSegment.from_file(...).set_*(...) chain back to one mock audio object."""
+    mock_audio = MagicMock()
+    mock_audio_segment.from_file.return_value = mock_audio
+    mock_audio.set_frame_rate.return_value = mock_audio
+    mock_audio.set_channels.return_value = mock_audio
+    mock_audio.set_sample_width.return_value = mock_audio
+    return mock_audio
+
+
+class TestOutputTree:
+    """--outdir mirrors sub-folders so same-named files don't overwrite each other."""
+
+    @patch("convert.AudioSegment")
+    def test_same_name_in_different_folders(self, mock_audio_segment, tmp_path: pathlib.Path):
+        mock_audio = _mock_audio(mock_audio_segment)
+        for folder in ("day1", "day2"):
+            (tmp_path / "in" / folder).mkdir(parents=True)
+            (tmp_path / "in" / folder / "talk.ogg").touch()
+        outdir = tmp_path / "out"
+
+        for src, relative in collect_ogg_files([tmp_path / "in"]):
+            convert_file(src, outdir, 16000, 1, relative=relative)
+
+        exported = [call.args[0] for call in mock_audio.export.call_args_list]
+        assert exported == [outdir / "day1" / "talk.wav", outdir / "day2" / "talk.wav"]
+
+
+class TestMain:
+    """Test the convert.py entry point."""
+
+    @patch("convert.AudioSegment")
+    def test_main_converts_files(self, mock_audio_segment, tmp_path: pathlib.Path):
+        mock_audio = _mock_audio(mock_audio_segment)
+        (tmp_path / "a.opus").touch()
+
+        main([str(tmp_path), "--outdir", str(tmp_path / "wav")])
+
+        mock_audio.export.assert_called_once_with(tmp_path / "wav" / "a.wav", format="wav")
+
+    @patch("convert.AudioSegment")
+    def test_main_exits_non_zero_on_failure(self, mock_audio_segment, tmp_path: pathlib.Path):
+        mock_audio_segment.from_file.side_effect = Exception("Corrupt audio file")
+        (tmp_path / "a.ogg").touch()
+
+        with pytest.raises(SystemExit, match="1 of 1 files failed"):
+            main([str(tmp_path)])
+
+    def test_main_no_files(self, tmp_path: pathlib.Path):
+        with pytest.raises(SystemExit, match="No .ogg/.opus files found"):
+            main([str(tmp_path)])
+
+    @pytest.mark.parametrize("rate", ["0", "-8000", "abc"])
+    def test_main_rejects_bad_rate(self, rate):
+        with pytest.raises(SystemExit):
+            parse_args(["a.ogg", "--rate", rate])
