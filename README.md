@@ -20,13 +20,13 @@ pip install -r requirements-diarize.txt          # optional: speaker labels
 ## Usage
 
 ```bash
-python main.py audio.mp3                         # transcript to stdout
-python main.py audio.mp3 -o audio.srt            # subtitles; format from extension (txt, srt, vtt, json)
-python main.py recordings/ --outdir out -f vtt   # every audio file in a folder
-python main.py audio.mp3 -m large-v3 -l de       # another model, known language
-python main.py audio.mp3 -t translate            # translate to English
-python main.py audio.mp3 -b faster-whisper       # faster, especially on CPU
-python main.py --list-backends                   # backends and their models
+python main.py audio.mp3                           # transcript to stdout
+python main.py audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json)
+python main.py recordings/ --outdir out -f vtt     # every audio file in a folder
+python main.py audio.mp3 -m large-v3 -l de         # another model, known language
+python main.py audio.mp3 -t translate -m large-v3  # translate to English (turbo can't translate)
+python main.py audio.mp3 -b faster-whisper         # faster, especially on CPU
+python main.py --list-backends                     # backends and their models
 ```
 
 Progress goes to stderr, so `python main.py a.mp3 > a.txt` gives a clean file (`-q` hides progress). See `python main.py --help` for all options.

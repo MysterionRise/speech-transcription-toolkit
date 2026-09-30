@@ -563,7 +563,7 @@ class FakeBackend(TranscriptionBackend):
 
     @classmethod
     def available_models(cls):
-        return ["small"]
+        return ["small", "turbo"]
 
     def load_model(self, model_name, device=None):
         if model_name not in self.available_models():
@@ -704,6 +704,15 @@ class TestMain:
         main.main([str(audio), "-b", "fake", "-m", "small", "-q", "--diarize"])
 
         assert capsys.readouterr().out == "[SPEAKER_00] Hello from talk.\n"
+
+    @pytest.mark.parametrize("model, warned", [("turbo", True), ("small", False)])
+    def test_translate_with_turbo_warns(self, fake_backend, tmp_path, capsys, model, warned):
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+
+        main.main([str(audio), "-b", "fake", "-m", model, "-t", "translate", "-q"])
+
+        assert ("isn't trained for translation" in capsys.readouterr().err) is warned
 
     def test_list_flags(self, capsys):
         main.main(["--list-backends"])

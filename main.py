@@ -40,6 +40,8 @@ from media import MEDIA_EXTENSIONS, collect_files
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 SAMPLE_RATE = 16000
+# Whisper's turbo weights weren't trained for translation: they return the original language.
+TURBO_MODELS = ("turbo", "large-v3-turbo")
 
 # Errors that fail one file without stopping the rest of a batch.
 FILE_ERRORS = (OSError, RuntimeError, ValueError)
@@ -176,6 +178,12 @@ def load_backend(args: argparse.Namespace) -> TranscriptionBackend:
     """Create the selected backend and load its model (backend default if --model is not given)."""
     backend = get_backend(args.backend)
     model_name = args.model or get_backend_class(args.backend).default_model()
+    if args.task == "translate" and model_name in TURBO_MODELS:
+        print(
+            f"Warning: '{model_name}' isn't trained for translation and keeps the original language; "
+            "use -m medium or -m large-v3.",
+            file=sys.stderr,
+        )
     if not args.quiet:
         print(f"Loading {args.backend} model '{model_name}'...", file=sys.stderr)
     backend.load_model(model_name, device=args.device)
