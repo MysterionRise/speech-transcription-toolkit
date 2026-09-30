@@ -1,89 +1,93 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Speech-to-text CLI with optional speaker diarization.
+"""Offline speech-to-text CLI with optional speaker diarization.
 
-This script provides a unified CLI for speech-to-text transcription using
-multiple backends (Whisper, Voxtral) with optional speaker diarization
-via pyannote.audio.
+Transcribes audio/video with a pluggable backend (Whisper, faster-whisper, Voxtral) and can
+label speakers with pyannote.audio. Nothing is sent to a cloud API.
 
 Examples
 --------
-Transcribe with Whisper (default):
+Transcript to stdout (Whisper turbo by default):
     python main.py audio.mp3
 
-Transcribe with Voxtral Mini:
-    python main.py audio.mp3 --backend voxtral --model voxtral-mini
+Subtitles, format taken from the file extension:
+    python main.py audio.mp3 -o audio.srt
 
-Full diarization (requires `pyannote.audio` >=2.1):
-    python main.py audio.mp3 --diarize --hf-token $HUGGINGFACE_TOKEN
+Every audio file in a folder, one .vtt per file:
+    python main.py recordings/ --outdir subs -f vtt
 
-Write combined transcript to a file while saving the raw JSON:
-    python main.py audio.mp3 -o transcript.txt --json result.json --diarize
+Other backends:
+    python main.py audio.mp3 -b faster-whisper -m small
+    python main.py audio.mp3 -b voxtral
 
-List available backends and models:
-    python main.py --list-backends
-    python main.py --list-models
-    python main.py --list-models --backend voxtral
-
+Speaker labels (needs requirements-diarize.txt and a Hugging Face token):
+    python main.py meeting.wav --diarize --num-speakers 3
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import contextlib
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter
+from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple
 
-from backends import DEFAULT_BACKEND, get_backend, get_backend_class, list_backends
+from backends import DEFAULT_BACKEND, TranscriptionBackend, get_backend, get_backend_class, list_backends
+from formats import FORMATS, format_for_path, render, to_json
+from media import MEDIA_EXTENSIONS, collect_files
 
-# ``pyannote.audio`` is only required for diarization. Keep it optional.
-try:
-    from pyannote.audio import Pipeline  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    Pipeline = None  # type: ignore
+DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+SAMPLE_RATE = 16000
+
+# Errors that fail one file without stopping the rest of a batch.
+FILE_ERRORS = (OSError, RuntimeError, ValueError)
+
+Job = Tuple[pathlib.Path, Optional[pathlib.Path]]  # (input file, output file or None for stdout)
 
 ###############################################################################
 # Argument parsing
 ###############################################################################
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def positive_int(value: str) -> int:
+    """argparse type for integers greater than zero."""
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return number
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="transcribe",
-        description="Transcribe audio with multiple backend support (Whisper, Voxtral) "
-        "and optional speaker diarization.",
+        description="Transcribe audio offline with Whisper, faster-whisper or Voxtral, "
+        "optionally labelling speakers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s audio.mp3                          # Transcribe with Whisper (default)
-  %(prog)s audio.mp3 --backend voxtral        # Use Voxtral backend
-  %(prog)s audio.mp3 -m large --diarize       # Large model with speaker labels
-  %(prog)s --list-backends                    # Show available backends
-  %(prog)s --list-models --backend voxtral    # Show Voxtral models
+  %(prog)s audio.mp3                          # transcript to stdout
+  %(prog)s audio.mp3 -o audio.srt             # subtitles (format from extension)
+  %(prog)s recordings/ --outdir subs -f vtt   # every audio file in a folder
+  %(prog)s audio.mp3 -b faster-whisper -m small
+  %(prog)s meeting.wav --diarize --num-speakers 3
+  %(prog)s --list-models --backend voxtral
 """,
     )
 
-    # Positional audio path (optional if using --list-* flags)
-    parser.add_argument("audio", type=pathlib.Path, nargs="?", help="Path to the input audio/video file.")
+    # Positional inputs (optional when using --list-* flags)
+    parser.add_argument("audio", type=pathlib.Path, nargs="*", help="Audio/video files or folders to transcribe.")
 
-    # Backend selection
+    # Backend and model
     parser.add_argument(
         "-b",
         "--backend",
         default=DEFAULT_BACKEND,
-        help=f"Transcription backend to use (default: {DEFAULT_BACKEND}). " f"Available: {', '.join(list_backends())}",
+        help=f"Transcription backend (default: {DEFAULT_BACKEND}). Available: {', '.join(list_backends())}",
     )
-
-    # Model options
-    parser.add_argument(
-        "-m",
-        "--model",
-        default=None,
-        help="Model name/size. If not specified, uses backend's default model.",
-    )
-    parser.add_argument("-l", "--language", default=None, help="Language code spoken in the audio (e.g., 'en', 'es').")
+    parser.add_argument("-m", "--model", default=None, help="Model name/size (default: the backend's default).")
+    parser.add_argument("-l", "--language", default=None, help="Language code, e.g. 'en' (default: auto-detect).")
     parser.add_argument(
         "-t",
         "--task",
@@ -91,81 +95,111 @@ Examples:
         default="transcribe",
         help="'transcribe' or 'translate' to English (default: transcribe).",
     )
-    parser.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (cpu/cuda).")
-    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output.")
-
-    # Speaker diarization
-    parser.add_argument("--diarize", action="store_true", help="Run speaker diarization with pyannote.audio.")
+    parser.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
     parser.add_argument(
         "--hf-token",
         metavar="TOKEN",
-        help="Hugging Face access token for downloading models. "
-        "If omitted, uses HUGGINGFACE_TOKEN environment variable.",
+        help="Hugging Face token for model downloads (default: HF_TOKEN or HUGGINGFACE_TOKEN env var).",
     )
+    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output.")
 
-    # Output paths
-    parser.add_argument("-o", "--output", type=pathlib.Path, help="Write plain transcript to file.")
-    parser.add_argument("--json", type=pathlib.Path, help="Write full result as JSON.")
+    # Output
+    output = parser.add_argument_group("output")
+    output.add_argument("-o", "--output", type=pathlib.Path, help="Write the transcript to this file, not stdout.")
+    output.add_argument(
+        "-f", "--format", choices=FORMATS, help="Output format (default: from the --output extension, else txt)."
+    )
+    output.add_argument("--outdir", type=pathlib.Path, help="Write one file per input into this folder.")
+    output.add_argument("--json", type=pathlib.Path, help="Also write the full result as JSON to this file.")
+
+    # Speaker diarization
+    diarization = parser.add_argument_group("speaker diarization")
+    diarization.add_argument("--diarize", action="store_true", help="Label speakers with pyannote.audio.")
+    diarization.add_argument("--num-speakers", type=positive_int, help="Exact number of speakers, if known.")
+    diarization.add_argument("--min-speakers", type=positive_int, help="Minimum number of speakers.")
+    diarization.add_argument("--max-speakers", type=positive_int, help="Maximum number of speakers.")
 
     # Information flags
-    parser.add_argument("--list-backends", action="store_true", help="List available transcription backends and exit.")
-    parser.add_argument("--list-models", action="store_true", help="List available models for the selected backend.")
+    info = parser.add_argument_group("information")
+    info.add_argument("--list-backends", action="store_true", help="List available backends and exit.")
+    info.add_argument("--list-models", action="store_true", help="List models for the selected backend and exit.")
 
     args = parser.parse_args(argv)
-
-    # Validate: audio is required unless using --list-* flags
-    if not args.list_backends and not args.list_models and args.audio is None:
-        parser.error("the following arguments are required: audio")
-
+    if not (args.list_backends or args.list_models):
+        _validate_args(parser, args)
     return args
 
 
+def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject option combinations that can't work (exits via parser.error)."""
+    if not args.audio:
+        parser.error("the following arguments are required: audio")
+    if (args.output or args.json) and is_batch(args):
+        parser.error("--output and --json take a single input file; use --outdir for several files")
+    if (args.num_speakers or args.min_speakers or args.max_speakers) and not args.diarize:
+        parser.error("--num-speakers, --min-speakers and --max-speakers need --diarize")
+
+
+def is_batch(args: argparse.Namespace) -> bool:
+    """Batch mode writes one output file per input instead of printing a single transcript."""
+    return args.outdir is not None or len(args.audio) > 1 or args.audio[0].is_dir()
+
+
+def plan_outputs(args: argparse.Namespace, fmt: str) -> List[Job]:
+    """Pair every input file with the file its transcript goes to (None means stdout)."""
+    if not is_batch(args):
+        return [(args.audio[0], args.output)]
+
+    files = collect_files(args.audio, MEDIA_EXTENSIONS)
+    targets = [(args.outdir / rel if args.outdir else src).with_suffix(f".{fmt}") for src, rel in files]
+    # talk.mp3 and talk.wav would both become talk.<fmt>; keep the full name for those.
+    counts = Counter(targets)
+    targets = [t.with_name(f"{src.name}.{fmt}") if counts[t] > 1 else t for (src, _), t in zip(files, targets)]
+    if len(set(targets)) < len(targets):
+        sys.exit("Error: several inputs would write the same output file; rename them or use one --outdir per folder.")
+    return [(src, target) for (src, _), target in zip(files, targets)]
+
+
 ###############################################################################
-# Backend-agnostic transcription
+# Transcription
 ###############################################################################
 
 
-def run_transcription(args: argparse.Namespace) -> Dict[str, Any]:  # pragma: no cover
-    """Run transcription using the selected backend.
+def configure_hf_token(cli_token: Optional[str]) -> None:
+    """Expose the Hugging Face token as HF_TOKEN, which huggingface_hub uses for every model download."""
+    token = cli_token or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    if token:
+        os.environ["HF_TOKEN"] = token
 
-    Args:
-        args: Parsed command-line arguments.
 
-    Returns:
-        Dict containing at minimum 'text' and 'segments' keys.
-    """
-    if not args.audio.exists():
-        sys.exit(f"Error: audio file '{args.audio}' does not exist.")
-
-    # Get and configure backend
-    try:
-        backend = get_backend(args.backend)
-    except ValueError as e:
-        sys.exit(f"Error: {e}")
-
-    # Determine model (use backend's default if not specified)
+def load_backend(args: argparse.Namespace) -> TranscriptionBackend:
+    """Create the selected backend and load its model (backend default if --model is not given)."""
+    backend = get_backend(args.backend)
     model_name = args.model or get_backend_class(args.backend).default_model()
+    if not args.quiet:
+        print(f"Loading {args.backend} model '{model_name}'...", file=sys.stderr)
+    backend.load_model(model_name, device=args.device)
+    return backend
 
-    # Load model
-    try:
-        if not args.quiet:
-            print(f"Loading {args.backend} model '{model_name}'...", file=sys.stderr)
-        backend.load_model(model_name, device=args.device)
-    except (ValueError, RuntimeError, ImportError) as e:
-        sys.exit(f"Error loading model: {e}")
 
-    # Run transcription
-    try:
-        result = backend.transcribe(
-            audio_path=args.audio,
-            language=args.language,
-            task=args.task,
-            verbose=not args.quiet,
+def transcribe_file(
+    backend: TranscriptionBackend, audio: pathlib.Path, args: argparse.Namespace, pipeline: Any = None
+) -> Dict[str, Any]:
+    """Transcribe one file and, if a diarization pipeline is given, attach speaker labels."""
+    result = backend.transcribe(
+        audio_path=audio, language=args.language, task=args.task, verbose=not args.quiet
+    ).to_dict()
+
+    if pipeline is not None:
+        turns = diarize_audio(
+            audio,
+            pipeline,
+            num_speakers=args.num_speakers,
+            min_speakers=args.min_speakers,
+            max_speakers=args.max_speakers,
         )
-    except (FileNotFoundError, RuntimeError) as e:
-        sys.exit(f"Error during transcription: {e}")
-
-    return result.to_dict()
+        result["speaker_segments"] = merge_diarization(result, turns)
+    return result
 
 
 ###############################################################################
@@ -173,50 +207,80 @@ def run_transcription(args: argparse.Namespace) -> Dict[str, Any]:  # pragma: no
 ###############################################################################
 
 
-def load_diarization_pipeline(token: Optional[str]) -> "Pipeline":  # type: ignore  # pragma: no cover
-    """Load the PyAnnote speaker-diarization pipeline (lazy)."""
-    if Pipeline is None:
-        sys.exit("pyannote.audio is not installed. Install with 'pip install pyannote.audio'.")
+def load_diarization_pipeline(device: Optional[str] = None) -> Any:
+    """Load the pyannote speaker-diarization pipeline (imported lazily: it is slow to import)."""
+    # pyannote.audio 4 sends usage metrics to pyannote.ai by default; stay offline unless the user opted in.
+    os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+    try:
+        import torch
+        from pyannote.audio import Pipeline
+    except ImportError as e:
+        raise ImportError(
+            f"speaker diarization needs pyannote.audio ({e}). Install with: pip install -r requirements-diarize.txt"
+        ) from e
 
-    auth_token = token or os.getenv("HUGGINGFACE_TOKEN")
-    if auth_token is None:
-        print("Warning: No HF token provided. May fail for private models.", file=sys.stderr)
+    pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=os.getenv("HF_TOKEN"))
+    if pipeline is None:  # pyannote returns None when the gated model can't be downloaded
+        raise RuntimeError(
+            f"could not download '{DIARIZATION_MODEL}'. Accept its terms at https://hf.co/{DIARIZATION_MODEL} "
+            "and set HF_TOKEN (or pass --hf-token)."
+        )
+    pipeline.to(torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu")))
+    return pipeline
 
-    # Using the official pretrained pipeline released under Apache-2.0.
-    return Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=auth_token)  # type: ignore
 
-
-def diarize_audio(audio_path: pathlib.Path, pipeline: "Pipeline") -> List[Tuple[float, float, str]]:  # type: ignore  # pragma: no cover
+def diarize_audio(
+    audio_path: pathlib.Path,
+    pipeline: Any,
+    num_speakers: Optional[int] = None,
+    min_speakers: Optional[int] = None,
+    max_speakers: Optional[int] = None,
+) -> List[Tuple[float, float, str]]:
     """Return list of (start, end, speaker_label)."""
-    diarization = pipeline(str(audio_path))  # returns "pyannote.core.Annotation"
+    import torch
+    from whisper import load_audio
 
-    segments: List[Tuple[float, float, str]] = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        segments.append((turn.start, turn.end, speaker))
-    return segments
+    # Decode with ffmpeg here so pyannote needs no audio I/O backend of its own, whatever the format.
+    waveform = torch.from_numpy(load_audio(str(audio_path), sr=SAMPLE_RATE)).unsqueeze(0)
+    output = pipeline(
+        {"waveform": waveform, "sample_rate": SAMPLE_RATE},
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+    )
+    # pyannote 4 returns both variants; the "exclusive" one has no overlapping turns, which suits transcripts.
+    annotation = getattr(output, "exclusive_speaker_diarization", output)
+    return [(turn.start, turn.end, speaker) for turn, _, speaker in annotation.itertracks(yield_label=True)]
 
 
 def merge_diarization(
     transcription_result: Dict[str, Any],
     spk_segments: List[Tuple[float, float, str]],
 ) -> List[Dict[str, Any]]:
-    """Attach speaker labels to each segment via midpoint lookup."""
-    # Build timeline index
-    indexed: List[Tuple[float, float, str]] = sorted(spk_segments, key=lambda x: x[0])
+    """Attach to each segment the speaker who talks the most during it."""
+    turns = sorted(spk_segments, key=lambda turn: turn[0])
 
     output: List[Dict[str, Any]] = []
     for seg in transcription_result.get("segments", []):
         if "start" not in seg or "end" not in seg:
             output.append({**seg, "speaker": "unknown"})
             continue
-        mid = (seg["start"] + seg["end"]) / 2.0
-        speaker_id = "unknown"
-        for s_start, s_end, label in indexed:
-            if s_start <= mid <= s_end:
-                speaker_id = label
-                break
-        output.append({**seg, "speaker": speaker_id})
+        output.append({**seg, "speaker": _best_speaker(seg["start"], seg["end"], turns)})
     return output
+
+
+def _best_speaker(start: float, end: float, turns: List[Tuple[float, float, str]]) -> str:
+    """Speaker with the most overlap with [start, end]; else the one whose turn contains its midpoint."""
+    overlap: Dict[str, float] = {}
+    for turn_start, turn_end, speaker in turns:
+        shared = min(end, turn_end) - max(start, turn_start)
+        if shared > 0:
+            overlap[speaker] = overlap.get(speaker, 0.0) + shared
+    if overlap:
+        return max(overlap, key=lambda speaker: overlap[speaker])
+
+    middle = (start + end) / 2.0
+    return next((speaker for turn_start, turn_end, speaker in turns if turn_start <= middle <= turn_end), "unknown")
 
 
 ###############################################################################
@@ -224,31 +288,13 @@ def merge_diarization(
 ###############################################################################
 
 
-def write_outputs(result: Dict[str, Any], args: argparse.Namespace) -> None:  # pragma: no cover
-    """Write transcript/plain text and optional JSON to disk or stdout."""
-    if args.diarize and "speaker_segments" in result:
-        # Pretty print with speaker labels
-        parts: List[str] = []
-        current_spk: Optional[str] = None
-        for seg in result["speaker_segments"]:
-            spk = seg["speaker"]
-            if spk != current_spk:
-                parts.append(f"\n[{spk}]")
-                current_spk = spk
-            parts.append(seg["text"].strip())
-        transcript = " ".join(parts).strip()
-    else:
-        transcript = result.get("text", "").strip()
-
-    # Write / print transcript
-    if args.output:
-        args.output.write_text(transcript, encoding="utf-8")
-    else:
-        print(transcript)
-
-    # Raw JSON output if requested
-    if args.json:
-        args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+def write_output(text: str, dest: Optional[pathlib.Path], stdout: TextIO) -> None:
+    """Write *text* to *dest*, or print it to *stdout* when there is no destination."""
+    if dest is None:
+        print(text, file=stdout)
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
 
 
 ###############################################################################
@@ -288,8 +334,34 @@ def show_models(backend_name: str) -> None:
 ###############################################################################
 
 
-def main() -> None:  # pragma: no cover
-    args = parse_args()
+def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO) -> int:
+    """Transcribe every job, carrying on after per-file errors. Returns the number of failed files."""
+    try:
+        # Diarization first: a missing package or HF token should fail before a big model download.
+        pipeline = load_diarization_pipeline(args.device) if args.diarize else None
+        backend = load_backend(args)
+    except (ImportError, *FILE_ERRORS) as e:
+        sys.exit(f"Error: {e}")
+
+    failures = 0
+    for audio, dest in jobs:
+        try:
+            result = transcribe_file(backend, audio, args, pipeline)
+        except FILE_ERRORS as e:
+            failures += 1
+            print(f"Error: {audio}: {e}", file=sys.stderr)
+            continue
+
+        write_output(render(result, fmt), dest, stdout)
+        if args.json:
+            write_output(to_json(result), args.json, stdout)
+        if dest is not None and not args.quiet:
+            print(f"→ {dest}", file=sys.stderr)
+    return failures
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
 
     # Handle information flags
     if args.list_backends:
@@ -300,17 +372,21 @@ def main() -> None:  # pragma: no cover
         show_models(args.backend)
         return
 
-    # Run transcription
-    result = run_transcription(args)
+    configure_hf_token(args.hf_token)
+    fmt = args.format or format_for_path(args.output)
+    jobs = plan_outputs(args, fmt)
+    if not jobs:
+        sys.exit("Error: no audio files found.")
+    missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
+    if missing:  # checked before the (slow) model load
+        sys.exit(f"Error: file not found: {', '.join(missing)}")
 
-    # Optionally run speaker diarization
-    if args.diarize:
-        pipeline = load_diarization_pipeline(args.hf_token)
-        spk_segments = diarize_audio(args.audio, pipeline)
-        speaker_segments = merge_diarization(result, spk_segments)
-        result["speaker_segments"] = speaker_segments  # attach for JSON export
-
-    write_outputs(result, args)
+    stdout = sys.stdout
+    # Libraries print progress and debug text to stdout; send it to stderr so stdout carries only the transcript.
+    with contextlib.redirect_stdout(sys.stderr):
+        failures = run_jobs(args, jobs, fmt, stdout)
+    if failures:
+        sys.exit(1 if len(jobs) == 1 else f"Error: {failures} of {len(jobs)} files failed.")
 
 
 if __name__ == "__main__":  # pragma: no cover
