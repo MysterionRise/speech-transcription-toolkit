@@ -4,7 +4,11 @@ This module provides a registry of available transcription backends and utilitie
 for loading and using them. Supported backends:
 
 - **whisper**: OpenAI Whisper (default) - fast, accurate, multiple model sizes
+- **faster-whisper**: CTranslate2 Whisper - faster and lighter, no torch needed
 - **voxtral**: Mistral Voxtral Mini/Small - strong multilingual support
+
+Heavy libraries (torch, transformers, ...) are imported only when a model is loaded,
+so importing this package and listing backends/models stays fast.
 
 Usage:
     from backends import get_backend, list_backends
@@ -23,12 +27,14 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from .base import TranscriptionBackend, TranscriptionResult
+from .faster_whisper_backend import FasterWhisperBackend
 from .voxtral_backend import VoxtralBackend
 from .whisper_backend import WhisperBackend
 
 # Registry of available backends
 _BACKENDS: Dict[str, Type[TranscriptionBackend]] = {
     "whisper": WhisperBackend,
+    "faster-whisper": FasterWhisperBackend,
     "voxtral": VoxtralBackend,
 }
 
@@ -45,7 +51,7 @@ def get_backend(name: str) -> TranscriptionBackend:
     """Get an instance of the specified backend.
 
     Args:
-        name: Backend name ('whisper', 'voxtral', etc.)
+        name: Backend name ('whisper', 'faster-whisper', 'voxtral', etc.)
 
     Returns:
         An instance of the requested backend.
@@ -108,6 +114,7 @@ __all__ = [
     "TranscriptionBackend",
     "TranscriptionResult",
     "WhisperBackend",
+    "FasterWhisperBackend",
     "VoxtralBackend",
     "list_backends",
     "get_backend",
