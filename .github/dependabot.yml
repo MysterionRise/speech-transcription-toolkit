@@ -5,6 +5,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Only touch a requirement when the new release falls outside its range: bumps the
+    # pinned dev tools but leaves runtime minimums (e.g. transformers>=...) alone.
+    versioning-strategy: increase-if-necessary
     groups:
       python-packages:
         patterns: ["*"]
