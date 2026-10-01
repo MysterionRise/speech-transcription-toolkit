@@ -1,3 +1,3 @@
 # Speaker diarization (--diarize). Also needs a Hugging Face token and the model's terms
 # accepted at https://hf.co/pyannote/speaker-diarization-community-1
-pyannote.audio>=4.0
+pyannote.audio>=4.0.7
