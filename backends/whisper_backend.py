@@ -8,8 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import whisper
-
 from .base import TranscriptionBackend, TranscriptionResult
 
 
@@ -23,8 +21,23 @@ class WhisperBackend(TranscriptionBackend):
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
 
-    # Model sizes in order of speed (fastest first) and accuracy (smallest first)
-    MODELS = ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large", "turbo"]
+    # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
+    MODELS = [
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "large",
+        "large-v3-turbo",
+        "turbo",
+    ]
 
     @classmethod
     def available_models(cls) -> List[str]:
@@ -40,7 +53,7 @@ class WhisperBackend(TranscriptionBackend):
         """Load a Whisper model.
 
         Args:
-            model_name: One of the available model sizes (tiny, base, small, medium, large, turbo).
+            model_name: One of the available model names (tiny ... large-v3, turbo).
             device: 'cpu', 'cuda', or None for auto-detection.
 
         Raises:
@@ -48,6 +61,13 @@ class WhisperBackend(TranscriptionBackend):
         """
         if model_name not in self.MODELS:
             raise ValueError(f"Unknown Whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
+
+        try:
+            import whisper  # imported lazily: it pulls in torch, which is slow to import
+        except ImportError as e:
+            raise ImportError(
+                f"Whisper backend needs openai-whisper ({e}). Install with: pip install -r requirements.txt"
+            ) from e
 
         self._model = whisper.load_model(model_name, device=device)
         self._model_name = model_name
@@ -66,7 +86,7 @@ class WhisperBackend(TranscriptionBackend):
             audio_path: Path to the audio file.
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
-            verbose: Show progress during transcription.
+            verbose: Show a progress bar during transcription.
 
         Returns:
             TranscriptionResult with transcript text and segments.
@@ -84,7 +104,10 @@ class WhisperBackend(TranscriptionBackend):
         # Build transcription kwargs
         kwargs: Dict[str, Any] = {
             "task": task,
-            "verbose": verbose,
+            # Whisper prints every segment when verbose=True; False shows only a progress bar, None nothing.
+            "verbose": False if verbose else None,
+            # FP16 isn't supported on CPU; saying so up front avoids Whisper's warning.
+            "fp16": not str(self._device).startswith("cpu"),
         }
         if language:
             kwargs["language"] = language

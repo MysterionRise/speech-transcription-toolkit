@@ -1,7 +1,12 @@
-"""Tests for the pluggable backend system."""
+"""Tests for the pluggable backend system.
+
+Heavy libraries (whisper, torch, transformers, faster_whisper) are replaced with mocks in
+``sys.modules``: the backends import them lazily, so these tests run without them installed.
+"""
 
 import pathlib
-import warnings
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,8 +21,17 @@ from backends import (
     register_backend,
 )
 from backends.base import TranscriptionBackend as BaseBackend
+from backends.faster_whisper_backend import FasterWhisperBackend
 from backends.voxtral_backend import VoxtralBackend
 from backends.whisper_backend import WhisperBackend
+
+
+@pytest.fixture
+def audio_file(tmp_path: pathlib.Path) -> pathlib.Path:
+    """An (empty) audio file; the mocked models never read it."""
+    path = tmp_path / "test.mp3"
+    path.touch()
+    return path
 
 
 class TestTranscriptionResult:
@@ -77,6 +91,7 @@ class TestBackendRegistry:
         backends = list_backends()
         assert isinstance(backends, list)
         assert "whisper" in backends
+        assert "faster-whisper" in backends
         assert "voxtral" in backends
 
     def test_get_backend_whisper(self):
@@ -84,6 +99,12 @@ class TestBackendRegistry:
         backend = get_backend("whisper")
         assert isinstance(backend, WhisperBackend)
         assert backend.name == "whisper"
+
+    def test_get_backend_faster_whisper(self):
+        """Test getting faster-whisper backend."""
+        backend = get_backend("faster-whisper")
+        assert isinstance(backend, FasterWhisperBackend)
+        assert backend.name == "faster-whisper"
 
     def test_get_backend_voxtral(self):
         """Test getting Voxtral backend."""
@@ -144,8 +165,6 @@ class TestBackendRegistry:
 
     def test_register_backend_rejects_duplicate(self):
         """Test that registering over an existing backend raises ValueError."""
-        from backends.whisper_backend import WhisperBackend
-
         with pytest.raises(ValueError, match="already registered"):
             register_backend("whisper", WhisperBackend)
 
@@ -173,18 +192,25 @@ class TestBackendRegistry:
         assert get_backend_class("whisper") is AltWhisper
 
 
+@pytest.fixture
+def mock_whisper():
+    """Stand-in for the openai-whisper module, whose model reports running on CPU."""
+    module = MagicMock()
+    param = MagicMock()
+    param.device = "cpu"
+    module.load_model.return_value.parameters.return_value = iter([param])
+    with patch.dict(sys.modules, {"whisper": module}):
+        yield module
+
+
 class TestWhisperBackend:
     """Tests for WhisperBackend."""
 
     def test_available_models(self):
-        """Test available models list."""
+        """Test available models list, including every name openai-whisper accepts."""
         models = WhisperBackend.available_models()
-        assert "tiny" in models
-        assert "base" in models
-        assert "small" in models
-        assert "medium" in models
-        assert "large" in models
-        assert "turbo" in models
+        for name in ("tiny", "base", "small", "medium", "large", "turbo", "large-v3", "large-v3-turbo"):
+            assert name in models
 
     def test_default_model(self):
         """Test default model is turbo."""
@@ -197,32 +223,23 @@ class TestWhisperBackend:
         assert backend.model_name is None
         assert backend.device is None
 
-    @patch("backends.whisper_backend.whisper")
     def test_load_model(self, mock_whisper):
         """Test loading a model."""
-        mock_model = MagicMock()
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-        mock_whisper.load_model.return_value = mock_model
-
         backend = WhisperBackend()
         backend.load_model("tiny")
 
         mock_whisper.load_model.assert_called_once_with("tiny", device=None)
         assert backend.is_loaded is True
         assert backend.model_name == "tiny"
+        assert backend.device == "cpu"
 
-    @patch("backends.whisper_backend.whisper")
     def test_load_model_with_device(self, mock_whisper):
         """Test loading a model with specific device."""
-        mock_model = MagicMock()
-        mock_whisper.load_model.return_value = mock_model
-
         backend = WhisperBackend()
         backend.load_model("base", device="cuda")
 
         mock_whisper.load_model.assert_called_once_with("base", device="cuda")
+        assert backend.device == "cuda"
 
     def test_load_model_invalid(self):
         """Test loading invalid model raises error."""
@@ -231,6 +248,12 @@ class TestWhisperBackend:
             backend.load_model("invalid_model")
         assert "Unknown Whisper model" in str(exc_info.value)
 
+    def test_load_model_missing_dependency(self):
+        """Test a helpful ImportError when openai-whisper isn't installed."""
+        with patch.dict(sys.modules, {"whisper": None}):
+            with pytest.raises(ImportError, match="requirements.txt"):
+                WhisperBackend().load_model("tiny")
+
     def test_transcribe_without_model(self):
         """Test transcribing without loading model raises error."""
         backend = WhisperBackend()
@@ -238,34 +261,17 @@ class TestWhisperBackend:
             backend.transcribe(pathlib.Path("audio.mp3"))
         assert "No model loaded" in str(exc_info.value)
 
-    @patch("backends.whisper_backend.whisper")
     def test_transcribe_missing_file(self, mock_whisper, tmp_path):
         """Test transcribing missing file raises error."""
-        mock_model = MagicMock()
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-        mock_whisper.load_model.return_value = mock_model
-
         backend = WhisperBackend()
         backend.load_model("tiny")
 
         with pytest.raises(FileNotFoundError):
             backend.transcribe(tmp_path / "nonexistent.mp3")
 
-    @patch("backends.whisper_backend.whisper")
-    def test_transcribe_success(self, mock_whisper, tmp_path):
+    def test_transcribe_success(self, mock_whisper, audio_file):
         """Test successful transcription."""
-        # Create mock audio file
-        audio_file = tmp_path / "test.mp3"
-        audio_file.touch()
-
-        # Mock model
-        mock_model = MagicMock()
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-        mock_model.transcribe.return_value = {
+        mock_whisper.load_model.return_value.transcribe.return_value = {
             "text": "Hello world",
             "segments": [
                 {
@@ -282,7 +288,6 @@ class TestWhisperBackend:
             ],
             "language": "en",
         }
-        mock_whisper.load_model.return_value = mock_model
 
         backend = WhisperBackend()
         backend.load_model("tiny")
@@ -295,45 +300,179 @@ class TestWhisperBackend:
         assert result.segments[0]["start"] == 0.0
         assert result.segments[0]["end"] == 1.0
 
-    @patch("backends.whisper_backend.whisper")
-    def test_transcribe_with_language(self, mock_whisper, tmp_path):
+    def test_transcribe_with_language(self, mock_whisper, audio_file):
         """Test transcription with specified language."""
-        audio_file = tmp_path / "test.mp3"
-        audio_file.touch()
-
-        mock_model = MagicMock()
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-        mock_model.transcribe.return_value = {"text": "Bonjour", "segments": [], "language": "fr"}
-        mock_whisper.load_model.return_value = mock_model
+        model = mock_whisper.load_model.return_value
+        model.transcribe.return_value = {"text": "Bonjour", "segments": [], "language": "fr"}
 
         backend = WhisperBackend()
         backend.load_model("tiny")
         backend.transcribe(audio_file, language="fr")
 
-        call_kwargs = mock_model.transcribe.call_args[1]
-        assert call_kwargs["language"] == "fr"
+        assert model.transcribe.call_args[1]["language"] == "fr"
 
-    @patch("backends.whisper_backend.whisper")
-    def test_transcribe_translate_task(self, mock_whisper, tmp_path):
+    def test_transcribe_translate_task(self, mock_whisper, audio_file):
         """Test transcription with translate task."""
-        audio_file = tmp_path / "test.mp3"
-        audio_file.touch()
-
-        mock_model = MagicMock()
-        mock_param = MagicMock()
-        mock_param.device = "cpu"
-        mock_model.parameters.return_value = iter([mock_param])
-        mock_model.transcribe.return_value = {"text": "Hello", "segments": []}
-        mock_whisper.load_model.return_value = mock_model
+        model = mock_whisper.load_model.return_value
+        model.transcribe.return_value = {"text": "Hello", "segments": []}
 
         backend = WhisperBackend()
         backend.load_model("tiny")
         backend.transcribe(audio_file, task="translate")
 
-        call_kwargs = mock_model.transcribe.call_args[1]
-        assert call_kwargs["task"] == "translate"
+        assert model.transcribe.call_args[1]["task"] == "translate"
+
+    @pytest.mark.parametrize("verbose, whisper_verbose", [(True, False), (False, None)])
+    def test_transcribe_never_prints_segments(self, mock_whisper, audio_file, verbose, whisper_verbose):
+        """Whisper's verbose=True prints every segment to stdout; progress bar (False) or silence (None) only."""
+        model = mock_whisper.load_model.return_value
+        model.transcribe.return_value = {"text": "", "segments": []}
+
+        backend = WhisperBackend()
+        backend.load_model("tiny")
+        backend.transcribe(audio_file, verbose=verbose)
+
+        assert model.transcribe.call_args[1]["verbose"] is whisper_verbose
+
+    @pytest.mark.parametrize("device, fp16", [(None, False), ("cuda", True)])
+    def test_transcribe_fp16_only_off_cpu(self, mock_whisper, audio_file, device, fp16):
+        """FP16 is requested only on GPU (Whisper warns and falls back to FP32 on CPU)."""
+        model = mock_whisper.load_model.return_value
+        model.transcribe.return_value = {"text": "", "segments": []}
+
+        backend = WhisperBackend()
+        backend.load_model("tiny", device=device)
+        backend.transcribe(audio_file)
+
+        assert model.transcribe.call_args[1]["fp16"] is fp16
+
+
+@pytest.fixture
+def mock_faster_whisper():
+    """Stand-ins for the faster_whisper and ctranslate2 modules (no GPU)."""
+    faster_whisper = MagicMock()
+    ctranslate2 = MagicMock()
+    ctranslate2.get_cuda_device_count.return_value = 0
+    with patch.dict(sys.modules, {"faster_whisper": faster_whisper, "ctranslate2": ctranslate2}):
+        yield faster_whisper
+
+
+class TestFasterWhisperBackend:
+    """Tests for FasterWhisperBackend."""
+
+    def test_available_models(self):
+        """Test available models list."""
+        models = FasterWhisperBackend.available_models()
+        for name in ("tiny", "small", "large-v3", "turbo", "distil-large-v3"):
+            assert name in models
+
+    def test_default_model(self):
+        """Test default model is turbo."""
+        assert FasterWhisperBackend.default_model() == "turbo"
+
+    def test_load_model_invalid(self):
+        """Test loading invalid model raises error."""
+        with pytest.raises(ValueError, match="Unknown faster-whisper model"):
+            FasterWhisperBackend().load_model("invalid_model")
+
+    def test_load_model_missing_dependency(self):
+        """Test a helpful ImportError when faster-whisper isn't installed."""
+        with patch.dict(sys.modules, {"faster_whisper": None, "ctranslate2": None}):
+            with pytest.raises(ImportError, match="requirements-faster-whisper.txt"):
+                FasterWhisperBackend().load_model("tiny")
+
+    def test_load_model_cpu_uses_int8(self, mock_faster_whisper):
+        """Without a GPU the model runs on CPU with int8 weights."""
+        backend = FasterWhisperBackend()
+        backend.load_model("tiny")
+
+        mock_faster_whisper.WhisperModel.assert_called_once_with("tiny", device="cpu", compute_type="int8")
+        assert backend.is_loaded is True
+        assert backend.model_name == "tiny"
+        assert backend.device == "cpu"
+
+    def test_load_model_cuda_uses_float16(self, mock_faster_whisper):
+        """On CUDA the model runs in float16."""
+        backend = FasterWhisperBackend()
+        backend.load_model("small", device="cuda")
+
+        mock_faster_whisper.WhisperModel.assert_called_once_with("small", device="cuda", compute_type="float16")
+
+    def test_load_model_failure(self, mock_faster_whisper):
+        """Test download/load errors surface as RuntimeError."""
+        mock_faster_whisper.WhisperModel.side_effect = OSError("network down")
+
+        backend = FasterWhisperBackend()
+        with pytest.raises(RuntimeError, match="network down"):
+            backend.load_model("tiny")
+        assert backend.is_loaded is False
+
+    def test_transcribe_without_model(self):
+        """Test transcribing without loading model raises error."""
+        with pytest.raises(RuntimeError, match="No model loaded"):
+            FasterWhisperBackend().transcribe(pathlib.Path("audio.mp3"))
+
+    def test_transcribe_missing_file(self, mock_faster_whisper, tmp_path):
+        """Test transcribing missing file raises error."""
+        backend = FasterWhisperBackend()
+        backend.load_model("tiny")
+        with pytest.raises(FileNotFoundError):
+            backend.transcribe(tmp_path / "nonexistent.mp3")
+
+    def test_transcribe_success(self, mock_faster_whisper, audio_file):
+        """Segments and language are mapped to the standard result format."""
+
+        def segment(i, start, end, text):
+            return SimpleNamespace(
+                id=i,
+                start=start,
+                end=end,
+                text=text,
+                tokens=[1],
+                temperature=0.0,
+                avg_logprob=-0.2,
+                compression_ratio=1.1,
+                no_speech_prob=0.01,
+            )
+
+        model = mock_faster_whisper.WhisperModel.return_value
+        info = SimpleNamespace(language="de", duration=3.0, language_probability=0.98)
+        model.transcribe.return_value = (iter([segment(1, 0.0, 1.5, " Hallo"), segment(2, 1.5, 3.0, " Welt")]), info)
+
+        backend = FasterWhisperBackend()
+        backend.load_model("tiny")
+        result = backend.transcribe(audio_file, language="de", task="transcribe", verbose=False)
+
+        model.transcribe.assert_called_once_with(str(audio_file), language="de", task="transcribe", log_progress=False)
+        assert result.text == "Hallo Welt"
+        assert result.language == "de"
+        assert [(s["id"], s["start"], s["end"], s["text"]) for s in result.segments] == [
+            (1, 0.0, 1.5, " Hallo"),
+            (2, 1.5, 3.0, " Welt"),
+        ]
+        assert result.to_dict()["duration"] == 3.0
+
+
+class FakeInputs(dict):
+    """Minimal stand-in for the BatchFeature returned by the Voxtral processor."""
+
+    def __init__(self, prompt_len: int):
+        super().__init__(input_ids="ids")
+        self.input_ids = SimpleNamespace(shape=(1, prompt_len))
+
+    def to(self, *args, **kwargs):
+        return self
+
+
+@pytest.fixture
+def voxtral_modules():
+    """Stand-ins for torch, transformers and whisper (audio decoding) as used by the Voxtral backend."""
+    torch = MagicMock()
+    torch.cuda.is_available.return_value = False
+    transformers = MagicMock()
+    whisper = MagicMock()
+    with patch.dict(sys.modules, {"torch": torch, "transformers": transformers, "whisper": whisper}):
+        yield SimpleNamespace(torch=torch, transformers=transformers, whisper=whisper)
 
 
 class TestVoxtralBackend:
@@ -344,6 +483,11 @@ class TestVoxtralBackend:
         models = VoxtralBackend.available_models()
         assert "voxtral-mini" in models
         assert "voxtral-small" in models
+
+    def test_model_repo_ids(self):
+        """Test the Hugging Face repo ids are the published ones."""
+        assert VoxtralBackend.MODELS["voxtral-mini"] == "mistralai/Voxtral-Mini-3B-2507"
+        assert VoxtralBackend.MODELS["voxtral-small"] == "mistralai/Voxtral-Small-24B-2507"
 
     def test_default_model(self):
         """Test default model is voxtral-mini."""
@@ -356,62 +500,111 @@ class TestVoxtralBackend:
         assert backend.model_name is None
         assert backend.device is None
 
-    @patch("backends.voxtral_backend._HAS_TORCH", False)
-    def test_check_dependencies_missing_torch(self):
-        """Test dependency check raises ImportError when torch is missing."""
-        with pytest.raises(ImportError, match="torch"):
-            VoxtralBackend._check_dependencies()
-
-    @patch("backends.voxtral_backend._HAS_TRANSFORMERS", False)
-    def test_check_dependencies_missing_transformers(self):
-        """Test dependency check raises ImportError when transformers is missing."""
-        with pytest.raises(ImportError, match="transformers"):
-            VoxtralBackend._check_dependencies()
-
-    @patch("backends.voxtral_backend._HAS_LIBROSA", False)
-    def test_check_dependencies_missing_librosa(self):
-        """Test dependency check raises ImportError when librosa is missing."""
-        with pytest.raises(ImportError, match="librosa"):
-            VoxtralBackend._check_dependencies()
-
     def test_load_model_invalid(self):
         """Test loading invalid model raises error."""
+        with pytest.raises(ValueError, match="Unknown Voxtral model"):
+            VoxtralBackend().load_model("invalid_model")
+
+    def test_load_model_missing_dependency(self):
+        """Test a helpful ImportError when transformers/torch aren't installed."""
+        with patch.dict(sys.modules, {"torch": None, "transformers": None}):
+            with pytest.raises(ImportError, match="requirements-voxtral.txt"):
+                VoxtralBackend().load_model("voxtral-mini")
+
+    def test_load_model_cpu(self, voxtral_modules):
+        """Test loading on CPU uses float32 and the right repo id."""
         backend = VoxtralBackend()
-        with pytest.raises((ValueError, ImportError)):
-            backend.load_model("invalid_model")
+        backend.load_model("voxtral-small")
+
+        tf = voxtral_modules.transformers
+        tf.AutoProcessor.from_pretrained.assert_called_once_with("mistralai/Voxtral-Small-24B-2507")
+        tf.VoxtralForConditionalGeneration.from_pretrained.assert_called_once_with(
+            "mistralai/Voxtral-Small-24B-2507", dtype=voxtral_modules.torch.float32
+        )
+        tf.VoxtralForConditionalGeneration.from_pretrained.return_value.to.assert_called_once_with("cpu")
+        assert backend.is_loaded is True
+        assert backend.device == "cpu"
+        assert backend.model_name == "voxtral-small"
+
+    def test_load_model_cuda_uses_bfloat16(self, voxtral_modules):
+        """Test loading on a bf16-capable GPU uses bfloat16."""
+        voxtral_modules.torch.cuda.is_available.return_value = True
+        voxtral_modules.torch.cuda.is_bf16_supported.return_value = True
+
+        backend = VoxtralBackend()
+        backend.load_model("voxtral-mini")
+
+        _, kwargs = voxtral_modules.transformers.VoxtralForConditionalGeneration.from_pretrained.call_args
+        assert kwargs["dtype"] is voxtral_modules.torch.bfloat16
+        assert backend.device == "cuda"
+
+    def test_load_model_failure(self, voxtral_modules):
+        """Test download/auth errors surface as RuntimeError and leave nothing loaded."""
+        voxtral_modules.transformers.AutoProcessor.from_pretrained.side_effect = OSError("401 gated repo")
+
+        backend = VoxtralBackend()
+        with pytest.raises(RuntimeError, match="401 gated repo"):
+            backend.load_model("voxtral-mini")
+        assert backend.is_loaded is False
 
     def test_transcribe_without_model(self):
         """Test transcribing without loading model raises error."""
+        with pytest.raises(RuntimeError, match="No model loaded"):
+            VoxtralBackend().transcribe(pathlib.Path("audio.mp3"))
+
+    def test_transcribe_translate_unsupported(self, voxtral_modules, audio_file):
+        """Test that translation is rejected with a clear error."""
         backend = VoxtralBackend()
-        backend._pipe = None
-        with pytest.raises((RuntimeError, ImportError)):
-            backend.transcribe(pathlib.Path("audio.mp3"))
+        backend.load_model("voxtral-mini")
+        with pytest.raises(ValueError, match="only supports --task transcribe"):
+            backend.transcribe(audio_file, task="translate")
 
-    @patch("backends.voxtral_backend._HAS_TORCH", True)
-    @patch("backends.voxtral_backend._HAS_TRANSFORMERS", True)
-    @patch("backends.voxtral_backend._HAS_LIBROSA", True)
-    def test_load_model_no_hf_token_warns(self):
-        """Test that loading a model without HF token emits a warning."""
-        import backends.voxtral_backend as vmod
+    def test_transcribe_missing_file(self, voxtral_modules, tmp_path):
+        """Test transcribing missing file raises error."""
+        backend = VoxtralBackend()
+        backend.load_model("voxtral-mini")
+        with pytest.raises(FileNotFoundError):
+            backend.transcribe(tmp_path / "nonexistent.mp3")
 
-        mock_model_cls = MagicMock()
-        mock_model_cls.from_pretrained.side_effect = RuntimeError("no token")
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = False
-        mock_torch.float32 = "float32"
+    def test_transcribe_chunks_become_segments(self, voxtral_modules, audio_file, capsys):
+        """70 s of audio -> 30 s chunks, transcribed in batches, one timestamped segment each."""
+        rate = 16000
+        voxtral_modules.whisper.load_audio.return_value = [0.0] * (70 * rate)
+        processor = voxtral_modules.transformers.AutoProcessor.from_pretrained.return_value
+        processor.apply_transcription_request.side_effect = [FakeInputs(prompt_len=5), FakeInputs(prompt_len=5)]
+        processor.batch_decode.side_effect = [[" one ", "two"], [""]]
 
         backend = VoxtralBackend()
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch.object(vmod, "torch", mock_torch),
-            patch.object(vmod, "AutoModelForSpeechSeq2Seq", mock_model_cls, create=True),
-            warnings.catch_warnings(record=True) as w,
-        ):
-            warnings.simplefilter("always")
-            with pytest.raises(RuntimeError):
-                backend.load_model("voxtral-mini")
-            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
-            assert any("No Hugging Face token" in str(x.message) for x in user_warnings)
+        backend.load_model("voxtral-mini")
+        with patch("backends.voxtral_backend.BATCH_SIZE", 2):
+            result = backend.transcribe(audio_file, language="en")
+
+        first_call = processor.apply_transcription_request.call_args_list[0][1]
+        assert [len(chunk) for chunk in first_call["audio"]] == [30 * rate, 30 * rate]
+        assert first_call["model_id"] == "mistralai/Voxtral-Mini-3B-2507"
+        assert first_call["language"] == "en"
+        assert first_call["sampling_rate"] == rate
+        assert first_call["format"] == "wav"
+        assert [(s["id"], s["start"], s["end"], s["text"]) for s in result.segments] == [
+            (0, 0.0, 30.0, "one"),
+            (1, 30.0, 60.0, "two"),
+            (2, 60.0, 70.0, ""),
+        ]
+        assert result.text == "one two"
+        assert result.language == "en"
+        assert "3/3 chunks" in capsys.readouterr().err
+
+    def test_transcribe_empty_audio(self, voxtral_modules, audio_file):
+        """Test that empty audio produces an empty result without calling the model."""
+        voxtral_modules.whisper.load_audio.return_value = []
+
+        backend = VoxtralBackend()
+        backend.load_model("voxtral-mini")
+        result = backend.transcribe(audio_file, verbose=False)
+
+        assert result.text == ""
+        assert result.segments == []
+        voxtral_modules.transformers.AutoProcessor.from_pretrained.return_value.apply_transcription_request.assert_not_called()
 
 
 class TestBaseBackend:

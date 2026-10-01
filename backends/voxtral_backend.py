@@ -1,58 +1,36 @@
 """Mistral Voxtral transcription backend.
 
-This backend supports Voxtral Mini (3B) and Voxtral Small for speech-to-text transcription.
-Voxtral models are Mistral's open-weight speech models with strong multilingual support.
-
-Note: Voxtral requires the transformers library and a Hugging Face token for model access.
+Runs Voxtral Mini (3B) or Voxtral Small (24B) locally through Hugging Face transformers.
+Needs the extra packages in requirements-voxtral.txt; models download from the Hugging Face
+Hub on first use (set HF_TOKEN if the download asks for authentication).
 """
 
 from __future__ import annotations
 
-import os
-import warnings
+import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from .base import TranscriptionBackend, TranscriptionResult
 
-# Optional imports - only fail when actually trying to use the backend
-_HAS_TRANSFORMERS = False
-_HAS_TORCH = False
-_HAS_LIBROSA = False
-
-try:
-    import torch
-
-    _HAS_TORCH = True
-except ImportError:
-    pass
-
-try:
-    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-
-    _HAS_TRANSFORMERS = True
-except ImportError:
-    pass
-
-try:
-    import librosa
-
-    _HAS_LIBROSA = True
-except ImportError:
-    pass
+SAMPLE_RATE = 16000
+# Voxtral's transcription mode returns text without timestamps, so audio is split into
+# fixed chunks and each chunk becomes one (coarsely) timestamped segment.
+CHUNK_SECONDS = 30
+BATCH_SIZE = 8
+MAX_NEW_TOKENS = 500
 
 
 class VoxtralBackend(TranscriptionBackend):
     """Mistral Voxtral transcription backend.
 
-    Supports Voxtral Mini (3B parameters) and Voxtral Small models for
-    high-quality multilingual speech-to-text transcription.
+    Supports Voxtral Mini (3B parameters) and Voxtral Small (24B parameters)
+    for multilingual speech-to-text transcription.
 
     Requirements:
         - torch
-        - transformers>=4.36.0
-        - librosa (for audio loading)
-        - Hugging Face token with access to Mistral models
+        - transformers>=4.56
+        - mistral-common[audio]>=1.8.1
     """
 
     name = "voxtral"
@@ -61,13 +39,13 @@ class VoxtralBackend(TranscriptionBackend):
     # Available Voxtral models
     MODELS = {
         "voxtral-mini": "mistralai/Voxtral-Mini-3B-2507",
-        "voxtral-small": "mistralai/Voxtral-Small-2507",
+        "voxtral-small": "mistralai/Voxtral-Small-24B-2507",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self._processor = None
-        self._pipe = None
+        self._processor: Any = None
+        self._repo_id: Optional[str] = None
 
     @classmethod
     def available_models(cls) -> List[str]:
@@ -79,23 +57,6 @@ class VoxtralBackend(TranscriptionBackend):
         """Return 'voxtral-mini' as the default - good balance of speed and quality."""
         return "voxtral-mini"
 
-    @classmethod
-    def _check_dependencies(cls) -> None:
-        """Check that all required dependencies are installed."""
-        missing = []
-        if not _HAS_TORCH:
-            missing.append("torch")
-        if not _HAS_TRANSFORMERS:
-            missing.append("transformers>=4.36.0")
-        if not _HAS_LIBROSA:
-            missing.append("librosa")
-
-        if missing:
-            raise ImportError(
-                f"Voxtral backend requires additional packages: {', '.join(missing)}. "
-                f"Install with: pip install {' '.join(missing)}"
-            )
-
     def load_model(self, model_name: str, device: Optional[str] = None) -> None:
         """Load a Voxtral model.
 
@@ -106,62 +67,38 @@ class VoxtralBackend(TranscriptionBackend):
         Raises:
             ImportError: If required dependencies are missing.
             ValueError: If model_name is not recognized.
-            RuntimeError: If Hugging Face authentication fails.
+            RuntimeError: If the model cannot be downloaded or loaded.
         """
-        self._check_dependencies()
-
         if model_name not in self.MODELS:
             raise ValueError(f"Unknown Voxtral model: {model_name}. Available: {', '.join(self.MODELS.keys())}")
 
-        model_id = self.MODELS[model_name]
+        try:
+            import torch
+            from transformers import AutoProcessor, VoxtralForConditionalGeneration
+        except ImportError as e:
+            raise ImportError(
+                f"Voxtral backend requires extra packages ({e}). Install with: pip install -r requirements-voxtral.txt"
+            ) from e
 
-        # Determine device
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda":
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            dtype = torch.float32
 
-        # Set up dtype based on device
-        torch_dtype = torch.float16 if device == "cuda" else torch.float32
-
-        # Check for HF token
-        hf_token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
-        if not hf_token:
-            warnings.warn(
-                "No Hugging Face token found. Set HUGGINGFACE_TOKEN or HF_TOKEN environment variable. "
-                "Voxtral models may require authentication.",
-                UserWarning,
-            )
-
+        repo_id = self.MODELS[model_name]
         try:
-            # Load model and processor
-            self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True,
-                use_safetensors=True,
-                token=hf_token,
-            )
-            self._model.to(device)
-
-            self._processor = AutoProcessor.from_pretrained(model_id, token=hf_token)
-
-            # Create pipeline for easier inference
-            self._pipe = pipeline(
-                "automatic-speech-recognition",
-                model=self._model,
-                tokenizer=self._processor.tokenizer,
-                feature_extractor=self._processor.feature_extractor,
-                torch_dtype=torch_dtype,
-                device=device,
-            )
-
-            self._model_name = model_name
-            self._device = device
-
-        except Exception as e:
+            self._processor = AutoProcessor.from_pretrained(repo_id)
+            self._model = VoxtralForConditionalGeneration.from_pretrained(repo_id, dtype=dtype).to(device)
+        except Exception as e:  # download, auth and out-of-memory errors come in many types
             self._model = None
             self._processor = None
-            self._pipe = None
             raise RuntimeError(f"Failed to load Voxtral model '{model_name}': {e}") from e
+
+        self._repo_id = repo_id
+        self._model_name = model_name
+        self._device = device
 
     def transcribe(
         self,
@@ -175,58 +112,57 @@ class VoxtralBackend(TranscriptionBackend):
         Args:
             audio_path: Path to the audio file.
             language: Language code or None for auto-detection.
-            task: 'transcribe' or 'translate' (translate to English).
-            verbose: Show progress during transcription (currently ignored).
+            task: Only 'transcribe' is supported.
+            verbose: Print progress to stderr.
 
         Returns:
-            TranscriptionResult with transcript text and segments.
+            TranscriptionResult with one segment per ~30 s chunk of audio.
 
         Raises:
             RuntimeError: If no model is loaded.
+            ValueError: If task is not 'transcribe'.
             FileNotFoundError: If audio file doesn't exist.
         """
-        if self._pipe is None:
+        if self._model is None or self._processor is None:
             raise RuntimeError("No model loaded. Call load_model() first.")
+
+        if task != "transcribe":
+            raise ValueError("The Voxtral backend only supports --task transcribe.")
 
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        # Load audio with librosa (resamples to 16kHz)
-        audio, _sr = librosa.load(str(audio_path), sr=16000)
+        from whisper import load_audio  # ffmpeg decode to 16 kHz mono float32
 
-        # Build generation kwargs
-        generate_kwargs: Dict[str, Any] = {}
-        if language:
-            generate_kwargs["language"] = language
-        if task == "translate":
-            generate_kwargs["task"] = "translate"
+        audio = load_audio(str(audio_path), sr=SAMPLE_RATE)
+        step = CHUNK_SECONDS * SAMPLE_RATE
+        chunks = [audio[i : i + step] for i in range(0, len(audio), step)]
 
-        # Run transcription with timestamps
-        result = self._pipe(
-            audio,
-            return_timestamps=True,
-            generate_kwargs=generate_kwargs if generate_kwargs else None,
-        )
-
-        # Parse result into standardized format
-        text = result.get("text", "")
-        chunks = result.get("chunks", [])
-
-        segments = []
-        for i, chunk in enumerate(chunks):
-            timestamp = chunk.get("timestamp", (None, None))
-            segments.append(
-                {
-                    "id": i,
-                    "start": timestamp[0] if timestamp[0] is not None else 0.0,
-                    "end": timestamp[1] if timestamp[1] is not None else 0.0,
-                    "text": chunk.get("text", ""),
-                }
-            )
+        segments: List[Dict[str, Any]] = []
+        for first in range(0, len(chunks), BATCH_SIZE):
+            batch = chunks[first : first + BATCH_SIZE]
+            for index, (chunk, text) in enumerate(zip(batch, self._transcribe_batch(batch, language)), start=first):
+                start = float(index * CHUNK_SECONDS)
+                segments.append({"id": index, "start": start, "end": start + len(chunk) / SAMPLE_RATE, "text": text})
+            if verbose:
+                print(f"Voxtral: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
 
         return TranscriptionResult(
-            text=text,
+            text=" ".join(seg["text"] for seg in segments if seg["text"]),
             segments=segments,
-            language=language,  # Voxtral doesn't return detected language in same way
-            raw={"chunks": chunks},
+            language=language,  # Voxtral doesn't report the detected language
         )
+
+    def _transcribe_batch(self, chunks: Sequence[Any], language: Optional[str]) -> List[str]:
+        """Transcribe a batch of audio chunks, returning one string per chunk."""
+        inputs = self._processor.apply_transcription_request(
+            audio=list(chunks),
+            model_id=self._repo_id,
+            language=language,
+            sampling_rate=SAMPLE_RATE,
+            format="wav",
+        )
+        inputs = inputs.to(self._device, dtype=self._model.dtype)
+        outputs = self._model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
+        texts = self._processor.batch_decode(outputs[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)
+        return [text.strip() for text in texts]

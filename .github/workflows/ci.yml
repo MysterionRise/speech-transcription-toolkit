@@ -19,32 +19,20 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: pip
+        cache-dependency-path: requirements-dev.txt
 
-    - name: Cache pip packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-lint-${{ hashFiles('requirements-dev.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-lint-
-          ${{ runner.os }}-pip-
-
-    - name: Install linting dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install black==24.10.0 isort==5.13.2 flake8==7.1.1
+    - name: Install dev tools
+      run: pip install -r requirements-dev.txt
 
     - name: Run black (code formatting check)
-      run: black --check --line-length 120 .
+      run: black --check .
 
     - name: Run isort (import sorting check)
-      run: isort --check-only --profile black --line-length 120 .
+      run: isort --check-only --profile black .
 
-    - name: Run flake8 (style guide enforcement)
-      run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-
-    - name: Run flake8 (complexity check)
-      run: flake8 . --count --max-complexity=10 --max-line-length=120 --statistics
+    - name: Run flake8 (style and complexity)
+      run: flake8 . --count --statistics
 
   security:
     name: Security Scanning
@@ -58,38 +46,23 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: pip
+        cache-dependency-path: requirements-dev.txt
 
-    - name: Install security scanning tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install "bandit[toml]" safety
+    - name: Install dev tools
+      run: pip install -r requirements-dev.txt
 
     - name: Run bandit (security linter)
-      run: bandit -c pyproject.toml -r . -f json -o bandit-report.json
-
-    - name: Run safety (dependency vulnerability check)
-      run: safety check -r requirements.txt --output json > safety-report.json || true
-      # Note: safety reports vulnerabilities in transitive dependencies we can't directly control
-      # Review safety-report.json artifact for details
-
-    - name: Upload security reports
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: security-reports
-        path: |
-          bandit-report.json
-          safety-report.json
+      run: bandit -c pyproject.toml -r .
 
   test:
     name: Test Suite (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # Note: Python 3.12 blocked by openai-whisper==20240930 (uses pkg_resources without setuptools build dep)
-        python-version: ['3.10', '3.11']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
 
     steps:
     - uses: actions/checkout@v4
@@ -98,53 +71,20 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: pip
+        cache-dependency-path: requirements-dev.txt
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
-
-    - name: Cache pip packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-${{ matrix.python-version }}-
-          ${{ runner.os }}-pip-
-
+    # Unit tests mock whisper/torch/transformers, so no model libraries are installed here.
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
-      timeout-minutes: 30
+      run: pip install -r requirements-dev.txt
 
-    - name: Run tests with pytest
-      run: |
-        pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
-      timeout-minutes: 10
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      if: matrix.python-version == '3.10'
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false  # Don't fail if Codecov upload fails (requires token for public repos)
-
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v4
-      if: matrix.python-version == '3.10'
-      with:
-        name: coverage-report
-        path: htmlcov/
+    - name: Run tests with pytest (80% coverage gate)
+      run: pytest
 
   type-check:
     name: Type Checking
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
     - uses: actions/checkout@v4
@@ -153,32 +93,20 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: pip
+        cache-dependency-path: requirements-dev.txt
 
-    - name: Cache pip packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-mypy-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-mypy-
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install mypy
-        # Install stub packages for better type checking
-        pip install types-requests || true
-      timeout-minutes: 10
+    - name: Install dev tools
+      run: pip install -r requirements-dev.txt
 
     - name: Run mypy (static type checking)
-      run: mypy main.py convert.py backends/ --ignore-missing-imports --no-strict-optional
+      run: mypy main.py convert.py formats.py media.py backends/
 
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [test]
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v4
@@ -186,54 +114,56 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: |
+          requirements.txt
+          requirements-faster-whisper.txt
 
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
 
-    - name: Cache pip packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-integration-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-integration-
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
+    - name: Install dependencies (CPU-only torch)
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-      timeout-minutes: 15
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install -r requirements.txt -r requirements-faster-whisper.txt
 
-    - name: Create test audio file
+    - name: Create speech samples
       run: |
-        # Generate a 2-second silent audio file for testing
-        ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 2 -q:a 9 -acodec libmp3lame test_audio.mp3 -y
+        # Synthesized speech (ffmpeg's flite source), so the test checks real words.
+        ffmpeg -loglevel error -f lavfi -i "flite=text='Hello world. This is a speech recognition test.':voice=slt" -ar 16000 speech.wav
+        mkdir batch
+        cp speech.wav batch/one.wav
+        cp speech.wav batch/two.wav
 
-    - name: Test basic transcription
+    - name: Whisper transcript on stdout
       run: |
-        python main.py test_audio.mp3 -q -o test_output.txt
-        if [ -f test_output.txt ]; then
-          echo "✓ Transcription successful"
-          cat test_output.txt
-        else
-          echo "✗ Transcription failed"
-          exit 1
-        fi
+        python main.py speech.wav -m tiny > out.txt
+        cat out.txt
+        grep -qiE "hello|world" out.txt
+        # stdout must carry only the transcript (progress goes to stderr)
+        test "$(wc -l < out.txt)" -eq 1
 
-    - name: Test JSON output
+    - name: Subtitles and JSON output
       run: |
-        python main.py test_audio.mp3 -q --json test_result.json
-        if [ -f test_result.json ]; then
-          echo "✓ JSON export successful"
-          cat test_result.json | head -20
-        else
-          echo "✗ JSON export failed"
-          exit 1
-        fi
+        python main.py speech.wav -m tiny -q -o out.srt --json out.json
+        cat out.srt
+        grep -q -- "-->" out.srt
+        python -c "import json; assert json.load(open('out.json'))['segments']"
+
+    - name: Batch mode
+      run: |
+        python main.py batch -m tiny -q --outdir subs -f vtt
+        head -n 5 subs/one.vtt subs/two.vtt
+        grep -q "WEBVTT" subs/one.vtt
+
+    - name: faster-whisper backend
+      run: |
+        python main.py speech.wav -b faster-whisper -m tiny -q > fw.txt
+        cat fw.txt
+        grep -qiE "hello|world" fw.txt
 
     - name: Upload test outputs
       uses: actions/upload-artifact@v4
@@ -241,5 +171,8 @@ jobs:
       with:
         name: integration-test-outputs
         path: |
-          test_output.txt
-          test_result.json
+          out.txt
+          out.srt
+          out.json
+          subs/
+          fw.txt
