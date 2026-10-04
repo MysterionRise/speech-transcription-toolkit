@@ -2,4 +2,4 @@
 faster-whisper>=1.2.1
 # faster-whisper 1.2.1 still passes av.open(metadata_errors=...), which PyAV 19 removed
 # (SYSTRAN/faster-whisper#1492); drop this cap once a faster-whisper release supports PyAV 19.
-av>=18.1.0,<19
+av>=18.1.0,<20
