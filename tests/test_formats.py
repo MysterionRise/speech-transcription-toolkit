@@ -1,4 +1,4 @@
-"""Tests for formats.py (txt/srt/vtt/json rendering)."""
+"""Tests for speech_toolkit.formats (txt/srt/vtt/json rendering)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,17 @@ import pathlib
 
 import pytest
 
-from formats import FORMATS, _timestamp, format_for_path, render, to_json, to_srt, to_txt, to_vtt
+from speech_toolkit.formats import (
+    FORMATS,
+    _timestamp,
+    format_for_path,
+    render,
+    to_json,
+    to_srt,
+    to_txt,
+    to_vtt,
+    write_text,
+)
 
 RESULT = {
     "text": " Hello there. Hi!",
@@ -108,3 +118,19 @@ class TestRender:
 
     def test_render_dispatches(self):
         assert render(RESULT, "srt") == to_srt(RESULT)
+
+    def test_unknown_format_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown format"):
+            render(RESULT, "docx")
+
+
+class TestWriteText:
+    def test_creates_folders_and_ends_with_newline(self, tmp_path: pathlib.Path):
+        dest = tmp_path / "a" / "b" / "out.txt"
+        write_text(dest, "hello")
+        assert dest.read_text(encoding="utf-8") == "hello\n"
+
+    def test_keeps_existing_final_newline(self, tmp_path: pathlib.Path):
+        dest = tmp_path / "out.srt"
+        write_text(dest, "1\n")
+        assert dest.read_text(encoding="utf-8") == "1\n"

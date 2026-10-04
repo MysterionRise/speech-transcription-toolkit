@@ -42,7 +42,7 @@ repos:
     rev: v2.3.1
     hooks:
       - id: mypy
-        files: ^((main|convert|formats|media)\.py|backends/.*\.py)$
+        files: ^speech_toolkit/.*\.py$
         args: ['--ignore-missing-imports', '--no-strict-optional']
         additional_dependencies: []
 

@@ -1,3 +1,69 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "speech-transcription-toolkit"
+dynamic = ["version"]
+description = "Offline speech-to-text: Whisper, faster-whisper or Voxtral, optional speaker diarization, TXT/SRT/VTT/JSON output."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Konstantin Perikov" }]
+keywords = ["speech-to-text", "transcription", "whisper", "faster-whisper", "voxtral", "diarization", "subtitles"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Typing :: Typed",
+]
+# Whisper is the default backend, so a plain install transcribes out of the box. Also needs ffmpeg on PATH.
+dependencies = [
+    "openai-whisper>=20250625",
+    "pydub>=0.25.1",
+    "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub needs it since audioop left the stdlib
+]
+
+[project.optional-dependencies]
+faster-whisper = [
+    "faster-whisper>=1.2.1",
+    # faster-whisper 1.2.1 still passes av.open(metadata_errors=...), which PyAV 19 removed
+    # (SYSTRAN/faster-whisper#1492); drop this cap once a faster-whisper release supports PyAV 19.
+    "av>=18.1.0,<19",
+]
+voxtral = ["transformers>=5.17.0", "mistral-common[audio]>=1.12.0"]
+# Speaker labels: also needs a Hugging Face token and the terms of
+# https://hf.co/pyannote/speaker-diarization-community-1 accepted.
+diarize = ["pyannote.audio>=4.0.7"]
+all = ["speech-transcription-toolkit[faster-whisper,voxtral,diarize]"]
+
+[project.scripts]
+transcribe = "speech_toolkit.cli:main"
+ogg2wav = "speech_toolkit.convert:main"
+
+[project.urls]
+Homepage = "https://github.com/MysterionRise/speech-transcription-toolkit"
+Issues = "https://github.com/MysterionRise/speech-transcription-toolkit/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "speech_toolkit.__version__" }
+
+# Only the package ships; tests/ and the main.py/convert.py checkout shims stay out.
+[tool.setuptools.packages.find]
+include = ["speech_toolkit*"]
+
+[tool.setuptools.package-data]
+speech_toolkit = ["py.typed"]
+
 [tool.black]
 line-length = 120
 target-version = ['py310']
@@ -55,30 +121,24 @@ warn_unreachable = true
 strict_optional = false
 check_untyped_defs = false
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = [
     "--strict-markers",
     "--tb=short",
-    "--cov=.",
+    "--cov",
     "--cov-report=term-missing",
     "--cov-branch",
 ]
 
 [tool.coverage.run]
-source = ["."]
+source = ["speech_toolkit"]
 omit = [
-    "tests/*",
-    "setup.py",
-    ".venv/*",
-    "venv/*",
+    "speech_toolkit/__main__.py",  # exercised in a subprocess by the tests
 ]
 
 [tool.coverage.report]

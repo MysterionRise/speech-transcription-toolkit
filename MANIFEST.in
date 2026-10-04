@@ -1,0 +1,2 @@
+# Ship the whole test suite in the sdist (setuptools alone would skip conftest.py).
+recursive-include tests *.py

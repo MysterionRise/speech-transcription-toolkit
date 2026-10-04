@@ -1,0 +1,50 @@
+# Publishes to PyPI and creates a GitHub release when a version tag (v0.1.0, ...) is pushed.
+# One-time setup on PyPI: add a trusted publisher for this repository, workflow "release.yml",
+# environment "pypi" (https://docs.pypi.org/trusted-publishers/).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/speech-transcription-toolkit
+    permissions:
+      contents: write  # create the GitHub release
+      id-token: write  # PyPI trusted publishing (no API token needed)
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - name: Check the tag matches the package version
+      run: |
+        version=$(python -c "import speech_toolkit; print(speech_toolkit.__version__)")
+        if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+          echo "::error::Tag $GITHUB_REF_NAME doesn't match speech_toolkit.__version__ ($version)"
+          exit 1
+        fi
+
+    - name: Build
+      run: |
+        pip install build twine
+        python -m build
+        twine check --strict dist/*
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+
+    - name: Create the GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

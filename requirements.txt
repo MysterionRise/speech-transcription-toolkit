@@ -1,4 +1,0 @@
-# Core: Whisper backend and convert.py. Also needs ffmpeg on PATH.
-openai-whisper>=20250625
-pydub>=0.25.1
-audioop-lts>=0.2.2; python_version >= "3.13"  # pydub needs it since audioop left the stdlib

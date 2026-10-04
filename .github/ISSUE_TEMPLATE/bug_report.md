@@ -8,4 +8,4 @@ labels: bug
 
 **What you expected:**
 
-**Environment:** OS, Python version, backend and model, output of `pip freeze | grep -iE "whisper|torch|pyannote|transformers"`
+**Environment:** OS, Python version, `transcribe --version`, backend and model, output of `pip freeze | grep -iE "whisper|torch|pyannote|transformers"`

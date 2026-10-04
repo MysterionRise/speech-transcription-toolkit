@@ -1,8 +1,8 @@
 """faster-whisper transcription backend.
 
 faster-whisper re-implements Whisper on CTranslate2: it is several times faster than
-openai-whisper, uses less memory and does not need torch. Needs the extra package in
-requirements-faster-whisper.txt; models download from the Hugging Face Hub on first use.
+openai-whisper, uses less memory and does not need torch. Needs the ``faster-whisper`` extra;
+models download from the Hugging Face Hub on first use.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class FasterWhisperBackend(TranscriptionBackend):
         except ImportError as e:
             raise ImportError(
                 "faster-whisper backend requires extra packages. "
-                "Install with: pip install -r requirements-faster-whisper.txt"
+                'Install with: pip install "speech-transcription-toolkit[faster-whisper]"'
             ) from e
 
         if device is None:

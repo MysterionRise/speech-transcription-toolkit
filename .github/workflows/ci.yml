@@ -34,6 +34,20 @@ jobs:
     - name: Run flake8 (style and complexity)
       run: flake8 . --count --statistics
 
+    - name: Build the package and check its metadata
+      run: |
+        python -m build
+        twine check --strict dist/*
+
+    # --no-deps: the commands must start without the model libraries (they import them lazily).
+    - name: Smoke-test the installed wheel
+      run: |
+        pip install --no-deps dist/*.whl
+        cd "$RUNNER_TEMP"
+        transcribe --version
+        transcribe --list-backends
+        ogg2wav --help
+
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
@@ -100,7 +114,7 @@ jobs:
       run: pip install -r requirements-dev.txt
 
     - name: Run mypy (static type checking)
-      run: mypy main.py convert.py formats.py media.py backends/
+      run: mypy speech_toolkit
 
   integration-test:
     name: Integration Tests
@@ -116,19 +130,17 @@ jobs:
       with:
         python-version: '3.12'
         cache: pip
-        cache-dependency-path: |
-          requirements.txt
-          requirements-faster-whisper.txt
+        cache-dependency-path: pyproject.toml
 
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
 
-    - name: Install dependencies (CPU-only torch)
+    - name: Install the package (CPU-only torch)
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -r requirements.txt -r requirements-faster-whisper.txt
+        pip install ".[faster-whisper]"
 
     - name: Create speech samples
       run: |
@@ -140,7 +152,7 @@ jobs:
 
     - name: Whisper transcript on stdout
       run: |
-        python main.py speech.wav -m tiny > out.txt
+        transcribe speech.wav -m tiny > out.txt
         cat out.txt
         grep -qiE "hello|world" out.txt
         # stdout must carry only the transcript (progress goes to stderr)
@@ -148,22 +160,37 @@ jobs:
 
     - name: Subtitles and JSON output
       run: |
-        python main.py speech.wav -m tiny -q -o out.srt --json out.json
+        transcribe speech.wav -m tiny -q -o out.srt --json out.json
         cat out.srt
         grep -q -- "-->" out.srt
         python -c "import json; assert json.load(open('out.json'))['segments']"
 
     - name: Batch mode
       run: |
-        python main.py batch -m tiny -q --outdir subs -f vtt
+        transcribe batch -m tiny -q --outdir subs -f vtt
         head -n 5 subs/one.vtt subs/two.vtt
         grep -q "WEBVTT" subs/one.vtt
 
     - name: faster-whisper backend
       run: |
-        python main.py speech.wav -b faster-whisper -m tiny -q > fw.txt
+        transcribe speech.wav -b faster-whisper -m tiny -q > fw.txt
         cat fw.txt
         grep -qiE "hello|world" fw.txt
+
+    - name: Python API
+      run: |
+        cd "$RUNNER_TEMP"  # import the installed package, not the checkout
+        python - <<'EOF'
+        import os
+        from speech_toolkit import Transcriber
+
+        transcriber = Transcriber("faster-whisper", "tiny")
+        result = transcriber.transcribe(os.path.join(os.environ["GITHUB_WORKSPACE"], "speech.wav"))
+        print(result.text)
+        assert "hello" in result.text.lower() or "world" in result.text.lower()
+        result.save(os.path.join(os.environ["GITHUB_WORKSPACE"], "api.vtt"))
+        EOF
+        head -n 4 "$GITHUB_WORKSPACE/api.vtt"
 
     - name: Upload test outputs
       uses: actions/upload-artifact@v7
@@ -176,3 +203,4 @@ jobs:
           out.json
           subs/
           fw.txt
+          api.vtt

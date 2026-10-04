@@ -11,7 +11,7 @@ Heavy libraries (torch, transformers, ...) are imported only when a model is loa
 so importing this package and listing backends/models stays fast.
 
 Usage:
-    from backends import get_backend, list_backends
+    from speech_toolkit.backends import get_backend, list_backends
 
     # Get available backends
     backends = list_backends()
@@ -98,7 +98,7 @@ def register_backend(name: str, backend_class: Type[TranscriptionBackend], *, fo
         ValueError: If name is already registered and force is False.
 
     Example:
-        from backends import register_backend
+        from speech_toolkit.backends import register_backend
         from my_custom_backend import MyBackend
 
         register_backend("custom", MyBackend)

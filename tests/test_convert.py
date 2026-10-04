@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for convert.py audio conversion functionality."""
+"""Tests for the ogg2wav converter (speech_toolkit.convert)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from convert import collect_ogg_files, convert_file, main, parse_args
+from speech_toolkit.convert import collect_ogg_files, convert_file, main, parse_args
 
 
 class TestParseArgs:
-    """Test command-line argument parsing for convert.py."""
+    """Test command-line argument parsing for ogg2wav."""
 
     def test_parse_args_single_file(self):
         """Test parsing a single input file."""
@@ -127,7 +127,7 @@ class TestCollectOggFiles:
 class TestConvertFile:
     """Test audio file conversion functionality."""
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_success(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test successful file conversion."""
         src = tmp_path / "input.ogg"
@@ -152,7 +152,7 @@ class TestConvertFile:
         # Verify export was called
         assert mock_audio.export.called
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_creates_outdir(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test that output directory is created if it doesn't exist."""
         src = tmp_path / "input.ogg"
@@ -171,7 +171,7 @@ class TestConvertFile:
         assert outdir.exists()
         assert outdir.is_dir()
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_no_outdir_uses_parent(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test conversion without outdir uses source file's parent directory."""
         src = tmp_path / "input.ogg"
@@ -204,7 +204,7 @@ class TestConvertFile:
         captured = capsys.readouterr()
         assert "exists; skipping" in captured.out
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_overwrite_existing(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test that existing files are overwritten with --overwrite flag."""
         src = tmp_path / "input.ogg"
@@ -225,7 +225,7 @@ class TestConvertFile:
         # Verify export was called (would overwrite)
         assert mock_audio.export.called
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_custom_params(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test conversion with custom sample rate and channels."""
         src = tmp_path / "input.ogg"
@@ -243,7 +243,7 @@ class TestConvertFile:
         mock_audio.set_frame_rate.assert_called_once_with(48000)
         mock_audio.set_channels.assert_called_once_with(2)
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_convert_file_handles_exception(self, mock_audio_segment, tmp_path: pathlib.Path, capsys):
         """Test graceful handling of conversion errors."""
         src = tmp_path / "corrupt.ogg"
@@ -273,7 +273,7 @@ class TestConvertFile:
 class TestIntegration:
     """Integration tests for the convert module."""
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_end_to_end_conversion_workflow(self, mock_audio_segment, tmp_path: pathlib.Path):
         """Test complete workflow: collect files and convert them."""
         # Create test OGG files
@@ -315,7 +315,7 @@ def _mock_audio(mock_audio_segment: MagicMock) -> MagicMock:
 class TestOutputTree:
     """--outdir mirrors sub-folders so same-named files don't overwrite each other."""
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_same_name_in_different_folders(self, mock_audio_segment, tmp_path: pathlib.Path):
         mock_audio = _mock_audio(mock_audio_segment)
         for folder in ("day1", "day2"):
@@ -331,9 +331,9 @@ class TestOutputTree:
 
 
 class TestMain:
-    """Test the convert.py entry point."""
+    """Test the ogg2wav entry point."""
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_main_converts_files(self, mock_audio_segment, tmp_path: pathlib.Path):
         mock_audio = _mock_audio(mock_audio_segment)
         (tmp_path / "a.opus").touch()
@@ -342,7 +342,7 @@ class TestMain:
 
         mock_audio.export.assert_called_once_with(tmp_path / "wav" / "a.wav", format="wav")
 
-    @patch("convert.AudioSegment")
+    @patch("speech_toolkit.convert.AudioSegment")
     def test_main_exits_non_zero_on_failure(self, mock_audio_segment, tmp_path: pathlib.Path):
         mock_audio_segment.from_file.side_effect = Exception("Corrupt audio file")
         (tmp_path / "a.ogg").touch()

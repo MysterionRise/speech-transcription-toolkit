@@ -4,57 +4,64 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Offline speech-to-text CLI with pluggable backends (Whisper, faster-whisper, Voxtral), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
+Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (Whisper, faster-whisper, Voxtral), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
 
 ## Common Commands
 
 ```bash
 pip install -r requirements-dev.txt   # enough for unit tests (model libraries are mocked)
-pip install -r requirements.txt       # real Whisper runs; extras: requirements-{faster-whisper,voxtral,diarize}.txt
+pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, diarize
 pre-commit install
 
 pytest                                           # all tests, 80% coverage gate
 pytest tests/test_backends.py::TestWhisperBackend -v
 
 black . && isort --profile black . && flake8 .   # format and lint (120-char lines)
-mypy main.py convert.py formats.py media.py backends/
+mypy speech_toolkit
 bandit -c pyproject.toml -r .
+python -m build && twine check --strict dist/*   # package check (CI does this too)
 ```
 
 ## Architecture
 
 ```
-main.py        CLI: parse_args → plan_outputs → run_jobs (load_backend, transcribe_file, write_output)
-               diarization: load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
-formats.py     render(result, fmt) for txt/srt/vtt/json; format_for_path picks the format from -o
-media.py       collect_files(): expand folders into (file, relative path) pairs
-convert.py     OGG/Opus → 16-bit WAV via pydub/ffmpeg (mirrors folder trees under --outdir)
-backends/
-├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
-├── base.py                     TranscriptionBackend ABC, TranscriptionResult
-├── whisper_backend.py          openai-whisper (default)
-├── faster_whisper_backend.py   faster-whisper / CTranslate2
-└── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
+speech_toolkit/
+├── __init__.py     public API: Transcriber, transcribe, TranscriptionResult, list/register_backend, __version__
+├── api.py          Transcriber (loads diarization, then the model, once) and the one-shot transcribe()
+├── cli.py          `transcribe` command: parse_args → plan_outputs → run_jobs (load_transcriber, write_output)
+├── diarization.py  load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
+├── formats.py      render(result, fmt) for txt/srt/vtt/json; format_for_path, write_text
+├── media.py        collect_files(): expand folders into (file, relative path) pairs
+├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via pydub/ffmpeg
+└── backends/
+    ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
+    ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)
+    ├── whisper_backend.py          openai-whisper (default)
+    ├── faster_whisper_backend.py   faster-whisper / CTranslate2
+    └── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
+main.py, convert.py   checkout shims for the two commands (not packaged)
 ```
 
-**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, and register it in `backends/__init__.py`.
+Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__version__`). Pushing a `v*` tag runs `.github/workflows/release.yml` (PyPI trusted publishing + GitHub release); bump `__version__` first.
+
+**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`.
 
 ## Key Design Rules
 
 - **Lazy heavy imports:** torch, whisper, transformers, faster_whisper and pyannote are imported inside `load_model()` / diarization functions, never at module level, so `--help`/`--list-*` stay instant and unit tests run without them.
-- **stdout is for the transcript only:** `main()` wraps all work in `redirect_stdout(sys.stderr)`; progress and messages go to stderr.
-- **Errors:** backends raise (`ValueError`, `RuntimeError`, `ImportError`, `FileNotFoundError`); only `main()`/`run_jobs()` turn them into `sys.exit`. In batch mode a failing file doesn't stop the others.
-- **Hugging Face token:** `--hf-token` / `HUGGINGFACE_TOKEN` are exported as `HF_TOKEN` once at startup.
+- **stdout is for the transcript only:** `cli.main()` wraps all work in `redirect_stdout(sys.stderr)`; progress and messages go to stderr. Library warnings (`warnings.warn`) print as one `Warning: …` line.
+- **Errors:** the library raises (`ValueError`, `RuntimeError`, `ImportError`, `FileNotFoundError`) and never prints or exits; only `cli.main()`/`run_jobs()` turn errors into `sys.exit`. In batch mode a failing file doesn't stop the others.
+- **Hugging Face token:** `--hf-token` / `Transcriber(hf_token=...)` / `HUGGINGFACE_TOKEN` are exported as `HF_TOKEN`.
 - **Offline:** `PYANNOTE_METRICS_ENABLED` defaults to `false` (pyannote 4 telemetry).
 
 ## Testing Notes
 
 - Mock heavy libraries with `patch.dict(sys.modules, {"whisper": mock, ...})`, not by patching module attributes.
-- `tests/test_main.py` drives `main.main([...])` end to end with a `FakeBackend` registered via `monkeypatch`.
+- `tests/conftest.py` has a `FakeBackend` and the `fake_backend` fixture; `tests/test_cli.py` drives `cli.main([...])` end to end with it, `tests/test_api.py` the `Transcriber`.
 - When testing `sys.exit()`, expect `SystemExit` (e.g. `pytest.raises(SystemExit, match=...)`).
 - CI: unit tests on Python 3.10–3.13 without torch; the integration job runs real `tiny` models on synthesized speech.
 
 ## External Requirements
 
-- ffmpeg on PATH (audio decoding for every backend and convert.py).
+- ffmpeg on PATH (audio decoding for every backend and `ogg2wav`).
 - Diarization: accept the terms of `pyannote/speaker-diarization-community-1` on Hugging Face and set `HF_TOKEN`.
