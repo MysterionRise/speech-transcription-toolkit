@@ -8,6 +8,11 @@ updates:
     # Only touch a requirement when the new release falls outside its range: bumps the
     # pinned dev tools but leaves runtime minimums (e.g. transformers>=...) alone.
     versioning-strategy: increase-if-necessary
+    ignore:
+      # faster-whisper 1.2.1 breaks with PyAV 19 (SYSTRAN/faster-whisper#1492); remove this
+      # together with the av<19 cap in pyproject.toml once a faster-whisper release supports it.
+      - dependency-name: av
+        versions: [">=19"]
     groups:
       python-packages:
         patterns: ["*"]
