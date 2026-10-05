@@ -6,9 +6,12 @@ enabling pluggable support for different speech-to-text models (Whisper, Voxtral
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from ..formats import format_for_path, render, write_text
 
 
 class TranscriptionResult:
@@ -19,6 +22,7 @@ class TranscriptionResult:
         segments: List of segments, each with start, end, text, and optional metadata.
         language: Detected or specified language code.
         raw: Raw result from the underlying model (backend-specific).
+        speaker_segments: With diarization, the segments with a ``speaker`` label each; otherwise None.
     """
 
     def __init__(
@@ -27,20 +31,35 @@ class TranscriptionResult:
         segments: List[Dict[str, Any]],
         language: Optional[str] = None,
         raw: Optional[Dict[str, Any]] = None,
+        speaker_segments: Optional[List[Dict[str, Any]]] = None,
     ):
         self.text = text
         self.segments = segments
         self.language = language
         self.raw = raw or {}
+        self.speaker_segments = speaker_segments
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        data = {
             **self.raw,  # Backend-specific fields first
             "text": self.text,  # Standardized fields override raw
             "segments": self.segments,
             "language": self.language,
         }
+        if self.speaker_segments is not None:
+            data["speaker_segments"] = self.speaker_segments
+        return data
+
+    def render(self, fmt: str = "txt") -> str:
+        """The result as ``txt``, ``srt``, ``vtt`` or ``json`` text (speaker-labelled after diarization)."""
+        return render(self.to_dict(), fmt)
+
+    def save(self, path: Union[str, "os.PathLike[str]"], fmt: Optional[str] = None) -> Path:
+        """Write the result to *path*, in *fmt* or else the format its extension names (default txt)."""
+        dest = Path(path)
+        write_text(dest, self.render(fmt or format_for_path(dest)))
+        return dest
 
 
 class TranscriptionBackend(ABC):

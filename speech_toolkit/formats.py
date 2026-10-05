@@ -86,4 +86,12 @@ _RENDERERS: Dict[str, Callable[[Dict[str, Any]], str]] = {
 
 def render(result: Dict[str, Any], fmt: str) -> str:
     """Render *result* in one of :data:`FORMATS`."""
+    if fmt not in _RENDERERS:
+        raise ValueError(f"Unknown format: {fmt!r}. Available: {', '.join(FORMATS)}")
     return _RENDERERS[fmt](result)
+
+
+def write_text(path: pathlib.Path, text: str) -> None:
+    """Write *text* to *path* as UTF-8 with a final newline, creating missing folders."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")

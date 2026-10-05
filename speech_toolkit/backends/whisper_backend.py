@@ -66,7 +66,7 @@ class WhisperBackend(TranscriptionBackend):
             import whisper  # imported lazily: it pulls in torch, which is slow to import
         except ImportError as e:
             raise ImportError(
-                f"Whisper backend needs openai-whisper ({e}). Install with: pip install -r requirements.txt"
+                f"Whisper backend needs openai-whisper ({e}). Install with: pip install openai-whisper"
             ) from e
 
         self._model = whisper.load_model(model_name, device=device)

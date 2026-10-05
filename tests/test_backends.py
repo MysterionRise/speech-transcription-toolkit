@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backends import (
+from speech_toolkit.backends import (
     DEFAULT_BACKEND,
     TranscriptionBackend,
     TranscriptionResult,
@@ -20,10 +20,10 @@ from backends import (
     list_backends,
     register_backend,
 )
-from backends.base import TranscriptionBackend as BaseBackend
-from backends.faster_whisper_backend import FasterWhisperBackend
-from backends.voxtral_backend import VoxtralBackend
-from backends.whisper_backend import WhisperBackend
+from speech_toolkit.backends.base import TranscriptionBackend as BaseBackend
+from speech_toolkit.backends.faster_whisper_backend import FasterWhisperBackend
+from speech_toolkit.backends.voxtral_backend import VoxtralBackend
+from speech_toolkit.backends.whisper_backend import WhisperBackend
 
 
 @pytest.fixture
@@ -82,6 +82,32 @@ class TestTranscriptionResult:
         assert d["segments"] == []
         assert d["language"] is None
 
+    def test_to_dict_includes_speaker_segments_after_diarization(self):
+        """speaker_segments appears in the dict (and JSON) only when diarization ran."""
+        result = TranscriptionResult(text="Hi", segments=[{"start": 0.0, "end": 1.0, "text": "Hi"}])
+        assert "speaker_segments" not in result.to_dict()
+
+        result.speaker_segments = [{"start": 0.0, "end": 1.0, "text": "Hi", "speaker": "SPEAKER_00"}]
+        assert result.to_dict()["speaker_segments"][0]["speaker"] == "SPEAKER_00"
+        assert result.render("txt") == "[SPEAKER_00] Hi"
+
+    def test_render_formats(self):
+        """render() gives txt by default and any other output format on request."""
+        result = TranscriptionResult(text=" Hi there.", segments=[{"start": 0.0, "end": 1.5, "text": " Hi there."}])
+        assert result.render() == "Hi there."
+        assert result.render("srt") == "1\n00:00:00,000 --> 00:00:01,500\nHi there.\n"
+
+    def test_save_picks_format_from_extension(self, tmp_path: pathlib.Path):
+        """save() writes the format named by the extension, or the one passed explicitly."""
+        result = TranscriptionResult(text=" Hi.", segments=[{"start": 0.0, "end": 1.0, "text": " Hi."}])
+
+        dest = result.save(tmp_path / "subs" / "talk.vtt")
+        assert dest == tmp_path / "subs" / "talk.vtt"
+        assert dest.read_text(encoding="utf-8").startswith("WEBVTT\n")
+
+        result.save(str(tmp_path / "talk.out"), fmt="json")
+        assert '"language": null' in (tmp_path / "talk.out").read_text(encoding="utf-8")
+
 
 class TestBackendRegistry:
     """Tests for backend registry functions."""
@@ -134,7 +160,7 @@ class TestBackendRegistry:
 
     def test_register_custom_backend(self, monkeypatch):
         """Test registering a custom backend."""
-        from backends import _BACKENDS
+        from speech_toolkit.backends import _BACKENDS
 
         class CustomBackend(TranscriptionBackend):
             name = "custom"
@@ -150,7 +176,7 @@ class TestBackendRegistry:
             def transcribe(self, audio_path, language=None, task="transcribe", verbose=True):
                 return TranscriptionResult(text="custom", segments=[])
 
-        monkeypatch.setattr("backends._BACKENDS", {**_BACKENDS})
+        monkeypatch.setattr("speech_toolkit.backends._BACKENDS", {**_BACKENDS})
 
         register_backend("custom_test", CustomBackend)
         assert "custom_test" in list_backends()
@@ -170,9 +196,9 @@ class TestBackendRegistry:
 
     def test_register_backend_force_overwrite(self, monkeypatch):
         """Test that force=True allows overwriting an existing backend."""
-        from backends import _BACKENDS
+        from speech_toolkit.backends import _BACKENDS
 
-        monkeypatch.setattr("backends._BACKENDS", {**_BACKENDS})
+        monkeypatch.setattr("speech_toolkit.backends._BACKENDS", {**_BACKENDS})
 
         class AltWhisper(TranscriptionBackend):
             name = "alt_whisper"
@@ -251,7 +277,7 @@ class TestWhisperBackend:
     def test_load_model_missing_dependency(self):
         """Test a helpful ImportError when openai-whisper isn't installed."""
         with patch.dict(sys.modules, {"whisper": None}):
-            with pytest.raises(ImportError, match="requirements.txt"):
+            with pytest.raises(ImportError, match="pip install openai-whisper"):
                 WhisperBackend().load_model("tiny")
 
     def test_transcribe_without_model(self):
@@ -378,7 +404,7 @@ class TestFasterWhisperBackend:
     def test_load_model_missing_dependency(self):
         """Test a helpful ImportError when faster-whisper isn't installed."""
         with patch.dict(sys.modules, {"faster_whisper": None, "ctranslate2": None}):
-            with pytest.raises(ImportError, match="requirements-faster-whisper.txt"):
+            with pytest.raises(ImportError, match=r"speech-transcription-toolkit\[faster-whisper\]"):
                 FasterWhisperBackend().load_model("tiny")
 
     def test_load_model_cpu_uses_int8(self, mock_faster_whisper):
@@ -508,7 +534,7 @@ class TestVoxtralBackend:
     def test_load_model_missing_dependency(self):
         """Test a helpful ImportError when transformers/torch aren't installed."""
         with patch.dict(sys.modules, {"torch": None, "transformers": None}):
-            with pytest.raises(ImportError, match="requirements-voxtral.txt"):
+            with pytest.raises(ImportError, match=r"speech-transcription-toolkit\[voxtral\]"):
                 VoxtralBackend().load_model("voxtral-mini")
 
     def test_load_model_cpu(self, voxtral_modules):
@@ -576,7 +602,7 @@ class TestVoxtralBackend:
 
         backend = VoxtralBackend()
         backend.load_model("voxtral-mini")
-        with patch("backends.voxtral_backend.BATCH_SIZE", 2):
+        with patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
             result = backend.transcribe(audio_file, language="en")
 
         first_call = processor.apply_transcription_request.call_args_list[0][1]

@@ -1,3 +1,0 @@
-# Voxtral backend (-b voxtral)
-transformers>=5.17.0
-mistral-common[audio]>=1.12.0

@@ -1,7 +1,7 @@
 """Mistral Voxtral transcription backend.
 
 Runs Voxtral Mini (3B) or Voxtral Small (24B) locally through Hugging Face transformers.
-Needs the extra packages in requirements-voxtral.txt; models download from the Hugging Face
+Needs the ``voxtral`` extra; models download from the Hugging Face
 Hub on first use (set HF_TOKEN if the download asks for authentication).
 """
 
@@ -29,8 +29,8 @@ class VoxtralBackend(TranscriptionBackend):
 
     Requirements:
         - torch
-        - transformers>=4.56
-        - mistral-common[audio]>=1.8.1
+        - transformers>=5.17
+        - mistral-common[audio]>=1.12
     """
 
     name = "voxtral"
@@ -77,7 +77,8 @@ class VoxtralBackend(TranscriptionBackend):
             from transformers import AutoProcessor, VoxtralForConditionalGeneration
         except ImportError as e:
             raise ImportError(
-                f"Voxtral backend requires extra packages ({e}). Install with: pip install -r requirements-voxtral.txt"
+                f"Voxtral backend requires extra packages ({e}). "
+                'Install with: pip install "speech-transcription-toolkit[voxtral]"'
             ) from e
 
         if device is None:
