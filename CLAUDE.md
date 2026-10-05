@@ -44,7 +44,7 @@ main.py, convert.py   checkout shims for the two commands (not packaged)
 
 Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__version__`). Pushing a `v*` tag runs `.github/workflows/release.yml` (PyPI trusted publishing + GitHub release); bump `__version__` first.
 
-**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`.
+**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`. Optional features (`prompt`, `vad`, `word_timestamps`) go in the class's `capabilities` and are keyword-only `transcribe()` arguments; `Transcriber` passes only declared ones and warns about the rest. Word timings use Whisper's format: `segment["words"] = [{"word": " Hi", "start": 0.0, "end": 0.4}]`.
 
 ## Key Design Rules
 

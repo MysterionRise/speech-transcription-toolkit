@@ -177,6 +177,12 @@ jobs:
         cat fw.txt
         grep -qiE "hello|world" fw.txt
 
+    - name: Accuracy options and subtitle lines
+      run: |
+        transcribe speech.wav -b faster-whisper -m tiny -q --vad --prompt "Speech recognition." --max-line-width 20 -o lines.srt
+        cat lines.srt
+        test "$(grep -c -- '-->' lines.srt)" -ge 2  # 47 characters at 20 per line, 2 lines per cue
+
     - name: Python API
       run: |
         cd "$RUNNER_TEMP"  # import the installed package, not the checkout
@@ -203,4 +209,5 @@ jobs:
           out.json
           subs/
           fw.txt
+          lines.srt
           api.vtt

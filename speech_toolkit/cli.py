@@ -18,6 +18,9 @@ Other backends:
     transcribe audio.mp3 -b faster-whisper -m small
     transcribe audio.mp3 -b voxtral
 
+Better accuracy and readable subtitles:
+    transcribe talk.mp3 -b faster-whisper --vad --prompt "Kubernetes, Grafana" -o talk.srt --max-line-width 42
+
 Speaker labels (needs the ``diarize`` extra and a Hugging Face token):
     transcribe meeting.wav --diarize --num-speakers 3
 """
@@ -68,6 +71,8 @@ Examples:
   %(prog)s audio.mp3 -o audio.srt             # subtitles (format from extension)
   %(prog)s recordings/ --outdir subs -f vtt   # every audio file in a folder
   %(prog)s audio.mp3 -b faster-whisper -m small
+  %(prog)s talk.mp3 -b faster-whisper --vad --prompt "Kubernetes, Grafana"
+  %(prog)s talk.mp3 -o talk.srt --max-line-width 42
   %(prog)s meeting.wav --diarize --num-speakers 3
   %(prog)s --list-models --backend voxtral
 """,
@@ -109,6 +114,28 @@ Examples:
     )
     output.add_argument("--outdir", type=pathlib.Path, help="Write one file per input into this folder.")
     output.add_argument("--json", type=pathlib.Path, help="Also write the full result as JSON to this file.")
+    output.add_argument(
+        "--max-line-width",
+        type=positive_int,
+        metavar="N",
+        help="Split subtitles into lines of at most N characters, 2 lines per cue (srt/vtt).",
+    )
+
+    # Accuracy
+    accuracy = parser.add_argument_group("accuracy")
+    accuracy.add_argument(
+        "--prompt",
+        metavar="TEXT",
+        help="Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper).",
+    )
+    accuracy.add_argument(
+        "--vad", action="store_true", help="Skip silence first; avoids made-up text in quiet parts (faster-whisper)."
+    )
+    accuracy.add_argument(
+        "--word-timestamps",
+        action="store_true",
+        help="Add per-word timings to the JSON output (whisper, faster-whisper).",
+    )
 
     # Speaker diarization
     diarization = parser.add_argument_group("speaker diarization")
@@ -171,6 +198,14 @@ def load_transcriber(args: argparse.Namespace) -> Transcriber:
     return Transcriber(args.backend, model_name, device=args.device, diarize=args.diarize, hf_token=args.hf_token)
 
 
+def word_timestamps_option(args: argparse.Namespace, fmt: str, transcriber: Transcriber) -> Optional[bool]:
+    """--word-timestamps forces word timings; subtitle line splitting uses them when the backend has them."""
+    splits_lines = args.max_line_width and fmt in ("srt", "vtt")
+    if args.word_timestamps or (splits_lines and transcriber.supports("word_timestamps")):
+        return True
+    return None  # the library's default: on for diarization
+
+
 def write_output(text: str, dest: Optional[pathlib.Path], stdout: TextIO) -> None:
     """Write *text* to *dest*, or print it to *stdout* when there is no destination."""
     if dest is None:
@@ -186,6 +221,7 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
     except (ImportError, *FILE_ERRORS) as e:
         sys.exit(f"Error: {e}")
 
+    word_timestamps = word_timestamps_option(args, fmt, transcriber)
     failures = 0
     for audio, dest in jobs:
         try:
@@ -193,6 +229,9 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
                 audio,
                 args.language,
                 args.task,
+                prompt=args.prompt,
+                vad=args.vad,
+                word_timestamps=word_timestamps,
                 num_speakers=args.num_speakers,
                 min_speakers=args.min_speakers,
                 max_speakers=args.max_speakers,
@@ -203,7 +242,7 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
             print(f"Error: {audio}: {e}", file=sys.stderr)
             continue
 
-        write_output(result.render(fmt), dest, stdout)
+        write_output(result.render(fmt, args.max_line_width), dest, stdout)
         if args.json:
             write_output(result.render("json"), args.json, stdout)
         if dest is not None and not args.quiet:

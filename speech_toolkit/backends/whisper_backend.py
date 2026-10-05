@@ -20,6 +20,7 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
+    capabilities = frozenset({"prompt", "word_timestamps"})
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -79,6 +80,9 @@ class WhisperBackend(TranscriptionBackend):
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
+        *,
+        prompt: Optional[str] = None,
+        word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio using Whisper.
 
@@ -87,6 +91,8 @@ class WhisperBackend(TranscriptionBackend):
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
+            prompt: Names, terms or a sample sentence that guide spelling (Whisper's initial_prompt).
+            word_timestamps: Add per-word timings ("words") to each segment.
 
         Returns:
             TranscriptionResult with transcript text and segments.
@@ -111,25 +117,16 @@ class WhisperBackend(TranscriptionBackend):
         }
         if language:
             kwargs["language"] = language
+        if prompt:
+            kwargs["initial_prompt"] = prompt
+        if word_timestamps:
+            kwargs["word_timestamps"] = True
 
         # Run transcription
         raw_result: Dict[str, Any] = self._model.transcribe(str(audio_path), **kwargs)
 
         # Convert to standardized format
-        segments = [
-            {
-                "start": seg["start"],
-                "end": seg["end"],
-                "text": seg["text"],
-                "id": seg.get("id"),
-                "tokens": seg.get("tokens"),
-                "temperature": seg.get("temperature"),
-                "avg_logprob": seg.get("avg_logprob"),
-                "compression_ratio": seg.get("compression_ratio"),
-                "no_speech_prob": seg.get("no_speech_prob"),
-            }
-            for seg in raw_result.get("segments", [])
-        ]
+        segments = [_segment(seg) for seg in raw_result.get("segments", [])]
 
         return TranscriptionResult(
             text=raw_result.get("text", ""),
@@ -137,3 +134,24 @@ class WhisperBackend(TranscriptionBackend):
             language=raw_result.get("language"),
             raw=raw_result,
         )
+
+
+def _segment(seg: Dict[str, Any]) -> Dict[str, Any]:
+    """Whisper's segment dict in the standard format (with "words" when word timestamps were asked for)."""
+    segment = {
+        "start": seg["start"],
+        "end": seg["end"],
+        "text": seg["text"],
+        "id": seg.get("id"),
+        "tokens": seg.get("tokens"),
+        "temperature": seg.get("temperature"),
+        "avg_logprob": seg.get("avg_logprob"),
+        "compression_ratio": seg.get("compression_ratio"),
+        "no_speech_prob": seg.get("no_speech_prob"),
+    }
+    if seg.get("words"):
+        segment["words"] = [
+            {"word": w["word"], "start": w["start"], "end": w["end"], "probability": w.get("probability")}
+            for w in seg["words"]
+        ]
+    return segment

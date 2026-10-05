@@ -31,6 +31,8 @@ transcribe --list-backends                     # backends and their models
 
 Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress). See `transcribe --help` for all options.
 
+**Better results:** `--prompt "Kubernetes, Grafana"` helps spell names and jargon, `--vad` skips silence (which stops made-up text in quiet parts; faster-whisper), and `--max-line-width 42` splits subtitles into readable lines. `--word-timestamps` adds per-word timings to JSON.
+
 ## Python API
 
 ```python
@@ -66,7 +68,7 @@ export HF_TOKEN=hf_...
 transcribe meeting.wav --diarize --num-speakers 3 -o meeting.txt
 ```
 
-Lines look like `[SPEAKER_00] Hello there.`, and subtitles get the same labels. In Python: `Transcriber(diarize=True).transcribe("meeting.wav", num_speakers=3)`. pyannote's usage telemetry stays off unless you set `PYANNOTE_METRICS_ENABLED=true`.
+Lines look like `[SPEAKER_00] Hello there.`, and subtitles get the same labels. With whisper and faster-whisper, speakers are matched word by word, so a quick reply mid-sentence gets its own line. In Python: `Transcriber(diarize=True).transcribe("meeting.wav", num_speakers=3)`. pyannote's usage telemetry stays off unless you set `PYANNOTE_METRICS_ENABLED=true`.
 
 ## Convert OGG/Opus to WAV
 

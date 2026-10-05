@@ -179,6 +179,52 @@ class TestMergeDiarization:
         assert result[0]["text"] == "no timestamps"
         assert result[1]["speaker"] == "SPEAKER_00"
 
+    def test_merge_splits_segments_where_the_speaker_changes(self):
+        """With word timings, a reply inside one segment becomes its own speaker segment."""
+        words = [
+            {"word": " Are", "start": 0.0, "end": 0.3},
+            {"word": " you", "start": 0.3, "end": 0.5},
+            {"word": " sure?", "start": 0.5, "end": 0.9},
+            {"word": " Yes.", "start": 1.2, "end": 1.5},
+        ]
+        segment = {"id": 3, "start": 0.0, "end": 1.5, "text": " Are you sure? Yes.", "words": words}
+
+        result = merge_diarization({"segments": [segment]}, [(0.0, 1.0, "SPEAKER_00"), (1.1, 1.6, "SPEAKER_01")])
+
+        assert [(s["speaker"], s["text"], s["start"], s["end"]) for s in result] == [
+            ("SPEAKER_00", " Are you sure?", 0.0, 0.9),
+            ("SPEAKER_01", " Yes.", 1.2, 1.5),
+        ]
+        assert result[1]["words"] == words[3:]
+        assert result[0]["id"] == 3  # other segment fields are kept
+
+    def test_merge_words_in_pauses_keep_the_previous_speaker(self):
+        words = [
+            {"word": " Um,", "start": 0.0, "end": 0.2},  # before the first turn: takes the first known speaker
+            {"word": " so", "start": 0.5, "end": 0.7},
+            {"word": " yeah", "start": 1.05, "end": 1.1},  # in a gap between turns
+            {"word": " right.", "start": 1.6, "end": 1.9},
+        ]
+        segment = {"start": 0.0, "end": 1.9, "text": " Um, so yeah right.", "words": words}
+
+        result = merge_diarization({"segments": [segment]}, [(0.4, 1.0, "A"), (1.5, 2.0, "B")])
+
+        assert [(s["speaker"], s["text"]) for s in result] == [("A", " Um, so yeah"), ("B", " right.")]
+
+    def test_merge_words_outside_every_turn(self):
+        segment = {"start": 5.0, "end": 6.0, "text": " Hi.", "words": [{"word": " Hi.", "start": 5.0, "end": 6.0}]}
+
+        result = merge_diarization({"segments": [segment]}, [(0.0, 1.0, "A")])
+
+        assert [(s["speaker"], s["text"]) for s in result] == [("unknown", " Hi.")]
+
+    def test_merge_words_without_times_label_the_whole_segment(self):
+        segment = {"start": 0.0, "end": 1.0, "text": " Hi.", "words": [{"word": " Hi."}]}
+
+        result = merge_diarization({"segments": [segment]}, [(0.0, 1.0, "A")])
+
+        assert result == [{**segment, "speaker": "A"}]
+
 
 @pytest.fixture
 def pyannote_modules(monkeypatch):

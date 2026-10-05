@@ -36,11 +36,33 @@ class FakeBackend(TranscriptionBackend):
         )
 
 
+class FakeWordsBackend(FakeBackend):
+    """FakeBackend that also takes the optional transcribe() keywords and records what it got."""
+
+    name = "fake-words"
+    capabilities = frozenset({"prompt", "vad", "word_timestamps"})
+    calls: list = []
+
+    def transcribe(self, audio_path, language=None, task="transcribe", verbose=True, **options):
+        FakeWordsBackend.calls.append(options)
+        segment = {"start": 0.0, "end": 1.5, "text": f" Hello from {audio_path.stem}."}
+        if options.get("word_timestamps"):
+            segment["words"] = [
+                {"word": " Hello", "start": 0.0, "end": 0.5},
+                {"word": " from", "start": 0.5, "end": 1.0},
+                {"word": f" {audio_path.stem}.", "start": 1.0, "end": 1.5},
+            ]
+        return TranscriptionResult(text=segment["text"], segments=[segment], language="en")
+
+
 @pytest.fixture
 def fake_backend(monkeypatch):
-    """Register FakeBackend as 'fake' for the duration of a test."""
+    """Register FakeBackend as 'fake' (and FakeWordsBackend as 'fake-words') for the duration of a test."""
     from speech_toolkit.backends import _BACKENDS
 
-    monkeypatch.setattr("speech_toolkit.backends._BACKENDS", {**_BACKENDS, "fake": FakeBackend})
+    monkeypatch.setattr(
+        "speech_toolkit.backends._BACKENDS", {**_BACKENDS, "fake": FakeBackend, "fake-words": FakeWordsBackend}
+    )
     FakeBackend.loaded = 0
+    FakeWordsBackend.calls = []
     return FakeBackend

@@ -360,6 +360,38 @@ class TestWhisperBackend:
 
         assert model.transcribe.call_args[1]["verbose"] is whisper_verbose
 
+    def test_transcribe_prompt_and_word_timestamps(self, mock_whisper, audio_file):
+        """--prompt becomes initial_prompt; word timestamps come back as each segment's "words"."""
+        model = mock_whisper.load_model.return_value
+        word = {"word": " Hi", "start": 0.0, "end": 0.4, "probability": 0.9}
+        model.transcribe.return_value = {
+            "text": " Hi",
+            "segments": [{"start": 0.0, "end": 0.4, "text": " Hi", "words": [word]}],
+        }
+
+        backend = WhisperBackend()
+        backend.load_model("tiny")
+        result = backend.transcribe(audio_file, prompt="Kubernetes", word_timestamps=True)
+
+        kwargs = model.transcribe.call_args[1]
+        assert kwargs["initial_prompt"] == "Kubernetes"
+        assert kwargs["word_timestamps"] is True
+        assert result.segments[0]["words"] == [word]
+        assert "vad" not in WhisperBackend.capabilities
+
+    def test_transcribe_defaults_leave_options_out(self, mock_whisper, audio_file):
+        """Without the options, Whisper gets neither initial_prompt nor word_timestamps."""
+        model = mock_whisper.load_model.return_value
+        model.transcribe.return_value = {"text": "", "segments": [{"start": 0.0, "end": 1.0, "text": ""}]}
+
+        backend = WhisperBackend()
+        backend.load_model("tiny")
+        result = backend.transcribe(audio_file)
+
+        assert "initial_prompt" not in model.transcribe.call_args[1]
+        assert "word_timestamps" not in model.transcribe.call_args[1]
+        assert "words" not in result.segments[0]
+
     @pytest.mark.parametrize("device, fp16", [(None, False), ("cuda", True)])
     def test_transcribe_fp16_only_off_cpu(self, mock_whisper, audio_file, device, fp16):
         """FP16 is requested only on GPU (Whisper warns and falls back to FP32 on CPU)."""
@@ -469,7 +501,15 @@ class TestFasterWhisperBackend:
         backend.load_model("tiny")
         result = backend.transcribe(audio_file, language="de", task="transcribe", verbose=False)
 
-        model.transcribe.assert_called_once_with(str(audio_file), language="de", task="transcribe", log_progress=False)
+        model.transcribe.assert_called_once_with(
+            str(audio_file),
+            language="de",
+            task="transcribe",
+            log_progress=False,
+            initial_prompt=None,
+            vad_filter=False,
+            word_timestamps=False,
+        )
         assert result.text == "Hallo Welt"
         assert result.language == "de"
         assert [(s["id"], s["start"], s["end"], s["text"]) for s in result.segments] == [
@@ -477,6 +517,35 @@ class TestFasterWhisperBackend:
             (2, 1.5, 3.0, " Welt"),
         ]
         assert result.to_dict()["duration"] == 3.0
+        assert "words" not in result.segments[0]
+
+    def test_transcribe_accuracy_options(self, mock_faster_whisper, audio_file):
+        """--prompt, --vad and word timestamps map to initial_prompt, vad_filter and Segment.words."""
+        model = mock_faster_whisper.WhisperModel.return_value
+        words = [SimpleNamespace(word=" Hi", start=0.0, end=0.4, probability=0.9)]
+        seg = SimpleNamespace(
+            id=0,
+            start=0.0,
+            end=0.4,
+            text=" Hi",
+            tokens=[1],
+            temperature=0.0,
+            avg_logprob=-0.1,
+            compression_ratio=1.0,
+            no_speech_prob=0.0,
+            words=words,
+        )
+        info = SimpleNamespace(language="en", duration=0.4, language_probability=0.99)
+        model.transcribe.return_value = (iter([seg]), info)
+
+        backend = FasterWhisperBackend()
+        backend.load_model("tiny")
+        result = backend.transcribe(audio_file, prompt="Kubernetes", vad=True, word_timestamps=True)
+
+        kwargs = model.transcribe.call_args[1]
+        assert (kwargs["initial_prompt"], kwargs["vad_filter"], kwargs["word_timestamps"]) == ("Kubernetes", True, True)
+        assert result.segments[0]["words"] == [{"word": " Hi", "start": 0.0, "end": 0.4, "probability": 0.9}]
+        assert FasterWhisperBackend.capabilities == {"prompt", "vad", "word_timestamps"}
 
 
 class FakeInputs(dict):
