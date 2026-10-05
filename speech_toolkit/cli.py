@@ -1,6 +1,7 @@
 """The ``transcribe`` command: offline speech-to-text with optional speaker labels.
 
-Transcribes audio/video with a pluggable backend (Whisper, faster-whisper, Voxtral) and can
+Transcribes audio/video with a pluggable backend (Whisper, faster-whisper, Voxtral, Parakeet,
+Canary) and can
 label speakers with pyannote.audio. Nothing is sent to a cloud API.
 
 Examples
@@ -62,7 +63,7 @@ def positive_int(value: str) -> int:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="transcribe",
-        description="Transcribe audio offline with Whisper, faster-whisper or Voxtral, "
+        description="Transcribe audio offline with Whisper, faster-whisper, Voxtral, Parakeet or Canary, "
         "optionally labelling speakers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""

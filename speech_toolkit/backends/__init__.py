@@ -6,6 +6,8 @@ for loading and using them. Supported backends:
 - **whisper**: OpenAI Whisper (default) - fast, accurate, multiple model sizes
 - **faster-whisper**: CTranslate2 Whisper - faster and lighter, no torch needed
 - **voxtral**: Mistral Voxtral Mini/Small - strong multilingual support
+- **parakeet**: NVIDIA Parakeet TDT - fast and accurate, with word timestamps
+- **canary**: NVIDIA Canary - multilingual transcription and translation
 
 Heavy libraries (torch, transformers, ...) are imported only when a model is loaded,
 so importing this package and listing backends/models stays fast.
@@ -28,6 +30,7 @@ from typing import Dict, List, Type
 
 from .base import TranscriptionBackend, TranscriptionResult
 from .faster_whisper_backend import FasterWhisperBackend
+from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
 from .whisper_backend import WhisperBackend
 
@@ -36,6 +39,8 @@ _BACKENDS: Dict[str, Type[TranscriptionBackend]] = {
     "whisper": WhisperBackend,
     "faster-whisper": FasterWhisperBackend,
     "voxtral": VoxtralBackend,
+    "parakeet": ParakeetBackend,
+    "canary": CanaryBackend,
 }
 
 # Default backend
@@ -116,6 +121,8 @@ __all__ = [
     "WhisperBackend",
     "FasterWhisperBackend",
     "VoxtralBackend",
+    "ParakeetBackend",
+    "CanaryBackend",
     "list_backends",
     "get_backend",
     "get_backend_class",

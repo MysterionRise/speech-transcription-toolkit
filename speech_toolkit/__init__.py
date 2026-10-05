@@ -1,4 +1,4 @@
-"""Offline speech-to-text with Whisper, faster-whisper or Voxtral, optionally labelling speakers.
+"""Offline speech-to-text with Whisper, faster-whisper, Voxtral, Parakeet or Canary, optionally labelling speakers.
 
     from speech_toolkit import transcribe
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from .api import Transcriber, transcribe
 from .backends import TranscriptionBackend, TranscriptionResult, list_backends, register_backend
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Transcriber",

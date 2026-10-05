@@ -7,8 +7,9 @@ import os
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
+from .media import SAMPLE_RATE, load_audio
+
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
-SAMPLE_RATE = 16000
 
 
 def load_diarization_pipeline(device: Optional[str] = None) -> Any:
@@ -43,10 +44,9 @@ def diarize_audio(
 ) -> List[Tuple[float, float, str]]:
     """Return list of (start, end, speaker_label)."""
     import torch
-    from whisper import load_audio
 
     # Decode with ffmpeg here so pyannote needs no audio I/O backend of its own, whatever the format.
-    waveform = torch.from_numpy(load_audio(str(audio_path), sr=SAMPLE_RATE)).unsqueeze(0)
+    waveform = torch.from_numpy(load_audio(audio_path)).unsqueeze(0)
     output = pipeline(
         {"waveform": waveform, "sample_rate": SAMPLE_RATE},
         num_speakers=num_speakers,

@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from speech_toolkit.backends import (
@@ -561,13 +562,13 @@ class FakeInputs(dict):
 
 @pytest.fixture
 def voxtral_modules():
-    """Stand-ins for torch, transformers and whisper (audio decoding) as used by the Voxtral backend."""
+    """Stand-ins for torch, transformers and the ffmpeg audio loader as used by the Voxtral backend."""
     torch = MagicMock()
     torch.cuda.is_available.return_value = False
     transformers = MagicMock()
-    whisper = MagicMock()
-    with patch.dict(sys.modules, {"torch": torch, "transformers": transformers, "whisper": whisper}):
-        yield SimpleNamespace(torch=torch, transformers=transformers, whisper=whisper)
+    with patch.dict(sys.modules, {"torch": torch, "transformers": transformers}):
+        with patch("speech_toolkit.backends.voxtral_backend.load_audio") as load_audio:
+            yield SimpleNamespace(torch=torch, transformers=transformers, load_audio=load_audio)
 
 
 class TestVoxtralBackend:
@@ -662,9 +663,9 @@ class TestVoxtralBackend:
             backend.transcribe(tmp_path / "nonexistent.mp3")
 
     def test_transcribe_chunks_become_segments(self, voxtral_modules, audio_file, capsys):
-        """70 s of audio -> 30 s chunks, transcribed in batches, one timestamped segment each."""
+        """70 s of audio -> chunks of up to 30 s, transcribed in batches, one timestamped segment each."""
         rate = 16000
-        voxtral_modules.whisper.load_audio.return_value = [0.0] * (70 * rate)
+        voxtral_modules.load_audio.return_value = np.zeros(70 * rate, dtype=np.float32)
         processor = voxtral_modules.transformers.AutoProcessor.from_pretrained.return_value
         processor.apply_transcription_request.side_effect = [FakeInputs(prompt_len=5), FakeInputs(prompt_len=5)]
         processor.batch_decode.side_effect = [[" one ", "two"], [""]]
@@ -675,23 +676,23 @@ class TestVoxtralBackend:
             result = backend.transcribe(audio_file, language="en")
 
         first_call = processor.apply_transcription_request.call_args_list[0][1]
-        assert [len(chunk) for chunk in first_call["audio"]] == [30 * rate, 30 * rate]
+        assert len(first_call["audio"]) == 2
+        assert all(len(chunk) <= 30 * rate for chunk in first_call["audio"])
         assert first_call["model_id"] == "mistralai/Voxtral-Mini-3B-2507"
         assert first_call["language"] == "en"
         assert first_call["sampling_rate"] == rate
         assert first_call["format"] == "wav"
-        assert [(s["id"], s["start"], s["end"], s["text"]) for s in result.segments] == [
-            (0, 0.0, 30.0, "one"),
-            (1, 30.0, 60.0, "two"),
-            (2, 60.0, 70.0, ""),
-        ]
+        assert [(s["id"], s["text"]) for s in result.segments] == [(0, "one"), (1, "two"), (2, "")]
+        # Silent audio: each cut lands at the start of the 5 s search window (25 s in, plus half a 100 ms window).
+        assert [s["start"] for s in result.segments] == pytest.approx([0.0, 25.05, 50.1])
+        assert [s["end"] for s in result.segments] == pytest.approx([25.05, 50.1, 70.0])
         assert result.text == "one two"
         assert result.language == "en"
         assert "3/3 chunks" in capsys.readouterr().err
 
     def test_transcribe_empty_audio(self, voxtral_modules, audio_file):
         """Test that empty audio produces an empty result without calling the model."""
-        voxtral_modules.whisper.load_audio.return_value = []
+        voxtral_modules.load_audio.return_value = np.zeros(0, dtype=np.float32)
 
         backend = VoxtralBackend()
         backend.load_model("voxtral-mini")

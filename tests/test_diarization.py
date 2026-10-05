@@ -292,11 +292,10 @@ class TestDiarizeAudio:
 
     @pytest.fixture
     def audio_modules(self):
-        """Stand-ins for torch and whisper's ffmpeg audio loader."""
+        """Stand-ins for torch and the ffmpeg audio loader."""
         torch = MagicMock()
-        whisper = MagicMock()
-        with patch.dict(sys.modules, {"torch": torch, "whisper": whisper}):
-            yield SimpleNamespace(torch=torch, whisper=whisper)
+        with patch.dict(sys.modules, {"torch": torch}), patch("speech_toolkit.diarization.load_audio") as load_audio:
+            yield SimpleNamespace(torch=torch, load_audio=load_audio)
 
     def test_diarize_audio_uses_exclusive_diarization(self, audio_modules, tmp_path: pathlib.Path):
         """pyannote 4 output: the exclusive (non-overlapping) diarization is used."""
@@ -310,7 +309,7 @@ class TestDiarizeAudio:
         result = diarize_audio(tmp_path / "audio.mp3", pipeline, num_speakers=2)
 
         assert result == [(0.0, 2.5, "SPEAKER_00"), (2.5, 5.0, "SPEAKER_01")]
-        audio_modules.whisper.load_audio.assert_called_once_with(str(tmp_path / "audio.mp3"), sr=16000)
+        audio_modules.load_audio.assert_called_once_with(tmp_path / "audio.mp3")
         (audio_input,), hints = pipeline.call_args
         assert audio_input["sample_rate"] == 16000
         assert audio_input["waveform"] is audio_modules.torch.from_numpy.return_value.unsqueeze.return_value
