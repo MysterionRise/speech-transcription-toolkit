@@ -10,6 +10,7 @@ import pytest
 import speech_toolkit
 from speech_toolkit import Transcriber, TranscriptionResult, transcribe
 from speech_toolkit.api import configure_hf_token
+from tests.conftest import FakeWordsBackend
 
 
 @pytest.fixture
@@ -115,6 +116,50 @@ class TestTranscriber:
         assert os.environ["HF_TOKEN"] == "hf_test"
 
 
+class TestAccuracyOptions:
+    def test_supported_options_reach_the_backend(self, fake_backend, audio):
+        transcriber = Transcriber("fake-words")
+        result = transcriber.transcribe(audio, prompt="Kubernetes", vad=True, word_timestamps=True)
+
+        assert FakeWordsBackend.calls == [{"prompt": "Kubernetes", "vad": True, "word_timestamps": True}]
+        assert [w["word"] for w in result.segments[0]["words"]] == [" Hello", " from", " talk."]
+
+    def test_unset_options_are_not_passed(self, fake_backend, audio):
+        Transcriber("fake-words").transcribe(audio)
+        assert FakeWordsBackend.calls == [{}]
+
+    def test_unsupported_options_warn_and_are_dropped(self, fake_backend, audio):
+        transcriber = Transcriber("fake")  # takes none of the optional keywords
+
+        assert not transcriber.supports("vad")
+        with pytest.warns(UserWarning, match="fake backend doesn.t support (prompt|vad)") as caught:
+            result = transcriber.transcribe(audio, prompt="Kubernetes", vad=True)
+        assert len(caught) == 2  # prompt and vad
+        assert result.text == " Hello from talk."
+
+    def test_diarization_turns_on_word_timestamps(self, fake_backend, audio, monkeypatch):
+        monkeypatch.setattr("speech_toolkit.api.load_diarization_pipeline", lambda device: "pipeline")
+        monkeypatch.setattr(
+            "speech_toolkit.api.diarize_audio",
+            lambda path, pipeline, **hints: [(0.0, 0.9, "SPEAKER_00"), (0.9, 1.5, "SPEAKER_01")],
+        )
+
+        result = Transcriber("fake-words", diarize=True).transcribe(audio)
+
+        assert FakeWordsBackend.calls == [{"word_timestamps": True}]
+        assert result.render() == "[SPEAKER_00] Hello from\n[SPEAKER_01] talk."
+
+    def test_diarization_without_word_timestamps_support(self, fake_backend, audio, monkeypatch, recwarn):
+        """Backends without word timings label whole segments, and no warning is raised for the default."""
+        monkeypatch.setattr("speech_toolkit.api.load_diarization_pipeline", lambda device: "pipeline")
+        monkeypatch.setattr("speech_toolkit.api.diarize_audio", lambda path, pipeline, **hints: [(0.0, 2.0, "S1")])
+
+        result = Transcriber("fake", diarize=True).transcribe(audio)
+
+        assert result.render() == "[S1] Hello from talk."
+        assert not [w for w in recwarn if issubclass(w.category, UserWarning)]
+
+
 class TestTranscribeFunction:
     def test_one_shot(self, fake_backend, audio, tmp_path):
         result = transcribe(audio, backend="fake", model="small", language="en")
@@ -122,6 +167,10 @@ class TestTranscribeFunction:
         assert result.language == "en"
         result.save(tmp_path / "talk.srt")
         assert (tmp_path / "talk.srt").read_text(encoding="utf-8").startswith("1\n00:00:00,000 --> 00:00:01,500\n")
+
+    def test_one_shot_passes_accuracy_options(self, fake_backend, audio):
+        transcribe(audio, backend="fake-words", prompt="Grafana", vad=True, word_timestamps=False)
+        assert FakeWordsBackend.calls == [{"prompt": "Grafana", "vad": True}]
 
 
 class TestConfigureHfToken:

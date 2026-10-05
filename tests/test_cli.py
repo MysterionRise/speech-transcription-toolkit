@@ -85,6 +85,14 @@ class TestParseArgs:
         assert args.audio == [pathlib.Path("a.mp3"), pathlib.Path("b.wav")]
         assert args.outdir == pathlib.Path("out")
 
+    def test_parse_args_accuracy_options(self):
+        """Test parsing --prompt, --vad, --word-timestamps and --max-line-width."""
+        args = parse_args(["a.mp3", "--prompt", "Kubernetes", "--vad", "--word-timestamps", "--max-line-width", "42"])
+        assert (args.prompt, args.vad, args.word_timestamps, args.max_line_width) == ("Kubernetes", True, True, 42)
+
+        args = parse_args(["a.mp3"])
+        assert (args.prompt, args.vad, args.word_timestamps, args.max_line_width) == (None, False, False, None)
+
     def test_parse_args_backend_selection(self):
         """Test parsing with backend selection."""
         args = parse_args(["audio.mp3", "--backend", "voxtral"])
@@ -194,7 +202,7 @@ class TestShowBackends:
 
     def test_listing_does_not_import_heavy_libraries(self):
         """--help/--list-* must stay fast: no torch/whisper/pyannote import just to print names."""
-        heavy = ("torch", "whisper", "pyannote.audio", "transformers", "faster_whisper")
+        heavy = ("torch", "whisper", "pyannote.audio", "transformers", "faster_whisper", "numpy")
         code = (
             "import sys, speech_toolkit.cli as cli; cli.show_backends(); "
             f"print([m for m in {heavy!r} if m in sys.modules])"
@@ -384,6 +392,89 @@ class TestMain:
         cli.main([str(audio), "-b", "fake", "-m", "small", "-q", "--diarize"])
 
         assert capsys.readouterr().out == "[SPEAKER_00] Hello from talk.\n"
+
+    def test_accuracy_options_reach_the_backend(self, fake_backend, tmp_path):
+        from tests.conftest import FakeWordsBackend
+
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+        out = tmp_path / "talk.json"
+
+        cli.main(
+            [str(audio), "-b", "fake-words", "-q", "--prompt", "Grafana", "--vad", "--word-timestamps", "-o", str(out)]
+        )
+
+        assert FakeWordsBackend.calls == [{"prompt": "Grafana", "vad": True, "word_timestamps": True}]
+        assert json.loads(out.read_text(encoding="utf-8"))["segments"][0]["words"][0]["word"] == " Hello"
+
+    def test_unsupported_option_prints_one_warning_line(self, fake_backend, tmp_path, capsys):
+        for name in ("a.wav", "b.wav"):
+            (tmp_path / name).touch()
+
+        cli.main([str(tmp_path), "-b", "fake", "-q", "--vad"])
+
+        err = capsys.readouterr().err
+        assert err.count("Warning: the fake backend doesn't support vad; ignoring it.") == 1
+
+    def test_max_line_width_uses_word_timings(self, fake_backend, tmp_path):
+        from tests.conftest import FakeWordsBackend
+
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+        out = tmp_path / "talk.srt"
+
+        cli.main(
+            [
+                str(audio),
+                "-b",
+                "fake-words",
+                "-q",
+                "-o",
+                str(out),
+                "--max-line-width",
+                "5",
+                "--json",
+                str(tmp_path / "t.json"),
+            ]
+        )
+
+        assert FakeWordsBackend.calls == [{"word_timestamps": True}]  # turned on for the subtitle timings
+        assert out.read_text(encoding="utf-8") == (
+            "1\n00:00:00,000 --> 00:00:01,000\nHello\nfrom\n\n2\n00:00:01,000 --> 00:00:01,500\ntalk.\n"
+        )
+
+    def test_max_line_width_ignored_for_plain_text(self, fake_backend, tmp_path, capsys):
+        from tests.conftest import FakeWordsBackend
+
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+
+        cli.main([str(audio), "-b", "fake-words", "-q", "--max-line-width", "5"])
+
+        assert FakeWordsBackend.calls == [{}]  # no word timings needed for txt
+        assert capsys.readouterr().out == "Hello from talk.\n"
+
+    def test_max_line_width_without_word_timings(self, fake_backend, tmp_path):
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+        out = tmp_path / "talk.vtt"
+
+        cli.main([str(audio), "-b", "fake", "-q", "-o", str(out), "--max-line-width", "10"])
+
+        assert out.read_text(encoding="utf-8") == ("WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello from\ntalk.\n")
+
+    def test_diarized_transcript_splits_on_word_timings(self, fake_backend, tmp_path, capsys, monkeypatch):
+        audio = tmp_path / "talk.mp3"
+        audio.touch()
+        monkeypatch.setattr("speech_toolkit.api.load_diarization_pipeline", lambda device: object())
+        monkeypatch.setattr(
+            "speech_toolkit.api.diarize_audio",
+            lambda path, pipe, **hints: [(0.0, 0.9, "SPEAKER_00"), (0.9, 1.5, "SPEAKER_01")],
+        )
+
+        cli.main([str(audio), "-b", "fake-words", "-q", "--diarize"])
+
+        assert capsys.readouterr().out == "[SPEAKER_00] Hello from\n[SPEAKER_01] talk.\n"
 
     @pytest.mark.parametrize("model, warned", [("turbo", True), ("small", False)])
     def test_translate_with_turbo_warns(self, fake_backend, tmp_path, capsys, model, warned):

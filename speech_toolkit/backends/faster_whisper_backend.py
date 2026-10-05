@@ -8,7 +8,7 @@ models download from the Hugging Face Hub on first use.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import TranscriptionBackend, TranscriptionResult
 
@@ -18,6 +18,7 @@ class FasterWhisperBackend(TranscriptionBackend):
 
     name = "faster-whisper"
     description = "faster-whisper - CTranslate2 Whisper: faster, lighter, no torch needed"
+    capabilities = frozenset({"prompt", "vad", "word_timestamps"})
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
     MODELS = [
@@ -95,6 +96,10 @@ class FasterWhisperBackend(TranscriptionBackend):
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
+        *,
+        prompt: Optional[str] = None,
+        vad: bool = False,
+        word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio using faster-whisper.
 
@@ -103,6 +108,9 @@ class FasterWhisperBackend(TranscriptionBackend):
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
+            prompt: Names, terms or a sample sentence that guide spelling (initial_prompt).
+            vad: Skip silence with the built-in Silero VAD filter.
+            word_timestamps: Add per-word timings ("words") to each segment.
 
         Returns:
             TranscriptionResult with transcript text and segments.
@@ -117,21 +125,16 @@ class FasterWhisperBackend(TranscriptionBackend):
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        segment_iter, info = self._model.transcribe(str(audio_path), language=language, task=task, log_progress=verbose)
-        segments = [
-            {
-                "id": seg.id,
-                "start": seg.start,
-                "end": seg.end,
-                "text": seg.text,
-                "tokens": seg.tokens,
-                "temperature": seg.temperature,
-                "avg_logprob": seg.avg_logprob,
-                "compression_ratio": seg.compression_ratio,
-                "no_speech_prob": seg.no_speech_prob,
-            }
-            for seg in segment_iter  # a generator: decoding happens while iterating
-        ]
+        segment_iter, info = self._model.transcribe(
+            str(audio_path),
+            language=language,
+            task=task,
+            log_progress=verbose,
+            initial_prompt=prompt,
+            vad_filter=vad,
+            word_timestamps=word_timestamps,
+        )
+        segments = [_segment(seg) for seg in segment_iter]  # a generator: decoding happens while iterating
 
         return TranscriptionResult(
             text="".join(seg["text"] for seg in segments).strip(),
@@ -139,3 +142,23 @@ class FasterWhisperBackend(TranscriptionBackend):
             language=info.language,
             raw={"duration": info.duration, "language_probability": info.language_probability},
         )
+
+
+def _segment(seg: Any) -> Dict[str, Any]:
+    """A faster-whisper Segment in the standard format (with "words" when word timestamps were asked for)."""
+    segment: Dict[str, Any] = {
+        "id": seg.id,
+        "start": seg.start,
+        "end": seg.end,
+        "text": seg.text,
+        "tokens": seg.tokens,
+        "temperature": seg.temperature,
+        "avg_logprob": seg.avg_logprob,
+        "compression_ratio": seg.compression_ratio,
+        "no_speech_prob": seg.no_speech_prob,
+    }
+    if getattr(seg, "words", None):
+        segment["words"] = [
+            {"word": w.word, "start": w.start, "end": w.end, "probability": w.probability} for w in seg.words
+        ]
+    return segment

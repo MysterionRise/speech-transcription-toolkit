@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
+from .media import SAMPLE_RATE, load_audio
+
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
-SAMPLE_RATE = 16000
 
 
 def load_diarization_pipeline(device: Optional[str] = None) -> Any:
@@ -42,10 +44,9 @@ def diarize_audio(
 ) -> List[Tuple[float, float, str]]:
     """Return list of (start, end, speaker_label)."""
     import torch
-    from whisper import load_audio
 
     # Decode with ffmpeg here so pyannote needs no audio I/O backend of its own, whatever the format.
-    waveform = torch.from_numpy(load_audio(str(audio_path), sr=SAMPLE_RATE)).unsqueeze(0)
+    waveform = torch.from_numpy(load_audio(audio_path)).unsqueeze(0)
     output = pipeline(
         {"waveform": waveform, "sample_rate": SAMPLE_RATE},
         num_speakers=num_speakers,
@@ -61,7 +62,11 @@ def merge_diarization(
     transcription_result: Dict[str, Any],
     spk_segments: List[Tuple[float, float, str]],
 ) -> List[Dict[str, Any]]:
-    """Attach to each segment the speaker who talks the most during it."""
+    """Attach to each segment the speaker who talks the most during it.
+
+    Segments with word timings (``"words"``) are labelled word by word instead and split wherever
+    the speaker changes, so a quick reply inside one segment gets its own line.
+    """
     turns = sorted(spk_segments, key=lambda turn: turn[0])
 
     output: List[Dict[str, Any]] = []
@@ -69,8 +74,38 @@ def merge_diarization(
         if "start" not in seg or "end" not in seg:
             output.append({**seg, "speaker": "unknown"})
             continue
-        output.append({**seg, "speaker": _best_speaker(seg["start"], seg["end"], turns)})
+        speaker = _best_speaker(seg["start"], seg["end"], turns)
+        words = seg.get("words") or []
+        if not words or not all("start" in w and "end" in w for w in words):
+            output.append({**seg, "speaker": speaker})
+            continue
+        labels = _fill_unknown([_best_speaker(w["start"], w["end"], turns) for w in words], speaker)
+        for label, group in itertools.groupby(zip(words, labels), key=lambda pair: pair[1]):
+            part = [word for word, _ in group]
+            text = "".join(w["word"] for w in part)
+            output.append(
+                {
+                    **seg,
+                    "start": part[0]["start"],
+                    "end": part[-1]["end"],
+                    "text": text,
+                    "words": part,
+                    "speaker": label,
+                }
+            )
     return output
+
+
+def _fill_unknown(labels: List[str], fallback: str) -> List[str]:
+    """Give words in pauses between turns ("unknown") the speaker of the word before them (else after)."""
+    known = [label for label in labels if label != "unknown"]
+    if not known:
+        return [fallback] * len(labels)
+    filled, previous = [], known[0]
+    for label in labels:
+        previous = label if label != "unknown" else previous
+        filled.append(previous)
+    return filled
 
 
 def _best_speaker(start: float, end: float, turns: List[Tuple[float, float, str]]) -> str:

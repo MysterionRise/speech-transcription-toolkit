@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import pathlib
 import warnings
-from typing import Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from .backends import DEFAULT_BACKEND, TranscriptionBackend, TranscriptionResult, get_backend_class
 from .diarization import diarize_audio, load_diarization_pipeline, merge_diarization
@@ -72,12 +72,19 @@ class Transcriber:
         """Whether results get speaker labels."""
         return self._pipeline is not None
 
+    def supports(self, option: str) -> bool:
+        """Whether the backend honours *option*: ``"prompt"``, ``"vad"`` or ``"word_timestamps"``."""
+        return option in self.backend.capabilities
+
     def transcribe(
         self,
         audio: AudioPath,
         language: Optional[str] = None,
         task: str = "transcribe",
         *,
+        prompt: Optional[str] = None,
+        vad: bool = False,
+        word_timestamps: Optional[bool] = None,
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
@@ -89,8 +96,14 @@ class Transcriber:
             audio: Path to anything ffmpeg can decode.
             language: Language code such as ``"en"`` (default: auto-detect).
             task: ``"transcribe"``, or ``"translate"`` to English (Whisper models only).
+            prompt: Names, terms or a sample sentence that guide spelling (whisper, faster-whisper).
+            vad: Skip silence first, which avoids made-up text in quiet parts (faster-whisper).
+            word_timestamps: Add per-word timings to each segment's ``"words"``. The default (None) turns
+                them on when diarizing, so speaker labels can change mid-segment.
             num_speakers, min_speakers, max_speakers: Speaker-count hints for diarization.
             verbose: Show the backend's progress output on stderr.
+
+        Options the backend doesn't support are skipped with a warning.
 
         Returns:
             The transcript; ``result.speaker_segments`` holds speaker-labelled segments when diarizing.
@@ -103,9 +116,12 @@ class Transcriber:
                 "use model 'medium' or 'large-v3'.",
                 stacklevel=2,
             )
+        if word_timestamps is None:
+            word_timestamps = self.diarize and self.supports("word_timestamps")
 
         path = pathlib.Path(audio)
-        result = self.backend.transcribe(audio_path=path, language=language, task=task, verbose=verbose)
+        options = self._backend_options(prompt=prompt, vad=vad, word_timestamps=word_timestamps)
+        result = self.backend.transcribe(audio_path=path, language=language, task=task, verbose=verbose, **options)
         if self._pipeline is not None:
             turns = diarize_audio(
                 path,
@@ -116,6 +132,21 @@ class Transcriber:
             )
             result.speaker_segments = merge_diarization({"segments": result.segments}, turns)
         return result
+
+    def _backend_options(self, **requested: Any) -> Dict[str, Any]:
+        """The requested options the backend supports; the others are dropped with a warning."""
+        options: Dict[str, Any] = {}
+        for name, value in requested.items():
+            if not value:
+                continue
+            if self.supports(name):
+                options[name] = value
+            else:
+                warnings.warn(
+                    f"the {self.backend_name} backend doesn't support {name.replace('_', ' ')}; ignoring it.",
+                    stacklevel=3,
+                )
+        return options
 
 
 def transcribe(
@@ -128,17 +159,26 @@ def transcribe(
     device: Optional[str] = None,
     diarize: bool = False,
     hf_token: Optional[str] = None,
+    prompt: Optional[str] = None,
+    vad: bool = False,
+    word_timestamps: Optional[bool] = None,
     num_speakers: Optional[int] = None,
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
     verbose: bool = False,
 ) -> TranscriptionResult:
-    """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once."""
+    """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once.
+
+    Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`.
+    """
     transcriber = Transcriber(backend, model, device=device, diarize=diarize, hf_token=hf_token)
     return transcriber.transcribe(
         audio,
         language,
         task,
+        prompt=prompt,
+        vad=vad,
+        word_timestamps=word_timestamps,
         num_speakers=num_speakers,
         min_speakers=min_speakers,
         max_speakers=max_speakers,

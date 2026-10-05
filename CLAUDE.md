@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (Whisper, faster-whisper, Voxtral), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
+Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (Whisper, faster-whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
 
 ## Common Commands
 
 ```bash
 pip install -r requirements-dev.txt   # enough for unit tests (model libraries are mocked)
-pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, diarize
+pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize
 pre-commit install
 
 pytest                                           # all tests, 80% coverage gate
@@ -30,21 +30,22 @@ speech_toolkit/
 ├── api.py          Transcriber (loads diarization, then the model, once) and the one-shot transcribe()
 ├── cli.py          `transcribe` command: parse_args → plan_outputs → run_jobs (load_transcriber, write_output)
 ├── diarization.py  load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
-├── formats.py      render(result, fmt) for txt/srt/vtt/json; format_for_path, write_text
-├── media.py        collect_files(): expand folders into (file, relative path) pairs
+├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
+├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via pydub/ffmpeg
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
     ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)
     ├── whisper_backend.py          openai-whisper (default)
     ├── faster_whisper_backend.py   faster-whisper / CTranslate2
-    └── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
+    ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
+    └── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
 main.py, convert.py   checkout shims for the two commands (not packaged)
 ```
 
 Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__version__`). Pushing a `v*` tag runs `.github/workflows/release.yml` (PyPI trusted publishing + GitHub release); bump `__version__` first.
 
-**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`.
+**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`. Optional features (`prompt`, `vad`, `word_timestamps`) go in the class's `capabilities` and are keyword-only `transcribe()` arguments; `Transcriber` passes only declared ones and warns about the rest. Word timings use Whisper's format: `segment["words"] = [{"word": " Hi", "start": 0.0, "end": 0.4}]`.
 
 ## Key Design Rules
 
@@ -63,5 +64,5 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 
 ## External Requirements
 
-- ffmpeg on PATH (audio decoding for every backend and `ogg2wav`).
+- ffmpeg on PATH (audio decoding for every backend, diarization and `ogg2wav`).
 - Diarization: accept the terms of `pyannote/speaker-diarization-community-1` on Hugging Face and set `HF_TOKEN`.

@@ -13,6 +13,8 @@ pytest-xdist==3.8.0  # Parallel test execution
 # Imported by speech_toolkit/convert.py
 pydub>=0.25.1
 audioop-lts>=0.2.2; python_version >= "3.13"
+# Audio decoding and chunking (speech_toolkit/media.py); unpinned so each Python gets a matching wheel
+numpy>=1.26
 
 # Code quality
 black==26.5.1

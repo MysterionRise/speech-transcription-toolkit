@@ -140,7 +140,7 @@ jobs:
     - name: Install the package (CPU-only torch)
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install ".[faster-whisper]"
+        pip install ".[faster-whisper,nvidia]"
 
     - name: Create speech samples
       run: |
@@ -177,6 +177,24 @@ jobs:
         cat fw.txt
         grep -qiE "hello|world" fw.txt
 
+    - name: Accuracy options and subtitle lines
+      run: |
+        transcribe speech.wav -b faster-whisper -m tiny -q --vad --prompt "Speech recognition." --max-line-width 20 -o lines.srt
+        cat lines.srt
+        test "$(grep -c -- '-->' lines.srt)" -ge 2  # 47 characters at 20 per line, 2 lines per cue
+
+    - name: Parakeet backend
+      run: |
+        transcribe speech.wav -b parakeet -q --word-timestamps -o parakeet.json
+        python -c "import json; d = json.load(open('parakeet.json')); print(d['text']); assert d['segments'][0]['words']"
+        grep -qiE "hello|world" parakeet.json
+
+    - name: Canary backend
+      run: |
+        transcribe speech.wav -b canary -l en -q > canary.txt
+        cat canary.txt
+        grep -qiE "hello|world" canary.txt
+
     - name: Python API
       run: |
         cd "$RUNNER_TEMP"  # import the installed package, not the checkout
@@ -203,4 +221,7 @@ jobs:
           out.json
           subs/
           fw.txt
+          lines.srt
+          parakeet.json
+          canary.txt
           api.vtt

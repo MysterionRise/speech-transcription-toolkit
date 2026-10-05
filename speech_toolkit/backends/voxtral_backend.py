@@ -11,11 +11,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
 
-SAMPLE_RATE = 16000
 # Voxtral's transcription mode returns text without timestamps, so audio is split into
-# fixed chunks and each chunk becomes one (coarsely) timestamped segment.
+# chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
 CHUNK_SECONDS = 30
 BATCH_SIZE = 8
 MAX_NEW_TOKENS = 500
@@ -133,18 +133,14 @@ class VoxtralBackend(TranscriptionBackend):
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        from whisper import load_audio  # ffmpeg decode to 16 kHz mono float32
-
-        audio = load_audio(str(audio_path), sr=SAMPLE_RATE)
-        step = CHUNK_SECONDS * SAMPLE_RATE
-        chunks = [audio[i : i + step] for i in range(0, len(audio), step)]
+        chunks = split_audio(load_audio(audio_path), CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
         for first in range(0, len(chunks), BATCH_SIZE):
             batch = chunks[first : first + BATCH_SIZE]
-            for index, (chunk, text) in enumerate(zip(batch, self._transcribe_batch(batch, language)), start=first):
-                start = float(index * CHUNK_SECONDS)
-                segments.append({"id": index, "start": start, "end": start + len(chunk) / SAMPLE_RATE, "text": text})
+            texts = self._transcribe_batch([samples for _, samples in batch], language)
+            for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
+                segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
             if verbose:
                 print(f"Voxtral: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
 

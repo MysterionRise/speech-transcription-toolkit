@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Union
 
 from ..formats import format_for_path, render, write_text
 
@@ -51,14 +51,19 @@ class TranscriptionResult:
             data["speaker_segments"] = self.speaker_segments
         return data
 
-    def render(self, fmt: str = "txt") -> str:
-        """The result as ``txt``, ``srt``, ``vtt`` or ``json`` text (speaker-labelled after diarization)."""
-        return render(self.to_dict(), fmt)
+    def render(self, fmt: str = "txt", max_line_width: Optional[int] = None) -> str:
+        """The result as ``txt``, ``srt``, ``vtt`` or ``json`` text (speaker-labelled after diarization).
 
-    def save(self, path: Union[str, "os.PathLike[str]"], fmt: Optional[str] = None) -> Path:
+        *max_line_width* splits subtitles into lines of at most that many characters, two per cue.
+        """
+        return render(self.to_dict(), fmt, max_line_width)
+
+    def save(
+        self, path: Union[str, "os.PathLike[str]"], fmt: Optional[str] = None, max_line_width: Optional[int] = None
+    ) -> Path:
         """Write the result to *path*, in *fmt* or else the format its extension names (default txt)."""
         dest = Path(path)
-        write_text(dest, self.render(fmt or format_for_path(dest)))
+        write_text(dest, self.render(fmt or format_for_path(dest), max_line_width))
         return dest
 
 
@@ -67,10 +72,21 @@ class TranscriptionBackend(ABC):
 
     All transcription backends (Whisper, Voxtral, etc.) must inherit from this
     class and implement the required methods.
+
+    Optional features are opt-in: a backend lists the ones it supports in ``capabilities`` and
+    accepts the matching keyword-only arguments in ``transcribe()``:
+
+    - ``"prompt"`` (``prompt: str``): names, terms or a sample sentence that guide the transcript.
+    - ``"vad"`` (``vad: bool``): skip silence (voice activity detection) before transcribing.
+    - ``"word_timestamps"`` (``word_timestamps: bool``): give each segment a ``"words"`` list of
+      ``{"word": " Hello", "start": 0.0, "end": 0.4}`` dicts (Whisper's format; ``"probability"`` optional).
+
+    :class:`speech_toolkit.Transcriber` passes a backend only the options it declares.
     """
 
     name: str = "base"
     description: str = "Base transcription backend"
+    capabilities: FrozenSet[str] = frozenset()
 
     def __init__(self):
         self._model = None

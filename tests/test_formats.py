@@ -12,6 +12,7 @@ from speech_toolkit.formats import (
     _timestamp,
     format_for_path,
     render,
+    split_cues,
     to_json,
     to_srt,
     to_txt,
@@ -134,3 +135,62 @@ class TestWriteText:
         dest = tmp_path / "out.srt"
         write_text(dest, "1\n")
         assert dest.read_text(encoding="utf-8") == "1\n"
+
+
+WORDS = [
+    {"word": " Hello", "start": 0.0, "end": 0.5},
+    {"word": " there,", "start": 0.5, "end": 1.0},
+    {"word": " how", "start": 1.0, "end": 1.3},
+    {"word": " are", "start": 1.3, "end": 1.6},
+    {"word": " you", "start": 1.6, "end": 1.9},
+    {"word": " today?", "start": 1.9, "end": 2.5},
+]
+
+
+class TestSplitCues:
+    def test_word_timings_set_cue_times(self):
+        cue = {"start": 0.0, "end": 2.5, "text": " Hello there, how are you today?", "words": WORDS}
+
+        pieces = split_cues([cue], max_width=10)
+
+        assert pieces == [
+            {"start": 0.0, "end": 1.3, "text": "Hello\nthere, how"},
+            {"start": 1.3, "end": 2.5, "text": "are you\ntoday?"},
+        ]
+
+    def test_without_words_time_is_shared_by_length(self):
+        cue = {"start": 0.0, "end": 8.0, "text": " aaa bbb ccc ddd", "speaker": "SPEAKER_01"}
+
+        pieces = split_cues([cue], max_width=7, max_lines=1)
+
+        assert pieces == [
+            {"start": 0.0, "end": 4.0, "text": "aaa bbb", "speaker": "SPEAKER_01"},
+            {"start": 4.0, "end": 8.0, "text": "ccc ddd", "speaker": "SPEAKER_01"},
+        ]
+
+    def test_long_word_gets_its_own_line(self):
+        pieces = split_cues([{"start": 0.0, "end": 1.0, "text": "a supercalifragilistic b"}], max_width=5)
+
+        assert [p["text"] for p in pieces] == ["a\nsupercalifragilistic", "b"]
+
+    def test_words_without_times_fall_back_to_text(self):
+        cue = {"start": 0.0, "end": 2.0, "text": "one two", "words": [{"word": " one"}, {"word": " two"}]}
+
+        assert split_cues([cue], max_width=3) == [{"start": 0.0, "end": 2.0, "text": "one\ntwo"}]
+
+    def test_render_wraps_only_subtitles(self):
+        result = {
+            **RESULT,
+            "segments": [{"start": 0.0, "end": 2.5, "text": " Hello there, how are you today?", "words": WORDS}],
+        }
+
+        srt = render(result, "srt", max_line_width=10)
+        assert srt.startswith("1\n00:00:00,000 --> 00:00:01,300\nHello\nthere, how\n\n2\n")
+        assert render(result, "vtt", max_line_width=10).count("-->") == 2
+        assert render(result, "txt", max_line_width=10) == render(result, "txt")
+        assert render(result, "json", max_line_width=10) == render(result, "json")
+
+    def test_speaker_label_on_first_line(self):
+        result = {**DIARIZED, "speaker_segments": [{"start": 0.0, "end": 1.0, "text": "aaa bbb", "speaker": "S1"}]}
+        assert "[S1] aaa\nbbb" in render(result, "srt", max_line_width=3)
+        assert "<v S1>aaa\nbbb" in render(result, "vtt", max_line_width=3)
