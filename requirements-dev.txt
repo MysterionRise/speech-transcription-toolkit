@@ -16,6 +16,11 @@ audioop-lts>=0.2.2; python_version >= "3.13"
 # Audio decoding and chunking (speech_toolkit/media.py); unpinned so each Python gets a matching wheel
 numpy>=1.26
 
+# OpenAI-compatible server (speech_toolkit/server.py) and its TestClient; uvicorn is mocked in tests
+fastapi==0.142.2
+httpx==0.28.1
+python-multipart==0.0.32
+
 # Code quality
 black==26.5.1
 flake8==7.4.1

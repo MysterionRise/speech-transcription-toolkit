@@ -14,7 +14,7 @@ from __future__ import annotations
 from .api import Transcriber, transcribe
 from .backends import TranscriptionBackend, TranscriptionResult, list_backends, register_backend
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Transcriber",

@@ -202,7 +202,7 @@ class TestShowBackends:
 
     def test_listing_does_not_import_heavy_libraries(self):
         """--help/--list-* must stay fast: no torch/whisper/pyannote import just to print names."""
-        heavy = ("torch", "whisper", "pyannote.audio", "transformers", "faster_whisper", "numpy")
+        heavy = ("torch", "whisper", "pyannote.audio", "transformers", "faster_whisper", "numpy", "fastapi", "uvicorn")
         code = (
             "import sys, speech_toolkit.cli as cli; cli.show_backends(); "
             f"print([m for m in {heavy!r} if m in sys.modules])"

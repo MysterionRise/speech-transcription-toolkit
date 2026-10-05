@@ -42,9 +42,11 @@ class FakeWordsBackend(FakeBackend):
     name = "fake-words"
     capabilities = frozenset({"prompt", "vad", "word_timestamps"})
     calls: list = []
+    tasks: list = []
 
     def transcribe(self, audio_path, language=None, task="transcribe", verbose=True, **options):
         FakeWordsBackend.calls.append(options)
+        FakeWordsBackend.tasks.append(task)
         segment = {"start": 0.0, "end": 1.5, "text": f" Hello from {audio_path.stem}."}
         if options.get("word_timestamps"):
             segment["words"] = [
@@ -65,4 +67,5 @@ def fake_backend(monkeypatch):
     )
     FakeBackend.loaded = 0
     FakeWordsBackend.calls = []
+    FakeWordsBackend.tasks = []
     return FakeBackend

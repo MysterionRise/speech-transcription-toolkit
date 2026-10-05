@@ -10,7 +10,7 @@ Offline speech-to-text library and CLI (`pip install speech-transcription-toolki
 
 ```bash
 pip install -r requirements-dev.txt   # enough for unit tests (model libraries are mocked)
-pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize
+pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize, server
 pre-commit install
 
 pytest                                           # all tests, 80% coverage gate
@@ -32,6 +32,7 @@ speech_toolkit/
 ├── diarization.py  load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
 ├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
+├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via pydub/ffmpeg
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
@@ -54,6 +55,7 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - **Errors:** the library raises (`ValueError`, `RuntimeError`, `ImportError`, `FileNotFoundError`) and never prints or exits; only `cli.main()`/`run_jobs()` turn errors into `sys.exit`. In batch mode a failing file doesn't stop the others.
 - **Hugging Face token:** `--hf-token` / `Transcriber(hf_token=...)` / `HUGGINGFACE_TOKEN` are exported as `HF_TOKEN`.
 - **Offline:** `PYANNOTE_METRICS_ENABLED` defaults to `false` (pyannote 4 telemetry).
+- **Server:** `create_app(transcriber)` builds the FastAPI app (fastapi is imported inside it, so `server.py` has no `from __future__ import annotations`); errors are OpenAI-shaped (`APIError`), the model runs one request at a time, and uploads go to temp files that are always deleted.
 
 ## Testing Notes
 

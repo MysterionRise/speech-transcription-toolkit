@@ -15,7 +15,7 @@ pip install speech-transcription-toolkit                    # Whisper (default b
 pip install "speech-transcription-toolkit[faster-whisper]"  # add the faster-whisper backend
 ```
 
-Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels) and `[all]`.
+Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels), `[server]` (OpenAI-compatible API) and `[all]`.
 
 ## Usage
 
@@ -46,6 +46,23 @@ transcriber = Transcriber(backend="faster-whisper", model="small")  # load once,
 for path in ["a.mp3", "b.mp3"]:
     transcriber.transcribe(path, language="en").save(f"{path}.vtt")
 ```
+
+## OpenAI-compatible server
+
+```bash
+pip install "speech-transcription-toolkit[server,faster-whisper]"
+transcribe-server -b faster-whisper -m small      # http://127.0.0.1:8000/v1
+```
+
+Apps and SDKs built for OpenAI's speech-to-text API then work offline:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused")
+print(client.audio.transcriptions.create(model="whisper-1", file=open("talk.mp3", "rb")).text)
+```
+
+One model per server (the request's `model` is ignored); `response_format` can be json, text, srt, vtt or verbose_json. It listens on localhost only unless you pass `--host`; add `--api-key` (or `TRANSCRIBE_API_KEY`) to require a key.
 
 ## Backends
 

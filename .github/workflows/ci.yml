@@ -140,7 +140,7 @@ jobs:
     - name: Install the package (CPU-only torch)
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install ".[faster-whisper,nvidia]"
+        pip install ".[faster-whisper,nvidia,server]" openai
 
     - name: Create speech samples
       run: |
@@ -210,6 +210,33 @@ jobs:
         EOF
         head -n 4 "$GITHUB_WORKSPACE/api.vtt"
 
+    - name: OpenAI-compatible server
+      run: |
+        transcribe-server -b faster-whisper -m tiny --port 8765 > server.log 2>&1 &
+        SERVER_PID=$!
+        for _ in $(seq 60); do curl -sf http://127.0.0.1:8765/health && break; sleep 2; done
+        curl -sf http://127.0.0.1:8765/health || { cat server.log; exit 1; }
+        python - <<'EOF'
+        from openai import OpenAI
+
+        client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")
+
+        def transcribe(**options):
+            with open("speech.wav", "rb") as audio:
+                return client.audio.transcriptions.create(model="whisper-1", file=audio, **options)
+
+        text = transcribe().text
+        print(text)
+        assert "hello" in text.lower() or "world" in text.lower()
+        srt = transcribe(response_format="srt")
+        print(srt)
+        assert "-->" in srt
+        verbose = transcribe(response_format="verbose_json", timestamp_granularities=["word"])
+        print([w.word for w in verbose.words])
+        assert verbose.words and verbose.segments
+        EOF
+        kill "$SERVER_PID"
+
     - name: Upload test outputs
       uses: actions/upload-artifact@v7
       if: always()
@@ -225,3 +252,4 @@ jobs:
           parakeet.json
           canary.txt
           api.vtt
+          server.log
