@@ -146,7 +146,10 @@ class ParakeetBackend(_TransformersBackend):
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
         """Words of one chunk, with times shifted by the chunk's *offset* in seconds."""
         inputs = self._processor(samples, sampling_rate=SAMPLE_RATE).to(self._device, dtype=self._model.dtype)
-        outputs = self._model.generate(**inputs)
+        with warnings.catch_warnings():
+            # Parakeet sizes generation from the audio length, but transformers still warns about max_length.
+            warnings.filterwarnings("ignore", message="Using the model-agnostic default `max_length`")
+            outputs = self._model.generate(**inputs)
         # The TDT decoder predicts how many frames each token lasts; decode() turns that into token times.
         _, timestamps = self._processor.decode(outputs.sequences, durations=outputs.durations)
         return _words_from_tokens(timestamps[0], offset)

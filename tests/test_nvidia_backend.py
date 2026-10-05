@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -173,6 +174,23 @@ class TestParakeet:
         # Silent audio is cut 5 s before the 120 s limit (plus half a 100 ms window): the second chunk starts at 115.05 s.
         assert [(s["start"], s["text"]) for s in result.segments] == [(1.0, " One."), (117.05, " Two.")]
         assert "words" not in result.segments[0]  # only kept when asked for
+
+    def test_generate_max_length_warning_is_silenced(self, nvidia_modules, audio_file, recwarn):
+        """transformers warns about the default max_length on every Parakeet call, though it's sized correctly."""
+        nvidia_modules.processor.return_value = FakeBatch()
+        nvidia_modules.processor.decode.return_value = ("", [[]])
+        backend = self._backend()
+        model = nvidia_modules.transformers.ParakeetForTDT.from_pretrained.return_value.to.return_value
+
+        def generate(**inputs):
+            warnings.warn("Using the model-agnostic default `max_length` (=430) to control the generation length.")
+            return SimpleNamespace(sequences="seq", durations="dur")
+
+        model.generate.side_effect = generate
+
+        backend.transcribe(audio_file, verbose=False)
+
+        assert not [w for w in recwarn if "max_length" in str(w.message)]
 
     def test_translate_is_rejected(self, nvidia_modules, audio_file):
         with pytest.raises(ValueError, match="only transcribes"):
