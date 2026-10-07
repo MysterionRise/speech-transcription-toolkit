@@ -13,6 +13,13 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..errors import (
+    BackendUnavailableError,
+    ModelLoadError,
+    ModelNotFoundError,
+    SpeechToolkitWarning,
+    UnsupportedOptionError,
+)
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
 
@@ -25,6 +32,7 @@ PAUSE_SECONDS = 1.0
 class _TransformersBackend(TranscriptionBackend):
     """Loading shared by backends that run a transformers speech model (imported lazily)."""
 
+    requires = ("torch", "transformers", "librosa")  # the nvidia extra, plus torch
     MODELS: Dict[str, str] = {}
     MODEL_CLASS = ""  # transformers class name
 
@@ -41,12 +49,12 @@ class _TransformersBackend(TranscriptionBackend):
         """Load a model (bfloat16/float16 on CUDA, float32 on CPU).
 
         Raises:
-            ImportError: If torch or a recent enough transformers is not installed.
-            ValueError: If model_name is not recognized.
-            RuntimeError: If the model cannot be downloaded or loaded.
+            BackendUnavailableError: If torch or a recent enough transformers is not installed.
+            ModelNotFoundError: If model_name is not recognized.
+            ModelLoadError: If the model cannot be downloaded or loaded.
         """
         if model_name not in self.MODELS:
-            raise ValueError(f"Unknown {self.name} model: {model_name}. Available: {', '.join(self.MODELS)}")
+            raise ModelNotFoundError(f"Unknown {self.name} model: {model_name}. Available: {', '.join(self.MODELS)}")
 
         try:
             import torch
@@ -54,7 +62,7 @@ class _TransformersBackend(TranscriptionBackend):
 
             model_class = getattr(transformers, self.MODEL_CLASS)
         except (ImportError, AttributeError) as e:
-            raise ImportError(
+            raise BackendUnavailableError(
                 f"The {self.name} backend needs torch and transformers>=5.18 ({e}). {INSTALL_HINT}"
             ) from e
 
@@ -72,14 +80,14 @@ class _TransformersBackend(TranscriptionBackend):
         except Exception as e:  # download, auth and out-of-memory errors come in many types
             self._model = None
             self._processor = None
-            raise RuntimeError(f"Failed to load {self.name} model '{model_name}': {e}") from e
+            raise ModelLoadError(f"Failed to load {self.name} model '{model_name}': {e}") from e
 
         self._model_name = model_name
         self._device = device
 
     def _check_ready(self, audio_path: Path) -> None:
         if self._model is None or self._processor is None:
-            raise RuntimeError("No model loaded. Call load_model() first.")
+            raise ModelLoadError("No model loaded. Call load_model() first.")
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
@@ -89,6 +97,7 @@ class ParakeetBackend(_TransformersBackend):
 
     name = "parakeet"
     description = "NVIDIA Parakeet TDT - fast, accurate English/European speech-to-text with word timestamps"
+    # No "language_detection": v3 detects the language internally but can't report it.
     capabilities = frozenset({"word_timestamps"})
 
     MODELS = {
@@ -112,19 +121,26 @@ class ParakeetBackend(_TransformersBackend):
 
         Args:
             audio_path: Path to the audio file.
-            language: Ignored: the model detects the language itself.
+            language: Ignored, with a warning: the model detects the language itself. The result's
+                language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
             verbose: Print progress to stderr.
             word_timestamps: Keep each segment's per-word timings ("words").
 
         Raises:
-            RuntimeError: If no model is loaded.
-            ValueError: If task is not 'transcribe'.
+            ModelLoadError: If no model is loaded.
+            UnsupportedOptionError: If task is not 'transcribe'.
             FileNotFoundError: If audio file doesn't exist.
         """
         if task != "transcribe":
-            raise ValueError("The parakeet backend only transcribes; translate with -b canary or a Whisper model.")
+            raise UnsupportedOptionError(
+                "The parakeet backend only transcribes; translate with -b canary or a Whisper model."
+            )
         self._check_ready(audio_path)
+        if language:
+            warnings.warn(
+                f"Parakeet detects the language itself; ignoring language '{language}'.", SpeechToolkitWarning
+            )
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []
@@ -140,7 +156,7 @@ class ParakeetBackend(_TransformersBackend):
         return TranscriptionResult(
             text="".join(segment["text"] for segment in segments).strip(),
             segments=segments,
-            language=language,
+            language=None,  # Parakeet doesn't report the language it detected
         )
 
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
@@ -160,6 +176,7 @@ class CanaryBackend(_TransformersBackend):
 
     name = "canary"
     description = "NVIDIA Canary - multilingual speech-to-text and translation to English (25 European languages)"
+    capabilities = frozenset({"translate"})  # no "language_detection": it needs the language, else assumes English
 
     MODELS = {"canary-1b-v2": "nvidia/canary-1b-v2"}
     MODEL_CLASS = "CanaryForConditionalGeneration"
@@ -188,7 +205,10 @@ class CanaryBackend(_TransformersBackend):
         """
         self._check_ready(audio_path)
         if language is None:
-            warnings.warn("Canary can't detect the language and assumes English; pass a language code otherwise.")
+            warnings.warn(
+                "Canary can't detect the language and assumes English; pass a language code otherwise.",
+                SpeechToolkitWarning,
+            )
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []

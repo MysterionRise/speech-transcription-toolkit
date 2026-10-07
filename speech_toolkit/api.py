@@ -6,9 +6,10 @@
     for path in ["a.mp3", "b.mp3"]:
         transcriber.transcribe(path, num_speakers=2).save(f"{path}.srt")
 
-Errors are raised, never turned into ``sys.exit``: ``ValueError`` for bad arguments,
-``ImportError`` for a missing optional package, ``FileNotFoundError``/``RuntimeError`` for
-audio or model problems.
+Errors are raised, never turned into ``sys.exit``. They are :class:`~speech_toolkit.SpeechToolkitError`
+subclasses that are also the built-in error for their kind: ``ValueError`` for bad arguments, ``ImportError``
+for a missing optional package, ``RuntimeError`` for audio or model problems. A missing file raises
+``FileNotFoundError``. Warnings are :class:`~speech_toolkit.SpeechToolkitWarning`.
 """
 
 from __future__ import annotations
@@ -16,11 +17,13 @@ from __future__ import annotations
 import os
 import pathlib
 import warnings
-from typing import Any, Dict, Optional, Union
+from typing import AbstractSet, Any, Dict, Optional, Union
 
-from .backends import DEFAULT_BACKEND, TranscriptionBackend, TranscriptionResult, get_backend_class
+from .backends import DEFAULT_BACKEND, TranscriptionBackend, TranscriptionResult, backends_with, get_backend_class
 from .diarization import diarize_audio, load_diarization_pipeline, merge_diarization
+from .errors import SpeechToolkitWarning, UnsupportedOptionError
 
+TASKS = ("transcribe", "translate")
 # Whisper's turbo weights weren't trained for translation: they return the original language.
 TURBO_MODELS = ("turbo", "large-v3-turbo")
 
@@ -35,6 +38,15 @@ def configure_hf_token(token: Optional[str] = None) -> None:
     token = token or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
     if token:
         os.environ["HF_TOKEN"] = token
+
+
+def _check_task(task: str, backend: str, capabilities: AbstractSet[str]) -> None:
+    """Raise UnsupportedOptionError unless *task* is "transcribe", or "translate" for a backend that can translate."""
+    if task not in TASKS:
+        raise UnsupportedOptionError(f"task must be 'transcribe' or 'translate', not {task!r}")
+    if task == "translate" and "translate" not in capabilities:
+        translators = ", ".join(backends_with("translate"))
+        raise UnsupportedOptionError(f"the {backend} backend can't translate; backends that translate: {translators}")
 
 
 class Transcriber:
@@ -73,7 +85,11 @@ class Transcriber:
         return self._pipeline is not None
 
     def supports(self, option: str) -> bool:
-        """Whether the backend honours *option*: ``"prompt"``, ``"vad"`` or ``"word_timestamps"``."""
+        """Whether the backend declares *option*, one of its capabilities.
+
+        ``"translate"``, ``"language_detection"``, ``"prompt"``, ``"vad"`` or ``"word_timestamps"``; see
+        :class:`speech_toolkit.TranscriptionBackend`.
+        """
         return option in self.backend.capabilities
 
     def transcribe(
@@ -95,7 +111,9 @@ class Transcriber:
         Args:
             audio: Path to anything ffmpeg can decode.
             language: Language code such as ``"en"`` (default: auto-detect).
-            task: ``"transcribe"``, or ``"translate"`` to English (Whisper models only).
+            task: ``"transcribe"``, or ``"translate"`` to English with a backend that has the ``"translate"``
+                capability. Another task, or a translation the backend can't do, raises
+                :class:`~speech_toolkit.UnsupportedOptionError` before any audio is decoded.
             prompt: Names, terms or a sample sentence that guide spelling (whisper, faster-whisper).
             vad: Skip silence first, which avoids made-up text in quiet parts (faster-whisper).
             word_timestamps: Add per-word timings to each segment's ``"words"``. The default (None) turns
@@ -108,12 +126,14 @@ class Transcriber:
         Returns:
             The transcript; ``result.speaker_segments`` holds speaker-labelled segments when diarizing.
         """
+        _check_task(task, self.backend_name, self.backend.capabilities)
         if (num_speakers or min_speakers or max_speakers) and not self.diarize:
-            raise ValueError("num_speakers, min_speakers and max_speakers need diarize=True")
+            raise UnsupportedOptionError("num_speakers, min_speakers and max_speakers need diarize=True")
         if task == "translate" and self.model_name in TURBO_MODELS:
             warnings.warn(
                 f"'{self.model_name}' isn't trained for translation and keeps the original language; "
                 "use model 'medium' or 'large-v3'.",
+                SpeechToolkitWarning,
                 stacklevel=2,
             )
         if word_timestamps is None:
@@ -144,6 +164,7 @@ class Transcriber:
             else:
                 warnings.warn(
                     f"the {self.backend_name} backend doesn't support {name.replace('_', ' ')}; ignoring it.",
+                    SpeechToolkitWarning,
                     stacklevel=3,
                 )
         return options
@@ -169,8 +190,10 @@ def transcribe(
 ) -> TranscriptionResult:
     """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once.
 
-    Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`.
+    Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`. A *task* the backend can't do
+    raises :class:`~speech_toolkit.UnsupportedOptionError` before the model loads.
     """
+    _check_task(task, backend, get_backend_class(backend).capabilities)
     transcriber = Transcriber(backend, model, device=device, diarize=diarize, hf_token=hf_token)
     return transcriber.transcribe(
         audio,
