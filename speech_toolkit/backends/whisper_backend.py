@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError
 from .base import TranscriptionBackend, TranscriptionResult
 
 
@@ -58,15 +59,16 @@ class WhisperBackend(TranscriptionBackend):
             device: 'cpu', 'cuda', or None for auto-detection.
 
         Raises:
-            ValueError: If model_name is not recognized.
+            ModelNotFoundError: If model_name is not recognized.
+            BackendUnavailableError: If openai-whisper is not installed.
         """
         if model_name not in self.MODELS:
-            raise ValueError(f"Unknown Whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
+            raise ModelNotFoundError(f"Unknown Whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
 
         try:
             import whisper  # imported lazily: it pulls in torch, which is slow to import
         except ImportError as e:
-            raise ImportError(
+            raise BackendUnavailableError(
                 f"Whisper backend needs openai-whisper ({e}). Install with: pip install openai-whisper"
             ) from e
 
@@ -98,11 +100,11 @@ class WhisperBackend(TranscriptionBackend):
             TranscriptionResult with transcript text and segments.
 
         Raises:
-            RuntimeError: If no model is loaded.
+            ModelLoadError: If no model is loaded.
             FileNotFoundError: If audio file doesn't exist.
         """
         if self._model is None:
-            raise RuntimeError("No model loaded. Call load_model() first.")
+            raise ModelLoadError("No model loaded. Call load_model() first.")
 
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
