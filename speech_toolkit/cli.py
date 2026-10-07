@@ -39,11 +39,13 @@ from typing import List, Optional, Sequence, TextIO, Tuple
 from . import __version__
 from .api import Transcriber
 from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
+from .errors import SpeechToolkitError
 from .formats import FORMATS, format_for_path, write_text
 from .media import MEDIA_EXTENSIONS, collect_files
 
-# Errors that fail one file without stopping the rest of a batch.
-FILE_ERRORS = (OSError, RuntimeError, ValueError)
+# Errors whose message says what went wrong, so it is shown alone. In a batch, any other Exception also fails only
+# its own file (shown with its type); KeyboardInterrupt still stops the run.
+FILE_ERRORS = (SpeechToolkitError, OSError, RuntimeError, ValueError)
 
 Job = Tuple[pathlib.Path, Optional[pathlib.Path]]  # (input file, output file or None for stdout)
 
@@ -216,7 +218,7 @@ def write_output(text: str, dest: Optional[pathlib.Path], stdout: TextIO) -> Non
 
 
 def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO) -> int:
-    """Transcribe every job, carrying on after per-file errors. Returns the number of failed files."""
+    """Transcribe every job, carrying on after any per-file error. Returns the number of failed files."""
     try:
         transcriber = load_transcriber(args)
     except (ImportError, *FILE_ERRORS) as e:
@@ -238,14 +240,16 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
                 max_speakers=args.max_speakers,
                 verbose=not args.quiet,
             )
-        except FILE_ERRORS as e:
+            write_output(result.render(fmt, args.max_line_width), dest, stdout)
+            if args.json:
+                write_output(result.render("json"), args.json, stdout)
+        except Exception as e:  # one bad file doesn't stop the batch; KeyboardInterrupt isn't an Exception
             failures += 1
-            print(f"Error: {audio}: {e}", file=sys.stderr)
+            # Other errors also show their type: a KeyError's message is just the key.
+            message = str(e) if isinstance(e, FILE_ERRORS) else f"{type(e).__name__}: {e}".removesuffix(": ")
+            print(f"Error: {audio}: {message}", file=sys.stderr)
             continue
 
-        write_output(result.render(fmt, args.max_line_width), dest, stdout)
-        if args.json:
-            write_output(result.render("json"), args.json, stdout)
         if dest is not None and not args.quiet:
             print(f"→ {dest}", file=sys.stderr)
     return failures

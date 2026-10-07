@@ -6,9 +6,10 @@
     for path in ["a.mp3", "b.mp3"]:
         transcriber.transcribe(path, num_speakers=2).save(f"{path}.srt")
 
-Errors are raised, never turned into ``sys.exit``: ``ValueError`` for bad arguments,
-``ImportError`` for a missing optional package, ``FileNotFoundError``/``RuntimeError`` for
-audio or model problems.
+Errors are raised, never turned into ``sys.exit``. They are :class:`~speech_toolkit.SpeechToolkitError`
+subclasses that are also the built-in error for their kind: ``ValueError`` for bad arguments, ``ImportError``
+for a missing optional package, ``RuntimeError`` for audio or model problems. A missing file raises
+``FileNotFoundError``. Warnings are :class:`~speech_toolkit.SpeechToolkitWarning`.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any, Dict, Optional, Union
 
 from .backends import DEFAULT_BACKEND, TranscriptionBackend, TranscriptionResult, get_backend_class
 from .diarization import diarize_audio, load_diarization_pipeline, merge_diarization
+from .errors import SpeechToolkitWarning, UnsupportedOptionError
 
 # Whisper's turbo weights weren't trained for translation: they return the original language.
 TURBO_MODELS = ("turbo", "large-v3-turbo")
@@ -109,11 +111,12 @@ class Transcriber:
             The transcript; ``result.speaker_segments`` holds speaker-labelled segments when diarizing.
         """
         if (num_speakers or min_speakers or max_speakers) and not self.diarize:
-            raise ValueError("num_speakers, min_speakers and max_speakers need diarize=True")
+            raise UnsupportedOptionError("num_speakers, min_speakers and max_speakers need diarize=True")
         if task == "translate" and self.model_name in TURBO_MODELS:
             warnings.warn(
                 f"'{self.model_name}' isn't trained for translation and keeps the original language; "
                 "use model 'medium' or 'large-v3'.",
+                SpeechToolkitWarning,
                 stacklevel=2,
             )
         if word_timestamps is None:
@@ -144,6 +147,7 @@ class Transcriber:
             else:
                 warnings.warn(
                     f"the {self.backend_name} backend doesn't support {name.replace('_', ' ')}; ignoring it.",
+                    SpeechToolkitWarning,
                     stacklevel=3,
                 )
         return options
