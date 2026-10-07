@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
 
@@ -67,18 +68,18 @@ class VoxtralBackend(TranscriptionBackend):
             device: 'cpu', 'cuda', or None for auto-detection.
 
         Raises:
-            ImportError: If required dependencies are missing.
-            ValueError: If model_name is not recognized.
-            RuntimeError: If the model cannot be downloaded or loaded.
+            BackendUnavailableError: If required dependencies are missing.
+            ModelNotFoundError: If model_name is not recognized.
+            ModelLoadError: If the model cannot be downloaded or loaded.
         """
         if model_name not in self.MODELS:
-            raise ValueError(f"Unknown Voxtral model: {model_name}. Available: {', '.join(self.MODELS.keys())}")
+            raise ModelNotFoundError(f"Unknown Voxtral model: {model_name}. Available: {', '.join(self.MODELS.keys())}")
 
         try:
             import torch
             from transformers import AutoProcessor, VoxtralForConditionalGeneration
         except ImportError as e:
-            raise ImportError(
+            raise BackendUnavailableError(
                 f"Voxtral backend requires extra packages ({e}). "
                 'Install with: pip install "speech-transcription-toolkit[voxtral]"'
             ) from e
@@ -97,7 +98,7 @@ class VoxtralBackend(TranscriptionBackend):
         except Exception as e:  # download, auth and out-of-memory errors come in many types
             self._model = None
             self._processor = None
-            raise RuntimeError(f"Failed to load Voxtral model '{model_name}': {e}") from e
+            raise ModelLoadError(f"Failed to load Voxtral model '{model_name}': {e}") from e
 
         self._repo_id = repo_id
         self._model_name = model_name
@@ -122,15 +123,15 @@ class VoxtralBackend(TranscriptionBackend):
             TranscriptionResult with one segment per ~30 s chunk of audio.
 
         Raises:
-            RuntimeError: If no model is loaded.
-            ValueError: If task is not 'transcribe'.
+            ModelLoadError: If no model is loaded.
+            UnsupportedOptionError: If task is not 'transcribe'.
             FileNotFoundError: If audio file doesn't exist.
         """
         if self._model is None or self._processor is None:
-            raise RuntimeError("No model loaded. Call load_model() first.")
+            raise ModelLoadError("No model loaded. Call load_model() first.")
 
         if task != "transcribe":
-            raise ValueError("The Voxtral backend only supports --task transcribe.")
+            raise UnsupportedOptionError("The Voxtral backend only supports --task transcribe.")
 
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")

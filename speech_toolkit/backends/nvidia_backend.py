@@ -13,6 +13,13 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..errors import (
+    BackendUnavailableError,
+    ModelLoadError,
+    ModelNotFoundError,
+    SpeechToolkitWarning,
+    UnsupportedOptionError,
+)
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
 
@@ -42,12 +49,12 @@ class _TransformersBackend(TranscriptionBackend):
         """Load a model (bfloat16/float16 on CUDA, float32 on CPU).
 
         Raises:
-            ImportError: If torch or a recent enough transformers is not installed.
-            ValueError: If model_name is not recognized.
-            RuntimeError: If the model cannot be downloaded or loaded.
+            BackendUnavailableError: If torch or a recent enough transformers is not installed.
+            ModelNotFoundError: If model_name is not recognized.
+            ModelLoadError: If the model cannot be downloaded or loaded.
         """
         if model_name not in self.MODELS:
-            raise ValueError(f"Unknown {self.name} model: {model_name}. Available: {', '.join(self.MODELS)}")
+            raise ModelNotFoundError(f"Unknown {self.name} model: {model_name}. Available: {', '.join(self.MODELS)}")
 
         try:
             import torch
@@ -55,7 +62,7 @@ class _TransformersBackend(TranscriptionBackend):
 
             model_class = getattr(transformers, self.MODEL_CLASS)
         except (ImportError, AttributeError) as e:
-            raise ImportError(
+            raise BackendUnavailableError(
                 f"The {self.name} backend needs torch and transformers>=5.18 ({e}). {INSTALL_HINT}"
             ) from e
 
@@ -73,14 +80,14 @@ class _TransformersBackend(TranscriptionBackend):
         except Exception as e:  # download, auth and out-of-memory errors come in many types
             self._model = None
             self._processor = None
-            raise RuntimeError(f"Failed to load {self.name} model '{model_name}': {e}") from e
+            raise ModelLoadError(f"Failed to load {self.name} model '{model_name}': {e}") from e
 
         self._model_name = model_name
         self._device = device
 
     def _check_ready(self, audio_path: Path) -> None:
         if self._model is None or self._processor is None:
-            raise RuntimeError("No model loaded. Call load_model() first.")
+            raise ModelLoadError("No model loaded. Call load_model() first.")
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
@@ -121,12 +128,14 @@ class ParakeetBackend(_TransformersBackend):
             word_timestamps: Keep each segment's per-word timings ("words").
 
         Raises:
-            RuntimeError: If no model is loaded.
-            ValueError: If task is not 'transcribe'.
+            ModelLoadError: If no model is loaded.
+            UnsupportedOptionError: If task is not 'transcribe'.
             FileNotFoundError: If audio file doesn't exist.
         """
         if task != "transcribe":
-            raise ValueError("The parakeet backend only transcribes; translate with -b canary or a Whisper model.")
+            raise UnsupportedOptionError(
+                "The parakeet backend only transcribes; translate with -b canary or a Whisper model."
+            )
         self._check_ready(audio_path)
         if language:
             warnings.warn(f"Parakeet detects the language itself; ignoring language '{language}'.")
@@ -194,7 +203,10 @@ class CanaryBackend(_TransformersBackend):
         """
         self._check_ready(audio_path)
         if language is None:
-            warnings.warn("Canary can't detect the language and assumes English; pass a language code otherwise.")
+            warnings.warn(
+                "Canary can't detect the language and assumes English; pass a language code otherwise.",
+                SpeechToolkitWarning,
+            )
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
