@@ -20,7 +20,8 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
-    capabilities = frozenset({"prompt", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps"})
+    requires = ("whisper",)
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [

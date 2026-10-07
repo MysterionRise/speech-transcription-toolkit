@@ -25,6 +25,7 @@ PAUSE_SECONDS = 1.0
 class _TransformersBackend(TranscriptionBackend):
     """Loading shared by backends that run a transformers speech model (imported lazily)."""
 
+    requires = ("torch", "transformers", "librosa")  # the nvidia extra, plus torch
     MODELS: Dict[str, str] = {}
     MODEL_CLASS = ""  # transformers class name
 
@@ -89,6 +90,7 @@ class ParakeetBackend(_TransformersBackend):
 
     name = "parakeet"
     description = "NVIDIA Parakeet TDT - fast, accurate English/European speech-to-text with word timestamps"
+    # No "language_detection": v3 detects the language internally but can't report it.
     capabilities = frozenset({"word_timestamps"})
 
     MODELS = {
@@ -112,7 +114,8 @@ class ParakeetBackend(_TransformersBackend):
 
         Args:
             audio_path: Path to the audio file.
-            language: Ignored: the model detects the language itself.
+            language: Ignored, with a warning: the model detects the language itself. The result's
+                language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
             verbose: Print progress to stderr.
             word_timestamps: Keep each segment's per-word timings ("words").
@@ -125,6 +128,8 @@ class ParakeetBackend(_TransformersBackend):
         if task != "transcribe":
             raise ValueError("The parakeet backend only transcribes; translate with -b canary or a Whisper model.")
         self._check_ready(audio_path)
+        if language:
+            warnings.warn(f"Parakeet detects the language itself; ignoring language '{language}'.")
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []
@@ -140,7 +145,7 @@ class ParakeetBackend(_TransformersBackend):
         return TranscriptionResult(
             text="".join(segment["text"] for segment in segments).strip(),
             segments=segments,
-            language=language,
+            language=None,  # Parakeet doesn't report the language it detected
         )
 
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
@@ -160,6 +165,7 @@ class CanaryBackend(_TransformersBackend):
 
     name = "canary"
     description = "NVIDIA Canary - multilingual speech-to-text and translation to English (25 European languages)"
+    capabilities = frozenset({"translate"})  # no "language_detection": it needs the language, else assumes English
 
     MODELS = {"canary-1b-v2": "nvidia/canary-1b-v2"}
     MODEL_CLASS = "CanaryForConditionalGeneration"

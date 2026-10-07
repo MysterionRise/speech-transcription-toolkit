@@ -34,11 +34,11 @@ import pathlib
 import sys
 import warnings
 from collections import Counter
-from typing import List, Optional, Sequence, TextIO, Tuple
+from typing import AbstractSet, List, Optional, Sequence, TextIO, Tuple
 
 from . import __version__
-from .api import Transcriber
-from .backends import DEFAULT_BACKEND, get_backend_class, list_backends
+from .api import TASKS, Transcriber
+from .backends import CAPABILITIES, DEFAULT_BACKEND, backends_with, get_backend_class, list_backends
 from .formats import FORMATS, format_for_path, write_text
 from .media import MEDIA_EXTENSIONS, collect_files
 
@@ -58,6 +58,11 @@ def positive_int(value: str) -> int:
     if number <= 0:
         raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
     return number
+
+
+def _supported_by(capability: str) -> str:
+    """The registered backends with *capability*, for help text: ``"whisper, faster-whisper"``."""
+    return ", ".join(backends_with(capability)) or "no backend"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -83,31 +88,48 @@ Examples:
     # Positional inputs (optional when using --list-* flags)
     parser.add_argument("audio", type=pathlib.Path, nargs="*", help="Audio/video files or folders to transcribe.")
 
-    # Backend and model
-    parser.add_argument(
-        "-b",
-        "--backend",
-        default=DEFAULT_BACKEND,
-        help=f"Transcription backend (default: {DEFAULT_BACKEND}). Available: {', '.join(list_backends())}",
-    )
-    parser.add_argument("-m", "--model", default=None, help="Model name/size (default: the backend's default).")
+    add_model_options(parser)
     parser.add_argument("-l", "--language", default=None, help="Language code, e.g. 'en' (default: auto-detect).")
     parser.add_argument(
         "-t",
         "--task",
-        choices=("transcribe", "translate"),
+        choices=TASKS,
         default="transcribe",
-        help="'transcribe' or 'translate' to English (default: transcribe).",
+        help="'transcribe' or 'translate' to English (default: transcribe). "
+        f"Backends that translate: {_supported_by('translate')}.",
     )
-    parser.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
     parser.add_argument(
         "--hf-token",
         metavar="TOKEN",
         help="Hugging Face token for model downloads (default: HF_TOKEN or HUGGINGFACE_TOKEN env var).",
     )
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output.")
+    add_output_options(parser)
+    add_accuracy_options(parser)
+    add_diarization_options(parser)
+    add_information_options(parser)
 
-    # Output
+    args = parser.parse_args(argv)
+    if not (args.list_backends or args.list_models):
+        _validate_args(parser, args)
+    return args
+
+
+def add_model_options(parser: argparse.ArgumentParser) -> None:
+    """--backend, --model and --device: the model to load (transcribe-server takes them too)."""
+    model = parser.add_argument_group("model")
+    model.add_argument(
+        "-b",
+        "--backend",
+        default=DEFAULT_BACKEND,
+        help=f"Transcription backend (default: {DEFAULT_BACKEND}). Available: {', '.join(list_backends())}",
+    )
+    model.add_argument("-m", "--model", default=None, help="Model name/size (default: the backend's default).")
+    model.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
+
+
+def add_output_options(parser: argparse.ArgumentParser) -> None:
+    """Where transcripts go, and in which format."""
     output = parser.add_argument_group("output")
     output.add_argument("-o", "--output", type=pathlib.Path, help="Write the transcript to this file, not stdout.")
     output.add_argument(
@@ -122,48 +144,55 @@ Examples:
         help="Split subtitles into lines of at most N characters, 2 lines per cue (srt/vtt).",
     )
 
-    # Accuracy
+
+def add_accuracy_options(parser: argparse.ArgumentParser) -> None:
+    """Optional backend features; their help lists the backends that declare each one."""
     accuracy = parser.add_argument_group("accuracy")
     accuracy.add_argument(
         "--prompt",
         metavar="TEXT",
-        help="Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper).",
+        help=f"Names, terms or a sample sentence that guide spelling and style ({_supported_by('prompt')}).",
     )
     accuracy.add_argument(
-        "--vad", action="store_true", help="Skip silence first; avoids made-up text in quiet parts (faster-whisper)."
+        "--vad",
+        action="store_true",
+        help=f"Skip silence first; avoids made-up text in quiet parts ({_supported_by('vad')}).",
     )
     accuracy.add_argument(
         "--word-timestamps",
         action="store_true",
-        help="Add per-word timings to the JSON output (whisper, faster-whisper).",
+        help=f"Add per-word timings to the JSON output ({_supported_by('word_timestamps')}).",
     )
 
-    # Speaker diarization
+
+def add_diarization_options(parser: argparse.ArgumentParser) -> None:
+    """Speaker labels with pyannote.audio."""
     diarization = parser.add_argument_group("speaker diarization")
     diarization.add_argument("--diarize", action="store_true", help="Label speakers with pyannote.audio.")
     diarization.add_argument("--num-speakers", type=positive_int, help="Exact number of speakers, if known.")
     diarization.add_argument("--min-speakers", type=positive_int, help="Minimum number of speakers.")
     diarization.add_argument("--max-speakers", type=positive_int, help="Maximum number of speakers.")
 
-    # Information flags
+
+def add_information_options(parser: argparse.ArgumentParser) -> None:
+    """Flags that print information and exit instead of transcribing."""
     info = parser.add_argument_group("information")
     info.add_argument("--list-backends", action="store_true", help="List available backends and exit.")
     info.add_argument("--list-models", action="store_true", help="List models for the selected backend and exit.")
 
-    args = parser.parse_args(argv)
-    if not (args.list_backends or args.list_models):
-        _validate_args(parser, args)
-    return args
-
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    """Reject option combinations that can't work (exits via parser.error)."""
+    """Reject option combinations that can't work (exits via parser.error), before any model loads."""
     if not args.audio:
         parser.error("the following arguments are required: audio")
     if (args.output or args.json) and is_batch(args):
         parser.error("--output and --json take a single input file; use --outdir for several files")
     if (args.num_speakers or args.min_speakers or args.max_speakers) and not args.diarize:
         parser.error("--num-speakers, --min-speakers and --max-speakers need --diarize")
+    # An unknown backend is reported when it's loaded, like any other loading error.
+    translators = backends_with("translate")
+    if args.task == "translate" and args.backend in list_backends() and args.backend not in translators:
+        parser.error(f"the {args.backend} backend can't translate; backends that translate: {', '.join(translators)}")
 
 
 def is_batch(args: argparse.Namespace) -> bool:
@@ -257,15 +286,28 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
 
 
 def show_backends() -> None:
-    """Display available backends and their descriptions."""
+    """Display the backends: description, models, capabilities and whether their packages are installed.
+
+    The installed check looks the packages up without importing them, so listing stays instant.
+    """
     print("Available transcription backends:\n")
     for name in list_backends():
         backend_class = get_backend_class(name)
         default_marker = " (default)" if name == DEFAULT_BACKEND else ""
+        missing = backend_class.missing_requirements()
+        installed = f"no (missing {', '.join(missing)})" if missing else "yes"
         print(f"  {name}{default_marker}")
         print(f"    {backend_class.description}")
         print(f"    Models: {', '.join(backend_class.available_models())}")
+        print(f"    Capabilities: {_capability_list(backend_class.capabilities)}")
+        print(f"    Installed: {installed}")
         print()
+
+
+def _capability_list(capabilities: AbstractSet[str]) -> str:
+    """Capabilities as text, e.g. "translate, language detection": known ones in their usual order, then others."""
+    names = [name for name in CAPABILITIES if name in capabilities] + sorted(set(capabilities) - set(CAPABILITIES))
+    return ", ".join(name.replace("_", " ") for name in names) or "transcription only"
 
 
 def show_models(backend_name: str) -> None:
