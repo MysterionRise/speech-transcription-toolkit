@@ -25,10 +25,19 @@ jobs:
       with:
         python-version: '3.14'  # the newest Python in ci.yml's test matrix
 
+    # A stalled apt mirror can otherwise hold this step until the job times out: each try gets 3 minutes, 3 tries.
     - name: Install system dependencies
+      timeout-minutes: 10
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        apt_get() {
+          sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"
+        }
+        for attempt in 1 2 3; do
+          if apt_get update && apt_get install -y ffmpeg; then exit 0; fi
+          echo "::warning::Installing ffmpeg failed or timed out (attempt $attempt of 3)"
+          sleep 15
+        done
+        exit 1
 
     # No pip cache and no pins (requirements-dev.txt isn't used): every package is its newest release. torch and
     # torchaudio come from the CPU-only index; pyannote (the diarize extra) needs torchaudio.
