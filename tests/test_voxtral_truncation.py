@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from speech_toolkit.backends.voxtral_backend import VoxtralBackend
+from speech_toolkit.errors import SpeechToolkitWarning
 
 RATE = 16000
 PROMPT = [1, 1, 1]  # the instruction and audio tokens before the generated text
@@ -62,12 +63,17 @@ def test_warns_once_naming_the_cut_off_chunk(voxtral, audio_file):
     generates(voxtral, [[5, EOS, PAD], [5, 6, 7], [5, 6, EOS]])  # ended early, cut off, ended at the limit
     voxtral.processor.batch_decode.side_effect = [["one", "two", "three"]]
 
-    with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3), pytest.warns(UserWarning) as warned:
-        result = voxtral.backend.transcribe(audio_file, verbose=False)
+    with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3):
+        with pytest.warns(SpeechToolkitWarning) as warned:
+            result = voxtral.backend.transcribe(audio_file, verbose=False)
 
     assert voxtral.model.generate.call_args[1]["max_new_tokens"] == 3
-    assert [str(warning.message) for warning in warned] == [
-        f"{audio_file}: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, so the text may be cut off."
+    assert [(warning.category, str(warning.message)) for warning in warned] == [
+        (
+            SpeechToolkitWarning,
+            f"{audio_file}: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, "
+            "so the text may be cut off.",
+        )
     ]
     assert [s["text"] for s in result.segments] == ["one", "two", "three"]  # the text is kept
 
@@ -77,12 +83,15 @@ def test_one_warning_for_several_cut_off_chunks(voxtral, audio_file):
     voxtral.processor.batch_decode.side_effect = [["one", "two"], ["three"]]
 
     with patch.multiple("speech_toolkit.backends.voxtral_backend", BATCH_SIZE=2, MAX_NEW_TOKENS=2):
-        with pytest.warns(UserWarning) as warned:
+        with pytest.warns(SpeechToolkitWarning) as warned:
             voxtral.backend.transcribe(audio_file, verbose=False)
 
-    assert [str(warning.message) for warning in warned] == [
-        f"{audio_file}: Voxtral reached its limit of 2 tokens in 2 chunks, the first from 0:00 to 0:25, "
-        "so the text may be cut off."
+    assert [(warning.category, str(warning.message)) for warning in warned] == [
+        (
+            SpeechToolkitWarning,
+            f"{audio_file}: Voxtral reached its limit of 2 tokens in 2 chunks, the first from 0:00 to 0:25, "
+            "so the text may be cut off.",
+        )
     ]
 
 

@@ -220,7 +220,7 @@ class CanaryBackend(_TransformersBackend):
             if verbose:
                 print(f"Canary: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
         if cut_off:
-            warnings.warn(_cut_off_warning(audio_path, "Canary", self.MAX_NEW_TOKENS, cut_off))
+            warnings.warn(_cut_off_warning(audio_path, "Canary", self.MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
 
         return TranscriptionResult(
             text=" ".join(segment["text"] for segment in segments if segment["text"]),

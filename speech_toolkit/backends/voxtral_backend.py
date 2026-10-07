@@ -12,7 +12,13 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError, UnsupportedOptionError
+from ..errors import (
+    BackendUnavailableError,
+    ModelLoadError,
+    ModelNotFoundError,
+    SpeechToolkitWarning,
+    UnsupportedOptionError,
+)
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
 from .nvidia_backend import _cut_off_warning, _rows_at_limit
@@ -150,7 +156,7 @@ class VoxtralBackend(TranscriptionBackend):
             if verbose:
                 print(f"Voxtral: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
         if cut_off:
-            warnings.warn(_cut_off_warning(audio_path, "Voxtral", MAX_NEW_TOKENS, cut_off))
+            warnings.warn(_cut_off_warning(audio_path, "Voxtral", MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
 
         return TranscriptionResult(
             text=" ".join(seg["text"] for seg in segments if seg["text"]),

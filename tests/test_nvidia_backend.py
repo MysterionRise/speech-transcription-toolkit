@@ -20,6 +20,7 @@ from speech_toolkit.backends.nvidia_backend import (
     _segments_from_words,
     _words_from_tokens,
 )
+from speech_toolkit.errors import SpeechToolkitWarning
 
 RATE = 16000
 CANARY_EOS, CANARY_PAD = 3, 2  # canary-1b-v2's end-of-text and padding token ids
@@ -285,12 +286,15 @@ class TestCanary:
         )
 
         backend = self._backend()
-        with patch.object(CanaryBackend, "MAX_NEW_TOKENS", 4), pytest.warns(UserWarning) as warned:
+        with patch.object(CanaryBackend, "MAX_NEW_TOKENS", 4), pytest.warns(SpeechToolkitWarning) as warned:
             result = backend.transcribe(audio_file, language="en", verbose=False)
 
-        assert [str(warning.message) for warning in warned] == [
-            f"{audio_file}: Canary reached its limit of 4 tokens in the chunk from 0:25 to 0:50, "
-            "so the text may be cut off."
+        assert [(warning.category, str(warning.message)) for warning in warned] == [
+            (
+                SpeechToolkitWarning,
+                f"{audio_file}: Canary reached its limit of 4 tokens in the chunk from 0:25 to 0:50, "
+                "so the text may be cut off.",
+            )
         ]
         assert [s["text"] for s in result.segments] == ["one", "two", "three"]  # the text is kept
 
@@ -300,12 +304,16 @@ class TestCanary:
         self._generate(nvidia_modules, [[5, CANARY_EOS], [5, 6]], [[7, 8]])
 
         backend = self._backend()
-        with patch.multiple(CanaryBackend, BATCH_SIZE=2, MAX_NEW_TOKENS=2), pytest.warns(UserWarning) as warned:
-            backend.transcribe(audio_file, language="en", verbose=False)
+        with patch.multiple(CanaryBackend, BATCH_SIZE=2, MAX_NEW_TOKENS=2):
+            with pytest.warns(SpeechToolkitWarning) as warned:
+                backend.transcribe(audio_file, language="en", verbose=False)
 
-        assert [str(warning.message) for warning in warned] == [
-            f"{audio_file}: Canary reached its limit of 2 tokens in 2 chunks, the first from 0:25 to 0:50, "
-            "so the text may be cut off."
+        assert [(warning.category, str(warning.message)) for warning in warned] == [
+            (
+                SpeechToolkitWarning,
+                f"{audio_file}: Canary reached its limit of 2 tokens in 2 chunks, the first from 0:25 to 0:50, "
+                "so the text may be cut off.",
+            )
         ]
 
 
