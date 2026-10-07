@@ -42,14 +42,14 @@ BACKEND_ARGS: Dict[str, Tuple[str, ...]] = {
     "canary": ("-b", "canary", "-l", "en"),  # Canary can't detect the language
 }
 
-# The highest word error rate accepted, per backend and sample. Every backend transcribes the speech sample without
-# an error today; the margins absorb small changes between model and library releases (the tiny models get the
-# widest), while a broken backend (words missing or glued together, another language, no text) lands well above.
-MAX_WER: Dict[str, Dict[str, float]] = {
-    "whisper": {"speech": 0.25, "dialogue": 0.3},
-    "faster-whisper": {"speech": 0.25, "dialogue": 0.3},
-    "parakeet": {"speech": 0.15, "dialogue": 0.15},
-    "canary": {"speech": 0.15, "dialogue": 0.15},
+# The highest word error rate accepted per backend. Every backend transcribes both samples without an error today
+# (WER 0); the margins absorb small changes between model and library releases, the widest for the tiny models. A
+# broken backend (words missing or glued together, another language, no text) lands well above them.
+MAX_WER: Dict[str, float] = {
+    "whisper": 0.25,  # tiny
+    "faster-whisper": 0.25,  # tiny
+    "parakeet": 0.15,
+    "canary": 0.15,
 }
 
 COMMAND_TIMEOUT = 900  # seconds, model download included
@@ -173,7 +173,7 @@ def assert_timeline(spans: Iterable[Tuple[float, float]], duration: float, what:
 
 def assert_wer(transcript: str, sample: Sample, backend: str) -> None:
     """The transcript's word error rate on *sample* is within *backend*'s threshold; it is printed for the CI log."""
-    score, limit = wer(sample.text, transcript), MAX_WER[backend][sample.name]
+    score, limit = wer(sample.text, transcript), MAX_WER[backend]
     print(f"{backend} on {sample.name}: WER {score:.3f} (at most {limit}): {transcript.strip()!r}")
     assert score <= limit, (
         f"{backend} on {sample.name}: WER {score:.2f} is above {limit}\n"
