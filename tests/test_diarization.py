@@ -9,9 +9,11 @@ from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from speech_toolkit.diarization import DIARIZATION_MODEL, diarize_audio, load_diarization_pipeline, merge_diarization
+from speech_toolkit.media import SAMPLE_RATE
 
 
 class TestMergeDiarization:
@@ -126,7 +128,8 @@ class TestMergeDiarization:
 
         result = merge_diarization(transcription_result, spk_segments)
 
-        assert result[0]["id"] == 1
+        assert result[0]["id"] == 0  # its position in the speaker segments
+        assert result[0]["segment_id"] == 1  # the id of the transcript segment it comes from
         assert result[0]["seek"] == 0
         assert result[0]["tokens"] == [1, 2, 3]
         assert result[0]["temperature"] == 0.0
@@ -196,13 +199,13 @@ class TestMergeDiarization:
             ("SPEAKER_01", " Yes.", 1.2, 1.5),
         ]
         assert result[1]["words"] == words[3:]
-        assert result[0]["id"] == 3  # other segment fields are kept
+        assert [(s["id"], s["segment_id"]) for s in result] == [(0, 3), (1, 3)]  # own ids, and the segment's
 
-    def test_merge_words_in_pauses_keep_the_previous_speaker(self):
+    def test_merge_words_in_pauses_take_the_nearer_turn(self):
         words = [
-            {"word": " Um,", "start": 0.0, "end": 0.2},  # before the first turn: takes the first known speaker
+            {"word": " Um,", "start": 0.0, "end": 0.2},  # before the first turn, which is the nearest
             {"word": " so", "start": 0.5, "end": 0.7},
-            {"word": " yeah", "start": 1.05, "end": 1.1},  # in a gap between turns
+            {"word": " yeah", "start": 1.05, "end": 1.1},  # in a gap between turns, nearer the one before
             {"word": " right.", "start": 1.6, "end": 1.9},
         ]
         segment = {"start": 0.0, "end": 1.9, "text": " Um, so yeah right.", "words": words}
@@ -211,19 +214,19 @@ class TestMergeDiarization:
 
         assert [(s["speaker"], s["text"]) for s in result] == [("A", " Um, so yeah"), ("B", " right.")]
 
-    def test_merge_words_outside_every_turn(self):
+    def test_merge_words_outside_every_turn_take_the_nearest_turn(self):
         segment = {"start": 5.0, "end": 6.0, "text": " Hi.", "words": [{"word": " Hi.", "start": 5.0, "end": 6.0}]}
 
         result = merge_diarization({"segments": [segment]}, [(0.0, 1.0, "A")])
 
-        assert [(s["speaker"], s["text"]) for s in result] == [("unknown", " Hi.")]
+        assert [(s["speaker"], s["text"]) for s in result] == [("A", " Hi.")]
 
     def test_merge_words_without_times_label_the_whole_segment(self):
         segment = {"start": 0.0, "end": 1.0, "text": " Hi.", "words": [{"word": " Hi."}]}
 
         result = merge_diarization({"segments": [segment]}, [(0.0, 1.0, "A")])
 
-        assert result == [{**segment, "speaker": "A"}]
+        assert result == [{**segment, "speaker": "A", "id": 0, "segment_id": 0}]
 
 
 @pytest.fixture
@@ -292,9 +295,10 @@ class TestDiarizeAudio:
 
     @pytest.fixture
     def audio_modules(self):
-        """Stand-ins for torch and the ffmpeg audio loader."""
+        """Stand-ins for torch and the ffmpeg audio loader, which returns 5 s of audio."""
         torch = MagicMock()
         with patch.dict(sys.modules, {"torch": torch}), patch("speech_toolkit.diarization.load_audio") as load_audio:
+            load_audio.return_value = np.zeros(5 * SAMPLE_RATE, dtype=np.float32)
             yield SimpleNamespace(torch=torch, load_audio=load_audio)
 
     def test_diarize_audio_uses_exclusive_diarization(self, audio_modules, tmp_path: pathlib.Path):

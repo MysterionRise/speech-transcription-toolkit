@@ -39,7 +39,8 @@ from typing import AbstractSet, List, Optional, Sequence, TextIO, Tuple
 from . import __version__
 from .api import TASKS, Transcriber
 from .backends import CAPABILITIES, DEFAULT_BACKEND, backends_with, get_backend_class, list_backends
-from .errors import SpeechToolkitError
+from .diarization import check_speaker_hints
+from .errors import SpeechToolkitError, UnsupportedOptionError
 from .formats import FORMATS, format_for_path, write_text
 from .media import MEDIA_EXTENSIONS, collect_files
 
@@ -189,8 +190,10 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("the following arguments are required: audio")
     if (args.output or args.json) and is_batch(args):
         parser.error("--output and --json take a single input file; use --outdir for several files")
-    if (args.num_speakers or args.min_speakers or args.max_speakers) and not args.diarize:
-        parser.error("--num-speakers, --min-speakers and --max-speakers need --diarize")
+    try:
+        check_speaker_hints(args.num_speakers, args.min_speakers, args.max_speakers, diarize=args.diarize, flags=True)
+    except UnsupportedOptionError as e:
+        parser.error(str(e))
     # An unknown backend is reported when it's loaded, like any other loading error.
     translators = backends_with("translate")
     if args.task == "translate" and args.backend in list_backends() and args.backend not in translators:
