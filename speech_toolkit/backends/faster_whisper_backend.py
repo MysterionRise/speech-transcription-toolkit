@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional
 
+from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError
 from ..types import Segment
 from .base import TranscriptionBackend, TranscriptionResult
 
@@ -62,18 +63,18 @@ class FasterWhisperBackend(TranscriptionBackend):
             device: 'cpu', 'cuda', or None for auto-detection.
 
         Raises:
-            ImportError: If faster-whisper is not installed.
-            ValueError: If model_name is not recognized.
-            RuntimeError: If the model cannot be downloaded or loaded.
+            BackendUnavailableError: If faster-whisper is not installed.
+            ModelNotFoundError: If model_name is not recognized.
+            ModelLoadError: If the model cannot be downloaded or loaded.
         """
         if model_name not in self.MODELS:
-            raise ValueError(f"Unknown faster-whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
+            raise ModelNotFoundError(f"Unknown faster-whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
 
         try:
             import ctranslate2
             from faster_whisper import WhisperModel
         except ImportError as e:
-            raise ImportError(
+            raise BackendUnavailableError(
                 "faster-whisper backend requires extra packages. "
                 'Install with: pip install "speech-transcription-toolkit[faster-whisper]"'
             ) from e
@@ -86,7 +87,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         except Exception as e:  # download and CTranslate2 errors come in many types
             self._model = None
-            raise RuntimeError(f"Failed to load faster-whisper model '{model_name}': {e}") from e
+            raise ModelLoadError(f"Failed to load faster-whisper model '{model_name}': {e}") from e
 
         self._model_name = model_name
         self._device = device
@@ -117,11 +118,11 @@ class FasterWhisperBackend(TranscriptionBackend):
             TranscriptionResult with transcript text and segments.
 
         Raises:
-            RuntimeError: If no model is loaded.
+            ModelLoadError: If no model is loaded.
             FileNotFoundError: If audio file doesn't exist.
         """
         if self._model is None:
-            raise RuntimeError("No model loaded. Call load_model() first.")
+            raise ModelLoadError("No model loaded. Call load_model() first.")
 
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")

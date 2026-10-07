@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Type
 
+from ..errors import BackendNotFoundError
 from .base import TranscriptionBackend, TranscriptionResult
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
@@ -62,11 +63,11 @@ def get_backend(name: str) -> TranscriptionBackend:
         An instance of the requested backend.
 
     Raises:
-        ValueError: If backend name is not recognized.
+        BackendNotFoundError: If backend name is not recognized.
     """
     if name not in _BACKENDS:
         available = ", ".join(_BACKENDS.keys())
-        raise ValueError(f"Unknown backend: '{name}'. Available backends: {available}")
+        raise BackendNotFoundError(f"Unknown backend: '{name}'. Available backends: {available}")
 
     return _BACKENDS[name]()
 
@@ -81,11 +82,11 @@ def get_backend_class(name: str) -> Type[TranscriptionBackend]:
         The backend class.
 
     Raises:
-        ValueError: If backend name is not recognized.
+        BackendNotFoundError: If backend name is not recognized.
     """
     if name not in _BACKENDS:
         available = ", ".join(_BACKENDS.keys())
-        raise ValueError(f"Unknown backend: '{name}'. Available backends: {available}")
+        raise BackendNotFoundError(f"Unknown backend: '{name}'. Available backends: {available}")
 
     return _BACKENDS[name]
 
