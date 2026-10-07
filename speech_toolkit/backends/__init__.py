@@ -12,6 +12,9 @@ for loading and using them. Supported backends:
 Heavy libraries (torch, transformers, ...) are imported only when a model is loaded,
 so importing this package and listing backends/models stays fast.
 
+Each backend class declares what it can do in ``capabilities`` (see ``CAPABILITIES``), and
+``backends_with()`` names the backends that declare one, e.g. the ones that translate.
+
 Usage:
     from speech_toolkit.backends import get_backend, list_backends
 
@@ -29,7 +32,7 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
-from .base import TranscriptionBackend, TranscriptionResult
+from .base import CAPABILITIES, TranscriptionBackend, TranscriptionResult
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
@@ -51,6 +54,11 @@ DEFAULT_BACKEND = "whisper"
 def list_backends() -> List[str]:
     """Return list of registered backend names."""
     return list(_BACKENDS.keys())
+
+
+def backends_with(capability: str) -> List[str]:
+    """Names of the registered backends that declare *capability*, such as ``"translate"``, in registry order."""
+    return [name for name, backend_class in _BACKENDS.items() if capability in backend_class.capabilities]
 
 
 def get_backend(name: str) -> TranscriptionBackend:
@@ -125,8 +133,10 @@ __all__ = [
     "ParakeetBackend",
     "CanaryBackend",
     "list_backends",
+    "backends_with",
     "get_backend",
     "get_backend_class",
     "register_backend",
+    "CAPABILITIES",
     "DEFAULT_BACKEND",
 ]
