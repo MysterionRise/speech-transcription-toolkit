@@ -7,27 +7,33 @@ import os
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
+from .errors import BackendUnavailableError, DiarizationError
 from .media import SAMPLE_RATE, load_audio
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 
 
 def load_diarization_pipeline(device: Optional[str] = None) -> Any:
-    """Load the pyannote speaker-diarization pipeline (imported lazily: it is slow to import)."""
+    """Load the pyannote speaker-diarization pipeline (imported lazily: it is slow to import).
+
+    Raises:
+        BackendUnavailableError: If pyannote.audio is not installed.
+        DiarizationError: If the gated model can't be downloaded (terms not accepted, or no token).
+    """
     # pyannote.audio 4 sends usage metrics to pyannote.ai by default; stay offline unless the user opted in.
     os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
     try:
         import torch
         from pyannote.audio import Pipeline
     except ImportError as e:
-        raise ImportError(
+        raise BackendUnavailableError(
             f"speaker diarization needs pyannote.audio ({e}). "
             'Install with: pip install "speech-transcription-toolkit[diarize]"'
         ) from e
 
     pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=os.getenv("HF_TOKEN"))
     if pipeline is None:  # pyannote returns None when the gated model can't be downloaded
-        raise RuntimeError(
+        raise DiarizationError(
             f"could not download '{DIARIZATION_MODEL}'. Accept its terms at https://hf.co/{DIARIZATION_MODEL} "
             "and set HF_TOKEN (or pass --hf-token)."
         )

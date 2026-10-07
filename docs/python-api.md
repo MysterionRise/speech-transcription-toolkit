@@ -53,12 +53,43 @@ See [Output formats](formats.md) for what each format contains.
 
 ## Errors and warnings
 
-The library raises exceptions and never exits:
-- `ValueError` for bad arguments: an unknown backend or model, or speaker hints without `diarize=True`.
-- `ImportError` when an optional package is missing; the message names the extra to install.
-- `FileNotFoundError` or `RuntimeError` for audio or model problems.
+The library raises exceptions and never exits. The errors below are all `SpeechToolkitError`s, and each is also the
+built-in error the library raised before, so `except ValueError` and the like keep working:
 
-Warnings, such as an option the backend doesn't support, go through Python's `warnings` module.
+| Error | Also a | Raised when |
+|---|---|---|
+| `BackendNotFoundError` | `ValueError` | No backend has that name. |
+| `ModelNotFoundError` | `ValueError` | The backend has no model of that name. |
+| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, or speaker hints without `diarize=True`. |
+| `BackendUnavailableError` | `ImportError` | An optional package is missing, for the backend or for diarization; the message names the extra to install. |
+| `ModelLoadError` | `RuntimeError` | The model can't be downloaded or loaded. |
+| `AudioDecodeError` | `RuntimeError` | The audio can't be decoded. |
+| `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded: accept its terms and set a token, see [Speaker labels](diarization.md). |
+
+A missing input file raises the built-in `FileNotFoundError`, and the `whisper` backend passes on openai-whisper's own
+download and loading errors.
+
+```python
+from speech_toolkit import ModelNotFoundError, SpeechToolkitError, transcribe
+
+try:
+    result = transcribe("talk.mp3", model="huge")
+except ModelNotFoundError as e:
+    print(e)  # lists the backend's models
+except SpeechToolkitError as e:
+    print(f"transcription failed: {e}")
+```
+
+Warnings, such as an option the backend doesn't support, are `SpeechToolkitWarning`s, a kind of `UserWarning`. To hide
+them:
+
+```python
+import warnings
+
+from speech_toolkit import SpeechToolkitWarning
+
+warnings.filterwarnings("ignore", category=SpeechToolkitWarning)
+```
 
 ## Custom backends
 
