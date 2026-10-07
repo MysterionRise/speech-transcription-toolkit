@@ -13,7 +13,8 @@ pip install -r requirements-dev.txt   # enough for unit tests (model libraries a
 pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize, server
 pre-commit install
 
-pytest                                           # all tests, 80% coverage gate
+pytest                                           # all tests with a coverage report
+pytest --cov-fail-under=95                       # what CI runs: fails below 95% coverage
 pytest tests/test_backends.py::TestWhisperBackend -v
 
 black . && isort --profile black . && flake8 .   # format and lint (120-char lines)
@@ -71,7 +72,8 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - Mock heavy libraries with `patch.dict(sys.modules, {"whisper": mock, ...})`, not by patching module attributes.
 - `tests/conftest.py` has a `FakeBackend` and the `fake_backend` fixture; `tests/test_cli.py` drives `cli.main([...])` end to end with it, `tests/test_api.py` the `Transcriber`.
 - When testing `sys.exit()`, expect `SystemExit` (e.g. `pytest.raises(SystemExit, match=...)`).
-- CI: unit tests on Python 3.10–3.13 without torch; the integration job runs real `tiny` models on synthesized speech.
+- Warnings raised by `speech_toolkit` fail the test (`filterwarnings` in `pyproject.toml`); expect them with `pytest.warns` or a `@pytest.mark.filterwarnings` mark.
+- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the integration job runs real `tiny` models on synthesized speech (not on draft PRs).
 
 ## External Requirements
 

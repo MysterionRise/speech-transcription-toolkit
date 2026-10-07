@@ -120,15 +120,16 @@ def convert_file(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{src.stem}.wav"
 
+    # stdout gets ASCII only: on Windows, redirected output uses a code page without symbols like ✓ and →.
     if dest_path.exists() and not overwrite:
-        print(f"✓ {dest_path} exists; skipping (use --overwrite).")
+        print(f"{dest_path} exists; skipping (use --overwrite).")
         return True
 
     try:
         audio = AudioSegment.from_file(src)
         audio = audio.set_frame_rate(rate).set_channels(channels).set_sample_width(2)  # 16‑bit
         audio.export(dest_path, format="wav")
-        print(f"→ {dest_path}")
+        print(f"-> {dest_path}")
         return True
     except Exception as exc:  # pydub/ffmpeg raise many error types
         print(f"❌ Failed to convert {src}: {exc}", file=sys.stderr)

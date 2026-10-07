@@ -124,8 +124,8 @@ warn_redundant_casts = true
 warn_unused_ignores = false
 warn_no_return = true
 warn_unreachable = true
-strict_optional = false
-check_untyped_defs = false
+strict_optional = true
+check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -140,6 +140,18 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-branch",
 ]
+# The last matching filter wins. Tests that expect a warning use pytest.warns or a filterwarnings mark.
+filterwarnings = [
+    # Warnings from speech_toolkit fail the test: its own and deprecations it triggers in other libraries. Its own
+    # point at the caller (stacklevel), so when a test calls the API directly they come from the tests package.
+    "error:::speech_toolkit",
+    "error:::tests",
+    # Known third-party noise: pydub looks for ffmpeg when imported (the unit tests don't need it) and imports
+    # audioop (deprecated on Python 3.11 and 3.12), and Starlette deprecates its TestClient (FastAPI's) on httpx.
+    "ignore:Couldn't find ffmpeg or avconv:RuntimeWarning:pydub",
+    "ignore:'audioop' is deprecated:DeprecationWarning:pydub",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]
 
 [tool.coverage.run]
 source = ["speech_toolkit"]
@@ -147,11 +159,14 @@ omit = [
     "speech_toolkit/__main__.py",  # exercised in a subprocess by the tests
 ]
 
+# No fail_under here, so running a single test file doesn't fail on coverage: CI passes --cov-fail-under.
 [tool.coverage.report]
 precision = 2
 show_missing = true
 skip_covered = false
-fail_under = 80
+exclude_also = [
+    "@(abc\\.)?abstractmethod",  # abstract methods have no body to run
+]
 
 [tool.bandit]
 exclude_dirs = [
@@ -160,4 +175,4 @@ exclude_dirs = [
     "venv",
     ".git",
 ]
-skips = ["B101", "B601", "B615"]  # B101: assert_used, B601: shell_injection (intentional), B615: huggingface revision (users want latest models)
+skips = ["B101", "B615"]  # B101: assert_used, B615: huggingface revision (users want latest models)

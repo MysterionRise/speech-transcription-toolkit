@@ -16,7 +16,7 @@ pre-commit install
 ## Before opening a PR
 
 ```bash
-pytest                        # all tests pass, coverage at least 80%
+pytest --cov-fail-under=95    # all tests pass, coverage at least 95% (what CI runs)
 pre-commit run --all-files    # black, isort, flake8, mypy, bandit
 ```
 

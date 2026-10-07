@@ -1,12 +1,12 @@
 # Pre-commit hooks configuration
 # Install: pip install pre-commit && pre-commit install
 # Run all: pre-commit run --all-files
-# Keep the black/isort/flake8/mypy revs in sync with requirements-dev.txt (CI uses those).
+# The black/isort/flake8/mypy/bandit revs match requirements-dev.txt (CI uses those); tests/test_tooling.py checks it.
 
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -25,7 +25,7 @@ repos:
 
   # Import sorting
   - repo: https://github.com/pycqa/isort
-    rev: 9.0.1
+    rev: 9.0.2
     hooks:
       - id: isort
         args: ['--profile=black', '--line-length=120']
@@ -39,11 +39,11 @@ repos:
 
   # Type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.1
+    rev: v2.4.0
     hooks:
       - id: mypy
         files: ^speech_toolkit/.*\.py$
-        args: ['--ignore-missing-imports', '--no-strict-optional']
+        args: ['--ignore-missing-imports']  # the rest of the settings come from pyproject.toml
         additional_dependencies: []
 
   # Security scanning
@@ -56,7 +56,7 @@ repos:
 
   # Secret detection
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.18.4
+    rev: v8.30.1
     hooks:
       - id: gitleaks
 
