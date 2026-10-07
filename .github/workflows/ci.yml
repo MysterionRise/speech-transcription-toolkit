@@ -161,6 +161,9 @@ jobs:
     # Skipped on draft PRs (marking the PR ready runs it); runs on main, ready PRs, manual and called runs.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 30
+    env:
+      # pyannote's diarization model is gated: the diarization test runs once the HF_TOKEN secret exists (#13).
+      HAS_HF_TOKEN: ${{ secrets.HF_TOKEN != '' }}
 
     steps:
     - uses: actions/checkout@v7
@@ -170,20 +173,38 @@ jobs:
       with:
         python-version: '3.12'
         cache: pip
-        cache-dependency-path: pyproject.toml
+        cache-dependency-path: |
+          pyproject.toml
+          requirements-dev.txt
 
+    # A stalled apt mirror can otherwise hold this step until the job times out: each try gets 3 minutes, 3 tries.
     - name: Install system dependencies
+      timeout-minutes: 10
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        apt_get() {
+          sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"
+        }
+        for attempt in 1 2 3; do
+          if apt_get update && apt_get install -y ffmpeg; then exit 0; fi
+          echo "::warning::Installing ffmpeg failed or timed out (attempt $attempt of 3)"
+          sleep 15
+        done
+        exit 1
 
     - name: Install the package (CPU-only torch)
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install ".[faster-whisper,nvidia,server]" openai
+        pip install -r requirements-dev.txt ".[faster-whisper,nvidia,server]" openai
 
-    # Model weights (several GB) come from the cache that runs on main save. The key changes with this file, which
-    # names the models; the newest older cache is restored then, so only new models download.
+    - name: Install speaker diarization
+      if: env.HAS_HF_TOKEN == 'true'
+      run: |
+        pip install torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install ".[diarize]"
+
+    # Model weights (several GB) come from the cache that runs on main save. The key changes with the files that name
+    # the models (this workflow and the integration tests); the newest older cache is restored then, so only new
+    # models download.
     - name: Restore cached models
       id: models
       uses: actions/cache/restore@v6
@@ -191,103 +212,16 @@ jobs:
         path: |
           ~/.cache/huggingface/hub
           ~/.cache/whisper
-        key: models-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+        key: models-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml', 'tests/integration/**') }}
         restore-keys: models-${{ runner.os }}-
 
-    - name: Create speech samples
-      run: |
-        # Synthesized speech (ffmpeg's flite source), so the test checks real words.
-        ffmpeg -loglevel error -f lavfi -i "flite=text='Hello world. This is a speech recognition test.':voice=slt" -ar 16000 speech.wav
-        mkdir batch
-        cp speech.wav batch/one.wav
-        cp speech.wav batch/two.wav
-
-    - name: Whisper transcript on stdout
-      run: |
-        transcribe speech.wav -m tiny > out.txt
-        cat out.txt
-        grep -qiE "hello|world" out.txt
-        # stdout must carry only the transcript (progress goes to stderr)
-        test "$(wc -l < out.txt)" -eq 1
-
-    - name: Subtitles and JSON output
-      run: |
-        transcribe speech.wav -m tiny -q -o out.srt --json out.json
-        cat out.srt
-        grep -q -- "-->" out.srt
-        python -c "import json; assert json.load(open('out.json'))['segments']"
-
-    - name: Batch mode
-      run: |
-        transcribe batch -m tiny -q --outdir subs -f vtt
-        head -n 5 subs/one.vtt subs/two.vtt
-        grep -q "WEBVTT" subs/one.vtt
-
-    - name: faster-whisper backend
-      run: |
-        transcribe speech.wav -b faster-whisper -m tiny -q > fw.txt
-        cat fw.txt
-        grep -qiE "hello|world" fw.txt
-
-    - name: Accuracy options and subtitle lines
-      run: |
-        transcribe speech.wav -b faster-whisper -m tiny -q --vad --prompt "Speech recognition." --max-line-width 20 -o lines.srt
-        cat lines.srt
-        test "$(grep -c -- '-->' lines.srt)" -ge 2  # 47 characters at 20 per line, 2 lines per cue
-
-    - name: Parakeet backend
-      run: |
-        transcribe speech.wav -b parakeet -q --word-timestamps -o parakeet.json
-        python -c "import json; d = json.load(open('parakeet.json')); print(d['text']); assert d['segments'][0]['words']"
-        grep -qiE "hello|world" parakeet.json
-
-    - name: Canary backend
-      run: |
-        transcribe speech.wav -b canary -l en -q > canary.txt
-        cat canary.txt
-        grep -qiE "hello|world" canary.txt
-
-    - name: Python API
-      run: |
-        cd "$RUNNER_TEMP"  # import the installed package, not the checkout
-        python - <<'EOF'
-        import os
-        from speech_toolkit import Transcriber
-
-        transcriber = Transcriber("faster-whisper", "tiny")
-        result = transcriber.transcribe(os.path.join(os.environ["GITHUB_WORKSPACE"], "speech.wav"))
-        print(result.text)
-        assert "hello" in result.text.lower() or "world" in result.text.lower()
-        result.save(os.path.join(os.environ["GITHUB_WORKSPACE"], "api.vtt"))
-        EOF
-        head -n 4 "$GITHUB_WORKSPACE/api.vtt"
-
-    - name: OpenAI-compatible server
-      run: |
-        transcribe-server -b faster-whisper -m tiny --port 8765 > server.log 2>&1 &
-        SERVER_PID=$!
-        for _ in $(seq 60); do curl -sf http://127.0.0.1:8765/health && break; sleep 2; done
-        curl -sf http://127.0.0.1:8765/health || { cat server.log; exit 1; }
-        python - <<'EOF'
-        from openai import OpenAI
-
-        client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")
-
-        def transcribe(**options):
-            with open("speech.wav", "rb") as audio:
-                return client.audio.transcriptions.create(model="whisper-1", file=audio, **options)
-
-        text = transcribe().text
-        print(text)
-        assert "hello" in text.lower() or "world" in text.lower()
-        srt = transcribe(response_format="srt")
-        print(srt)
-        assert "-->" in srt
-        verbose = transcribe(response_format="verbose_json", timestamp_granularities=["word"])
-        print([w.word for w in verbose.words])
-        assert verbose.words and verbose.segments
-        EOF
-        kill "$SERVER_PID"
+    # tests/integration: real models transcribe the samples in tests/data. Here a missing package fails its tests
+    # instead of skipping them, and -rA prints each transcript with its word error rate.
+    - name: Run the integration tests
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        INTEGRATION_REQUIRE_EXTRAS: '1'
+      run: pytest -m integration --no-cov -rA --basetemp="$RUNNER_TEMP/integration"
 
     # Only main saves (PRs restore main's cache), and also after a failed step: what was downloaded is kept.
     - name: Save the model cache
@@ -299,19 +233,10 @@ jobs:
           ~/.cache/whisper
         key: ${{ steps.models.outputs.cache-primary-key }}
 
+    # Every test's files (transcripts, subtitles, JSON, the server's log), one folder per test.
     - name: Upload test outputs
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: integration-test-outputs
-        path: |
-          out.txt
-          out.srt
-          out.json
-          subs/
-          fw.txt
-          lines.srt
-          parakeet.json
-          canary.txt
-          api.vtt
-          server.log
+        path: ${{ runner.temp }}/integration

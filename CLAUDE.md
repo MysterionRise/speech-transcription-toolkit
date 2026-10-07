@@ -13,9 +13,10 @@ pip install -r requirements-dev.txt   # enough for unit tests (model libraries a
 pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize, server
 pre-commit install
 
-pytest                                           # all tests with a coverage report
+pytest                                           # unit tests with a coverage report
 pytest --cov-fail-under=95                       # what CI runs: fails below 95% coverage
 pytest tests/test_backends.py::TestWhisperBackend -v
+pytest -m integration                            # real models on tests/data (see Testing Notes)
 
 black . && isort --profile black . && flake8 .   # format and lint (120-char lines)
 mypy speech_toolkit
@@ -73,7 +74,8 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - `tests/conftest.py` has a `FakeBackend` and the `fake_backend` fixture; `tests/test_cli.py` drives `cli.main([...])` end to end with it, `tests/test_api.py` the `Transcriber`.
 - When testing `sys.exit()`, expect `SystemExit` (e.g. `pytest.raises(SystemExit, match=...)`).
 - Warnings raised by `speech_toolkit` fail the test (`filterwarnings` in `pyproject.toml`); expect them with `pytest.warns` or a `@pytest.mark.filterwarnings` mark.
-- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the integration job runs real `tiny` models on synthesized speech (not on draft PRs).
+- Integration tests (`tests/integration/`, all marked `integration`, which plain `pytest` deselects) run real models on the flite samples in `tests/data/` (`samples.json` has their text; `python tests/data/make_samples.py` regenerates them). They check WER against per-backend thresholds (`MAX_WER` in `tests/integration/helpers.py`), timestamps and stdout. A test whose extra isn't installed is skipped (it fails with `INTEGRATION_REQUIRE_EXTRAS=1`, as in CI); the diarization test also needs `HF_TOKEN`.
+- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the Integration Tests job runs `pytest -m integration` (not on draft PRs). `.github/workflows/nightly.yml` runs both against the newest release of every dependency and opens an issue when they fail.
 
 ## External Requirements
 
