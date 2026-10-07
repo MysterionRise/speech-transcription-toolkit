@@ -91,6 +91,35 @@ from speech_toolkit import SpeechToolkitWarning
 warnings.filterwarnings("ignore", category=SpeechToolkitWarning)
 ```
 
+## Decoding audio
+
+`load_audio()` decodes audio or video with ffmpeg into a mono float32 NumPy array at 16 kHz, the input speech models
+take.
+
+```python
+from speech_toolkit.media import load_audio
+
+audio = load_audio("talk.mp3")                   # a path
+audio = load_audio(data, strict=True)            # bytes, from an untrusted upload say
+with open("talk.ogg", "rb") as file:
+    audio = load_audio(file, max_seconds=3600)   # a binary file object, streamed to ffmpeg
+```
+
+| Option | Meaning |
+|---|---|
+| `sr` | Sample rate (default 16000). |
+| `max_seconds` | Decode only the first N seconds. |
+| `timeout` | Stop ffmpeg after N seconds and raise `AudioDecodeError`. |
+| `strict` | For untrusted input: accept only common audio and video formats (listed in `speech_toolkit.media.STRICT_FORMATS`), and refuse playlists (HLS, DASH), concat lists and anything else that would make ffmpeg open more files. |
+
+- **Bytes and file objects** reach ffmpeg through a pipe; a file object is read in chunks from its current position,
+  never whole. A pipe can't seek, so an MP4, M4A or MOV file with its index at the end, as phones often record them,
+  decodes only from a path.
+- **Safety:** ffmpeg opens local files only, never URLs, and runs without your environment's secrets, such as
+  `HF_TOKEN`.
+- **Errors:** failures raise `AudioDecodeError`, whose message ends with ffmpeg's reason, without file paths.
+- **Memory:** decoding peaks at about 6 bytes per sample, some 1 GB for three hours of audio.
+
 ## Custom backends
 
 Subclass `TranscriptionBackend`, implement `available_models()`, `load_model()` and `transcribe()`, then register it:
