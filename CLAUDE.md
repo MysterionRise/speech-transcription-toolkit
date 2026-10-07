@@ -57,6 +57,15 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - **Hugging Face token:** `--hf-token` / `Transcriber(hf_token=...)` / `HUGGINGFACE_TOKEN` are exported as `HF_TOKEN`.
 - **Offline:** `PYANNOTE_METRICS_ENABLED` defaults to `false` (pyannote 4 telemetry).
 - **Server:** `create_app(transcriber)` builds the FastAPI app (fastapi is imported inside it, so `server.py` has no `from __future__ import annotations`); errors are OpenAI-shaped (`APIError`), the model runs one request at a time, and uploads go to temp files that are always deleted.
+- **Docs and changelog:** user docs live in `docs/<topic>.md`; README keeps only the pitch, install and quick start, with absolute links (it is the PyPI page). Each PR adds `changelog.d/<issue>.<type>.md` (added/changed/deprecated/removed/fixed/security) and never edits `CHANGELOG.md`; towncrier assembles it at release time.
+
+## Parallel Work (roadmap #12)
+
+- **Branch and PR:** one issue → one branch `claude/issue-<n>-<slug>` from the latest `main` → one draft PR with a Conventional Commits title, `Fixes #<n>`, and the PR template's Coordination section filled in.
+- **Scope:** stay within the files the issue lists; put follow-ups in a comment on the issue.
+- **Single-lane files:** `server.py`, `formats.py` and `.github/workflows/ci.yml` take one open PR at a time, in the order #12 gives.
+- **Catching up with `main`:** merge `origin/main` into the branch. Never rebase, force-push, approve or merge.
+- **Done:** the issue's acceptance criteria are met; `pytest`, `pre-commit run --all-files` and `mypy speech_toolkit` pass; docs and a changelog fragment are added; CI is green, including Integration Tests.
 
 ## Testing Notes
 

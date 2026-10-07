@@ -2,9 +2,14 @@
 
 [![CI](https://github.com/MysterionRise/speech-transcription-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/LICENSE)
 
-Offline speech-to-text from the command line or Python. Pick a backend (Whisper, faster-whisper, Voxtral or NVIDIA's Parakeet and Canary), optionally label speakers, and get plain text, subtitles or JSON. Your audio never leaves your machine; models download once on first use.
+Offline speech-to-text from the command line or Python.
+- Pick a backend: Whisper, faster-whisper, Voxtral, or NVIDIA's Parakeet and Canary.
+- Optionally label speakers.
+- Get plain text, subtitles or JSON.
+
+Your audio never leaves your machine; models download once, on first use.
 
 ## Install
 
@@ -15,25 +20,22 @@ pip install speech-transcription-toolkit                    # Whisper (default b
 pip install "speech-transcription-toolkit[faster-whisper]"  # add the faster-whisper backend
 ```
 
-Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels), `[server]` (OpenAI-compatible API) and `[all]`.
+The first PyPI release is on its way. Until then, install from GitHub:
+`pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise/speech-transcription-toolkit"`.
 
-## Usage
+Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels), `[server]` (OpenAI-compatible API) and
+`[all]`. See [Installation](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/install.md).
+
+## Quick start
 
 ```bash
 transcribe audio.mp3                           # transcript to stdout
 transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json)
 transcribe recordings/ --outdir out -f vtt     # every audio file in a folder
-transcribe audio.mp3 -m large-v3 -l de         # another model, known language
-transcribe audio.mp3 -t translate -m large-v3  # translate to English (turbo can't translate)
 transcribe audio.mp3 -b faster-whisper         # faster, especially on CPU
-transcribe --list-backends                     # backends and their models
+transcribe meeting.wav --diarize -o notes.txt  # label speakers (needs the diarize extra and HF_TOKEN)
+transcribe-server -b faster-whisper            # OpenAI-compatible API on http://127.0.0.1:8000/v1
 ```
-
-Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress). See `transcribe --help` for all options.
-
-**Better results:** `--prompt "Kubernetes, Grafana"` helps spell names and jargon, `--vad` skips silence (which stops made-up text in quiet parts; faster-whisper), and `--max-line-width 42` splits subtitles into readable lines. `--word-timestamps` adds per-word timings to JSON.
-
-## Python API
 
 ```python
 from speech_toolkit import Transcriber, transcribe
@@ -47,68 +49,21 @@ for path in ["a.mp3", "b.mp3"]:
     transcriber.transcribe(path, language="en").save(f"{path}.vtt")
 ```
 
-## OpenAI-compatible server
+## Documentation
 
-```bash
-pip install "speech-transcription-toolkit[server,faster-whisper]"
-transcribe-server -b faster-whisper -m small      # http://127.0.0.1:8000/v1
-```
+Every page lives in [docs/](https://github.com/MysterionRise/speech-transcription-toolkit/tree/main/docs):
+- [Command line](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/cli.md): every `transcribe` option, batch mode and `ogg2wav`.
+- [Python API](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/python-api.md): `Transcriber`, results and custom backends.
+- [Backends](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/backends.md): models, what each backend supports, devices.
+- [Speaker labels](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/diarization.md): diarization with pyannote.audio.
+- [Output formats](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/formats.md): txt, srt, vtt and json.
+- [OpenAI-compatible server](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/server.md): `transcribe-server`.
+- [Troubleshooting](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/troubleshooting.md)
 
-Apps and SDKs built for OpenAI's speech-to-text API then work offline:
+## Contributing
 
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused")
-print(client.audio.transcriptions.create(model="whisper-1", file=open("talk.mp3", "rb")).text)
-```
+See [CONTRIBUTING.md](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CONTRIBUTING.md) and
+[Development](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/development.md). The roadmap is
+tracked in [#12](https://github.com/MysterionRise/speech-transcription-toolkit/issues/12).
 
-One model per server (the request's `model` is ignored); `response_format` can be json, text, srt, vtt or verbose_json. It listens on localhost only unless you pass `--host`; add `--api-key` (or `TRANSCRIBE_API_KEY`) to require a key.
-
-## Backends
-
-| Backend | Models (default in bold) | Notes |
-|---|---|---|
-| `whisper` | tiny … large-v3, **turbo** | OpenAI Whisper |
-| `faster-whisper` | tiny … large-v3, distil-\*, **turbo** | Same models, several times faster, no torch needed |
-| `voxtral` | **voxtral-mini**, voxtral-small | Mistral Voxtral; transcription only, timestamps per ~30 s |
-| `parakeet` | **parakeet-tdt-0.6b-v3**, parakeet-tdt-0.6b-v2 | NVIDIA Parakeet: fast and accurate, word timestamps; English + 24 European languages (v3, detected automatically) |
-| `canary` | **canary-1b-v2** | NVIDIA Canary: the same 25 languages, translates to English; give the language with `-l` (default English), timestamps per ~30 s |
-
-The GPU is used when available; force it with `--device cpu` or `--device cuda`.
-
-## Speaker labels
-
-1. `pip install "speech-transcription-toolkit[diarize]"`
-2. Accept the terms of [pyannote/speaker-diarization-community-1](https://hf.co/pyannote/speaker-diarization-community-1) and create a [Hugging Face token](https://huggingface.co/settings/tokens).
-3. Run:
-
-```bash
-export HF_TOKEN=hf_...
-transcribe meeting.wav --diarize --num-speakers 3 -o meeting.txt
-```
-
-Lines look like `[SPEAKER_00] Hello there.`, and subtitles get the same labels. With whisper and faster-whisper, speakers are matched word by word, so a quick reply mid-sentence gets its own line. In Python: `Transcriber(diarize=True).transcribe("meeting.wav", num_speakers=3)`. pyannote's usage telemetry stays off unless you set `PYANNOTE_METRICS_ENABLED=true`.
-
-## Convert OGG/Opus to WAV
-
-```bash
-ogg2wav recordings/ --outdir wav --rate 16000 --channels 1
-```
-
-## Troubleshooting
-
-- **Out of memory:** use a smaller model (`-m small`) or `-b faster-whisper`.
-- **Parakeet/Canary "requires extra packages":** `pip install "speech-transcription-toolkit[nvidia]"` (needs transformers 5.18+).
-- **Diarization "could not download":** accept the model terms (step 2) and set `HF_TOKEN`.
-- **`ffmpeg` not found:** install it and make sure it is on your `PATH`.
-
-## Development
-
-```bash
-pip install -r requirements-dev.txt   # enough for the unit tests: models are mocked
-pip install -e ".[all]"               # optional: run real models from the checkout
-pre-commit install
-pytest                                # 80% coverage required
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
+MIT licensed.
