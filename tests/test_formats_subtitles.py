@@ -15,6 +15,7 @@ import pytest
 
 from speech_toolkit import cli
 from speech_toolkit.backends import TranscriptionResult
+from speech_toolkit.errors import SpeechToolkitWarning
 from speech_toolkit.formats import (
     MIN_CUE_SECONDS,
     _width,
@@ -438,8 +439,10 @@ class TestUnknownExtension:
     @pytest.mark.parametrize("name, suffix", [("out.tsv", ".tsv"), ("notes.md", ".md"), ("OUT.Docx", ".Docx")])
     def test_warns_and_writes_txt(self, name, suffix):
         message = f"'{suffix}' isn't an output format (txt, srt, vtt, json); writing txt."
-        with pytest.warns(UserWarning, match=re.escape(message)):
+        with pytest.warns(SpeechToolkitWarning, match=re.escape(message)) as caught:
             assert format_for_path(pathlib.Path(name)) == "txt"
+
+        assert [warning.category for warning in caught] == [SpeechToolkitWarning]
 
     def test_known_or_missing_extension_does_not_warn(self):
         """Warnings from speech_toolkit fail tests, so these would fail if they warned."""
@@ -450,20 +453,26 @@ class TestUnknownExtension:
     def test_save(self, tmp_path):
         result = TranscriptionResult(" Hi.", [{"start": 0.0, "end": 1.0, "text": " Hi."}])
 
-        with pytest.warns(UserWarning, match="'.tsv' isn't an output format"):
+        with pytest.warns(SpeechToolkitWarning, match="'.tsv' isn't an output format"):
             result.save(tmp_path / "out.tsv")
 
         assert (tmp_path / "out.tsv").read_text(encoding="utf-8") == "Hi.\n"
         result.save(tmp_path / "out2.tsv", fmt="srt")  # an explicit format doesn't warn
 
-    def test_cli(self, fake_backend, tmp_path):
+    # Only SpeechToolkitWarning is let through: pyproject.toml turns any other warning from speech_toolkit into an error.
+    @pytest.mark.filterwarnings("default::speech_toolkit.SpeechToolkitWarning")
+    def test_cli_prints_one_warning_line(self, fake_backend, tmp_path, capsys):
         audio = tmp_path / "talk.mp3"
         audio.touch()
 
-        with pytest.warns(UserWarning, match="'.tsv' isn't an output format"):
-            cli.main([str(audio), "-b", "fake", "-q", "-o", str(tmp_path / "talk.tsv")])
+        cli.main([str(audio), "-b", "fake", "-q", "-o", str(tmp_path / "talk.tsv")])
         cli.main([str(audio), "-b", "fake", "-q", "-o", str(tmp_path / "talk2.tsv"), "-f", "txt"])  # no warning
 
+        captured = capsys.readouterr()
+        assert [line for line in captured.err.splitlines() if "Warning" in line] == [
+            "Warning: '.tsv' isn't an output format (txt, srt, vtt, json); writing txt."
+        ]
+        assert captured.out == ""  # the transcripts went to the files
         assert (tmp_path / "talk.tsv").read_text(encoding="utf-8") == "Hello from talk.\n"
         assert (tmp_path / "talk2.tsv").read_text(encoding="utf-8") == "Hello from talk.\n"
 

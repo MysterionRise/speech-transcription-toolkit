@@ -316,18 +316,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         show_models(args.backend)
         return
 
-    fmt = args.format or format_for_path(args.output)
-    jobs = plan_outputs(args, fmt)
-    if not jobs:
-        sys.exit("Error: no audio files found.")
-    missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
-    if missing:  # checked before the (slow) model load
-        sys.exit(f"Error: file not found: {', '.join(missing)}")
-
     stdout = sys.stdout
     # Libraries print progress and debug text to stdout; send it to stderr so stdout carries only the transcript.
+    # Warnings, from the format lookup on, print as one line each.
     with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr):
         warnings.showwarning = _print_warning
+        fmt = args.format or format_for_path(args.output)
+        jobs = plan_outputs(args, fmt)
+        if not jobs:
+            sys.exit("Error: no audio files found.")
+        missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
+        if missing:  # checked before the (slow) model load
+            sys.exit(f"Error: file not found: {', '.join(missing)}")
         failures = run_jobs(args, jobs, fmt, stdout)
     if failures:
         sys.exit(1 if len(jobs) == 1 else f"Error: {failures} of {len(jobs)} files failed.")

@@ -7,7 +7,7 @@ How the format is chosen:
 - With neither, `transcribe` prints plain text.
 
 In Python, use `result.render(fmt)` or `result.save(path)`. `save()` picks the format from the extension the same way,
-warning about unknown ones; pass `fmt` to choose it.
+with a `SpeechToolkitWarning` for an unknown one; pass `fmt` to choose it.
 
 | Format | Contents | With speaker labels |
 |---|---|---|

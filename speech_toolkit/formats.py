@@ -10,6 +10,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .errors import SpeechToolkitWarning
+
 FORMATS = ("txt", "srt", "vtt", "json")
 
 MIN_CUE_SECONDS = 0.5
@@ -26,14 +28,18 @@ def format_for_path(path: Optional[pathlib.Path], default: str = "txt") -> str:
     """Pick the output format from a file extension (``out.srt`` -> ``srt``).
 
     Without a path or an extension the format is *default*. An extension that isn't a format also gives *default*,
-    with a warning.
+    with a :class:`~speech_toolkit.SpeechToolkitWarning`.
     """
     suffix = path.suffix if path else ""
     fmt = suffix.lower().lstrip(".")
     if fmt in FORMATS:
         return fmt
     if fmt:
-        warnings.warn(f"'{suffix}' isn't an output format ({', '.join(FORMATS)}); writing {default}.", stacklevel=2)
+        warnings.warn(
+            f"'{suffix}' isn't an output format ({', '.join(FORMATS)}); writing {default}.",
+            SpeechToolkitWarning,
+            stacklevel=2,
+        )
     return default
 
 
