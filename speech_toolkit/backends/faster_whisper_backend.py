@@ -20,7 +20,8 @@ class FasterWhisperBackend(TranscriptionBackend):
 
     name = "faster-whisper"
     description = "faster-whisper - CTranslate2 Whisper: faster, lighter, no torch needed"
-    capabilities = frozenset({"prompt", "vad", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps"})
+    requires = ("faster_whisper",)
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
     MODELS = [

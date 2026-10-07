@@ -27,8 +27,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import __version__
 from .api import Transcriber
-from .backends import DEFAULT_BACKEND, TranscriptionResult, list_backends
-from .cli import FILE_ERRORS, load_transcriber, positive_int
+from .backends import TranscriptionResult
+from .cli import FILE_ERRORS, add_model_options, load_transcriber, positive_int
 
 INSTALL_HINT = 'transcribe-server needs the server extra: pip install "speech-transcription-toolkit[server]"'
 RESPONSE_FORMATS = ("json", "text", "srt", "vtt", "verbose_json")
@@ -69,8 +69,10 @@ class _Service:
         if scheme.lower() != "bearer" or not secrets.compare_digest(token.strip().encode(), self.api_key.encode()):
             raise APIError(401, "Missing or wrong API key: send 'Authorization: Bearer <key>'.", code="invalid_api_key")
 
-    def check_request(self, response_format: str, granularities: List[str], stream: bool) -> bool:
+    def check_request(self, task: str, response_format: str, granularities: List[str], stream: bool) -> bool:
         """Reject what the server can't do; returns whether word timestamps were asked for."""
+        if task == "translate" and not self.transcriber.supports("translate"):
+            raise APIError(400, f"The {self.transcriber.backend_name} backend can't translate.")
         words = "word" in granularities
         if stream:
             raise APIError(400, "Streaming isn't supported; leave stream unset.", param="stream")
@@ -161,7 +163,7 @@ def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_u
         granularities: List[str],
         stream: bool,
     ) -> Any:
-        words = service.check_request(response_format, granularities, stream)
+        words = service.check_request(task, response_format, granularities, stream)
         result = service.transcribe(upload, task, language, prompt, words)
         body = _response_body(result, response_format, task, words)
         return body if isinstance(body, dict) else PlainTextResponse(body)
@@ -279,14 +281,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--host", default="127.0.0.1", help="Address to listen on (default: 127.0.0.1, this machine).")
     parser.add_argument("--port", type=positive_int, default=8000, help="Port to listen on (default: 8000).")
-    parser.add_argument(
-        "-b",
-        "--backend",
-        default=DEFAULT_BACKEND,
-        help=f"Transcription backend (default: {DEFAULT_BACKEND}). Available: {', '.join(list_backends())}",
-    )
-    parser.add_argument("-m", "--model", default=None, help="Model name/size (default: the backend's default).")
-    parser.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
+    add_model_options(parser)  # --backend, --model and --device, as for transcribe
     parser.add_argument("--diarize", action="store_true", help="Label speakers (needs the diarize extra and HF_TOKEN).")
     parser.add_argument("--hf-token", metavar="TOKEN", help="Hugging Face token (default: HF_TOKEN env var).")
     parser.add_argument(

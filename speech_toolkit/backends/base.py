@@ -6,15 +6,20 @@ enabling pluggable support for different speech-to-text models (Whisper, Voxtral
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import numbers
 import os
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Union, cast
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple, Union, cast
 
 from ..formats import format_for_path, render, write_text
 from ..types import SCHEMA_VERSION, Segment
+
+# What a backend can declare in ``capabilities`` (see TranscriptionBackend), in the order they are listed.
+CAPABILITIES = ("translate", "language_detection", "prompt", "vad", "word_timestamps")
 
 
 class TranscriptionResult:
@@ -242,8 +247,14 @@ class TranscriptionBackend(ABC):
     All transcription backends (Whisper, Voxtral, etc.) must inherit from this
     class and implement the required methods.
 
-    Optional features are opt-in: a backend lists the ones it supports in ``capabilities`` and
-    accepts the matching keyword-only arguments in ``transcribe()``:
+    A backend lists what it can do in ``capabilities`` (all of them are opt-in):
+
+    - ``"translate"``: ``task="translate"`` translates to English. Without it, :class:`speech_toolkit.Transcriber`
+      raises :class:`~speech_toolkit.UnsupportedOptionError` for a translation, before any audio is decoded.
+    - ``"language_detection"``: with ``language=None``, the backend detects the language and reports it
+      in ``TranscriptionResult.language``.
+
+    Optional features, which the backend accepts as keyword-only arguments of ``transcribe()``:
 
     - ``"prompt"`` (``prompt: str``): names, terms or a sample sentence that guide the transcript.
     - ``"vad"`` (``vad: bool``): skip silence (voice activity detection) before transcribing.
@@ -251,11 +262,15 @@ class TranscriptionBackend(ABC):
       ``{"word": " Hello", "start": 0.0, "end": 0.4}`` dicts (Whisper's format; ``"probability"`` optional).
 
     :class:`speech_toolkit.Transcriber` passes a backend only the options it declares.
+
+    ``requires`` holds the top-level import names of the packages the backend needs, such as
+    ``("faster_whisper",)``; ``transcribe --list-backends`` checks them without importing anything.
     """
 
     name: str = "base"
     description: str = "Base transcription backend"
     capabilities: FrozenSet[str] = frozenset()
+    requires: Tuple[str, ...] = ()
 
     def __init__(self) -> None:
         self._model: Any = None  # the backend library's model object
@@ -273,6 +288,11 @@ class TranscriptionBackend(ABC):
         """Return the default model name for this backend."""
         models = cls.available_models()
         return models[0] if models else ""
+
+    @classmethod
+    def missing_requirements(cls) -> List[str]:
+        """The modules in ``requires`` that aren't installed. Nothing is imported, so this is fast."""
+        return [module for module in cls.requires if not _installed(module)]
 
     @abstractmethod
     def load_model(self, model_name: str, device: Optional[str] = None) -> None:
@@ -297,7 +317,8 @@ class TranscriptionBackend(ABC):
         Args:
             audio_path: Path to the audio file.
             language: Language code (e.g., 'en', 'es'). None for auto-detect.
-            task: 'transcribe' or 'translate' (to English).
+            task: 'transcribe', or 'translate' to English (Transcriber asks for it only with the
+                "translate" capability).
             verbose: Whether to show progress output.
 
         Returns:
@@ -319,3 +340,11 @@ class TranscriptionBackend(ABC):
     def device(self) -> Optional[str]:
         """Return the device the model is running on."""
         return self._device
+
+
+def _installed(module: str) -> bool:
+    """Whether *module* can be imported, found without importing it (only its top-level package is looked up)."""
+    top_level = module.partition(".")[0]  # find_spec("a.b") would import package a
+    if top_level in sys.modules:
+        return sys.modules[top_level] is not None  # None blocks the import
+    return importlib.util.find_spec(top_level) is not None

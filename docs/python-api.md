@@ -28,8 +28,10 @@ before a large model download.
 | `num_speakers`, `min_speakers`, `max_speakers` | Speaker-count hints; need `diarize=True`. |
 | `verbose` | Show the backend's progress on stderr. |
 
-Options the backend doesn't support are skipped with a warning. `transcriber.supports("vad")` (or `"prompt"`,
-`"word_timestamps"`) tells you in advance.
+Options the backend doesn't support are skipped with a warning. A translation the backend can't do raises
+`UnsupportedOptionError` before any audio is decoded; the one-shot `transcribe()` raises it before loading the model.
+`transcriber.supports("vad")` tells you in advance; it also takes `"prompt"`, `"word_timestamps"`, `"translate"` and
+`"language_detection"`, see [Backends](backends.md#what-each-backend-supports).
 
 `transcribe(audio, backend=..., model=..., **options)` loads a model and transcribes one file in a single call. To
 transcribe several files, create a `Transcriber` once instead.
@@ -103,7 +105,7 @@ built-in error the library raised before, so `except ValueError` and the like ke
 |---|---|---|
 | `BackendNotFoundError` | `ValueError` | No backend has that name. |
 | `ModelNotFoundError` | `ValueError` | The backend has no model of that name. |
-| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, or speaker hints without `diarize=True`. |
+| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, a `task` other than `transcribe` or `translate`, or speaker hints without `diarize=True`. |
 | `BackendUnavailableError` | `ImportError` | An optional package is missing, for the backend or for diarization; the message names the extra to install. |
 | `ModelLoadError` | `RuntimeError` | The model can't be downloaded or loaded. |
 | `AudioDecodeError` | `RuntimeError` | The audio can't be decoded. |
