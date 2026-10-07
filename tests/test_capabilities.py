@@ -155,8 +155,7 @@ class TestRequirements:
 
     def test_listing_finds_packages_without_importing_them(self):
         """Installed packages are found without being imported, and dotted names only look up the top level."""
-        code = textwrap.dedent(
-            """
+        code = textwrap.dedent("""
             import sys
             from speech_toolkit import cli
             from speech_toolkit.backends import FasterWhisperBackend, register_backend
@@ -167,8 +166,7 @@ class TestRequirements:
             register_backend("heavy", Heavy)
             cli.show_backends()
             print([module for module in ("numpy", "xmlrpc") if module in sys.modules])
-            """
-        )
+            """)
         run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=REPO_ROOT)
 
         assert run.stdout.splitlines()[-1] == "[]"
@@ -230,7 +228,9 @@ class TestTranscriber:
     def test_translation_needs_the_capability(self, transcribe_only, audio):
         transcriber = Transcriber("transcribe-only")
 
-        message = f"the transcribe-only backend can't translate; backends that translate: {TRANSLATORS}, fake, fake-words"
+        message = (
+            f"the transcribe-only backend can't translate; backends that translate: {TRANSLATORS}, fake, fake-words"
+        )
         with pytest.raises(ValueError, match=re.escape(message)):
             transcriber.transcribe(audio, task="translate")
         assert FakeWordsBackend.calls == []  # the backend never ran
