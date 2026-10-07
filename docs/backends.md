@@ -39,6 +39,12 @@ The GPU is used when available; force a device with `--device cpu` or `--device 
 
 Out of memory? Use a smaller model (`-m small`) or `-b faster-whisper`.
 
+## Text limit per chunk
+
+Canary and Voxtral transcribe ~30 s chunks and write at most 500 tokens for each, plenty for normal speech. A chunk
+that reaches the limit, from very fast speech or the model repeating itself, may be cut off, so they warn once per file
+with the chunk's time range. Check the transcript there, or transcribe the file with another backend.
+
 ## Adding a backend
 
 1. **Subclass** `TranscriptionBackend` in `speech_toolkit/backends/` and implement `available_models()`, `load_model()`
