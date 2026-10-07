@@ -36,6 +36,8 @@ class VoxtralBackend(TranscriptionBackend):
 
     name = "voxtral"
     description = "Mistral Voxtral - open-weight multilingual speech-to-text"
+    capabilities = frozenset()  # transcription only, and it doesn't report the language
+    requires = ("torch", "transformers", "mistral_common")
 
     # Available Voxtral models
     MODELS = {
