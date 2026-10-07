@@ -141,16 +141,17 @@ class TestErrors:
         assert response.status_code == 400
         assert "doesn't give word timestamps" in response.json()["error"]["message"]
 
-    def test_backend_failure_is_a_500(self, fake_backend, temp_dir):
+    def test_backend_failure_is_a_500(self, fake_backend, temp_dir, caplog):
         client = TestClient(create_app(Transcriber("fake")))
-        transcriber_error = RuntimeError("Failed to load audio: invalid data")
+        transcriber_error = RuntimeError("CUDA out of memory")
 
         with patch.object(Transcriber, "transcribe", side_effect=transcriber_error):
             response = client.post(URL, files=upload())
 
         assert response.status_code == 500
         assert response.json()["error"]["type"] == "server_error"
-        assert response.json()["error"]["message"] == "Failed to load audio: invalid data"
+        assert "CUDA" not in response.json()["error"]["message"]  # the details are in the server's log
+        assert "CUDA out of memory" in caplog.text
         assert list(temp_dir.iterdir()) == []
 
     def test_value_error_is_a_400(self, client):
