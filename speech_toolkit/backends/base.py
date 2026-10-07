@@ -88,8 +88,8 @@ class TranscriptionBackend(ABC):
     description: str = "Base transcription backend"
     capabilities: FrozenSet[str] = frozenset()
 
-    def __init__(self):
-        self._model = None
+    def __init__(self) -> None:
+        self._model: Any = None  # the backend library's model object
         self._model_name: Optional[str] = None
         self._device: Optional[str] = None
 

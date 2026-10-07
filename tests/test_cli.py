@@ -407,6 +407,7 @@ class TestMain:
         assert FakeWordsBackend.calls == [{"prompt": "Grafana", "vad": True, "word_timestamps": True}]
         assert json.loads(out.read_text(encoding="utf-8"))["segments"][0]["words"][0]["word"] == " Hello"
 
+    @pytest.mark.filterwarnings("default:the fake backend doesn't support vad:UserWarning")
     def test_unsupported_option_prints_one_warning_line(self, fake_backend, tmp_path, capsys):
         for name in ("a.wav", "b.wav"):
             (tmp_path / name).touch()
@@ -476,6 +477,7 @@ class TestMain:
 
         assert capsys.readouterr().out == "[SPEAKER_00] Hello from\n[SPEAKER_01] talk.\n"
 
+    @pytest.mark.filterwarnings("default:'turbo' isn't trained for translation:UserWarning")
     @pytest.mark.parametrize("model, warned", [("turbo", True), ("small", False)])
     def test_translate_with_turbo_warns(self, fake_backend, tmp_path, capsys, model, warned):
         audio = tmp_path / "talk.mp3"
