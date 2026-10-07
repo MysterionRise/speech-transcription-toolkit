@@ -8,11 +8,13 @@ Hub on first use (set HF_TOKEN if the download asks for authentication).
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
+from .nvidia_backend import _cut_off_warning, _rows_at_limit
 
 # Voxtral's transcription mode returns text without timestamps, so audio is split into
 # chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
@@ -117,7 +119,8 @@ class VoxtralBackend(TranscriptionBackend):
             verbose: Print progress to stderr.
 
         Returns:
-            TranscriptionResult with one segment per ~30 s chunk of audio.
+            TranscriptionResult with one segment per ~30 s chunk of audio. A chunk whose text reaches MAX_NEW_TOKENS
+            tokens may be cut off: one warning per file gives the number of such chunks and the first one's times.
 
         Raises:
             RuntimeError: If no model is loaded.
@@ -136,13 +139,17 @@ class VoxtralBackend(TranscriptionBackend):
         chunks = split_audio(load_audio(audio_path), CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
+        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
         for first in range(0, len(chunks), BATCH_SIZE):
             batch = chunks[first : first + BATCH_SIZE]
-            texts = self._transcribe_batch([samples for _, samples in batch], language)
+            texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language)
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
+            cut_off += [segments[first + row] for row in at_limit]
             if verbose:
                 print(f"Voxtral: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
+        if cut_off:
+            warnings.warn(_cut_off_warning(audio_path, "Voxtral", MAX_NEW_TOKENS, cut_off))
 
         return TranscriptionResult(
             text=" ".join(seg["text"] for seg in segments if seg["text"]),
@@ -150,8 +157,12 @@ class VoxtralBackend(TranscriptionBackend):
             language=language,  # Voxtral doesn't report the detected language
         )
 
-    def _transcribe_batch(self, chunks: Sequence[Any], language: Optional[str]) -> List[str]:
-        """Transcribe a batch of audio chunks, returning one string per chunk."""
+    def _transcribe_batch(self, chunks: Sequence[Any], language: Optional[str]) -> Tuple[List[str], List[int]]:
+        """Transcribe a batch of audio chunks.
+
+        Returns:
+            One string per chunk, and the positions in the batch of the chunks whose text reached MAX_NEW_TOKENS.
+        """
         inputs = self._processor.apply_transcription_request(
             audio=list(chunks),
             model_id=self._repo_id,
@@ -161,5 +172,7 @@ class VoxtralBackend(TranscriptionBackend):
         )
         inputs = inputs.to(self._device, dtype=self._model.dtype)
         outputs = self._model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
-        texts = self._processor.batch_decode(outputs[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)
-        return [text.strip() for text in texts]
+        generated = outputs[:, inputs.input_ids.shape[1] :]  # without the prompt
+        texts = self._processor.batch_decode(generated, skip_special_tokens=True)
+        at_limit = _rows_at_limit(generated, self._model.generation_config, MAX_NEW_TOKENS)
+        return [text.strip() for text in texts], at_limit

@@ -8,10 +8,11 @@ first use.
 
 from __future__ import annotations
 
+import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
@@ -20,6 +21,10 @@ INSTALL_HINT = 'Install with: pip install "speech-transcription-toolkit[nvidia]"
 # Parakeet word timings are grouped into segments that end at a sentence, a pause or this length.
 MAX_SEGMENT_SECONDS = 30.0
 PAUSE_SECONDS = 1.0
+# A "." after these words (lowercased) doesn't end a sentence when more text follows: "Dr. Smith", "Madrid vs. Milan".
+# _ends_sentence() also skips initials ("J.", "U.S.", "e.g.", "i.e."), decimal points ("3." then "5") and a "."
+# followed by a lowercase word ("etc. and so on"), so "etc." still ends a sentence before a capital letter.
+ABBREVIATIONS = frozenset({"dr", "mr", "mrs", "ms", "st", "vs"})
 
 
 class _TransformersBackend(TranscriptionBackend):
@@ -184,7 +189,8 @@ class CanaryBackend(_TransformersBackend):
             verbose: Print progress to stderr.
 
         Returns:
-            TranscriptionResult with one segment per chunk of up to 30 s.
+            TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches MAX_NEW_TOKENS
+            tokens may be cut off: one warning per file gives the number of such chunks and the first one's times.
         """
         self._check_ready(audio_path)
         if language is None:
@@ -192,13 +198,17 @@ class CanaryBackend(_TransformersBackend):
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
+        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
         for first in range(0, len(chunks), self.BATCH_SIZE):
             batch = chunks[first : first + self.BATCH_SIZE]
-            texts = self._transcribe_batch([samples for _, samples in batch], language or "en", task)
+            texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language or "en", task)
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
+            cut_off += [segments[first + row] for row in at_limit]
             if verbose:
                 print(f"Canary: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
+        if cut_off:
+            warnings.warn(_cut_off_warning(audio_path, "Canary", self.MAX_NEW_TOKENS, cut_off))
 
         return TranscriptionResult(
             text=" ".join(segment["text"] for segment in segments if segment["text"]),
@@ -206,8 +216,12 @@ class CanaryBackend(_TransformersBackend):
             language="en" if task == "translate" else (language or "en"),
         )
 
-    def _transcribe_batch(self, chunks: Sequence[Any], language: str, task: str) -> List[str]:
-        """Transcribe (or translate) a batch of audio chunks, returning one string per chunk."""
+    def _transcribe_batch(self, chunks: Sequence[Any], language: str, task: str) -> Tuple[List[str], List[int]]:
+        """Transcribe (or translate) a batch of audio chunks.
+
+        Returns:
+            One string per chunk, and the positions in the batch of the chunks whose text reached MAX_NEW_TOKENS.
+        """
         inputs = self._processor.apply_transcription_request(
             audio=list(chunks),
             source_language=language,
@@ -217,23 +231,32 @@ class CanaryBackend(_TransformersBackend):
         outputs = self._model.generate(**inputs, max_new_tokens=self.MAX_NEW_TOKENS)
         # The output starts with the prompt (language and task tokens); keep only the generated text.
         prompt_length = inputs["decoder_input_ids"].shape[1] if "decoder_input_ids" in inputs else 0
-        texts = self._processor.batch_decode(outputs[:, prompt_length:], skip_special_tokens=True)
-        return [text.strip() for text in texts]
+        generated = outputs[:, prompt_length:]
+        texts = self._processor.batch_decode(generated, skip_special_tokens=True)
+        at_limit = _rows_at_limit(generated, self._model.generation_config, self.MAX_NEW_TOKENS)
+        return [text.strip() for text in texts], at_limit
 
 
 def _words_from_tokens(tokens: Sequence[Dict[str, Any]], offset: float) -> List[Dict[str, Any]]:
-    """Join subword tokens (``{"token", "start", "end"}``) into words; a leading space starts a new word."""
+    """Join subword tokens (``{"token", "start", "end"}``) into words.
+
+    A token with a leading space starts a new word, and so does one after a whitespace-only token: "Hello", " ",
+    "world" are two words.
+    """
     words: List[Dict[str, Any]] = []
+    new_word = True  # whether the next token starts a word
     for token in tokens:
         text = token["token"]
         if not text.strip():
+            new_word = True
             continue
         start, end = round(offset + token["start"], 3), round(offset + token["end"], 3)
-        if words and not text[0].isspace():
+        if new_word or text[0].isspace():
+            words.append({"word": " " + text.lstrip(), "start": start, "end": end})
+        else:
             words[-1]["word"] += text
             words[-1]["end"] = max(words[-1]["end"], end)
-        else:
-            words.append({"word": " " + text.lstrip(), "start": start, "end": end})
+        new_word = False
     return words
 
 
@@ -241,7 +264,7 @@ def _segments_from_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Group words into segments that end after a sentence, before a pause, or at MAX_SEGMENT_SECONDS."""
     groups: List[List[Dict[str, Any]]] = []
     current: List[Dict[str, Any]] = []
-    for word in words:
+    for index, word in enumerate(words):
         if current and (
             word["start"] - current[-1]["end"] > PAUSE_SECONDS
             or word["end"] - current[0]["start"] > MAX_SEGMENT_SECONDS
@@ -249,7 +272,8 @@ def _segments_from_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             groups.append(current)
             current = []
         current.append(word)
-        if word["word"].rstrip().endswith((".", "?", "!")):
+        following = words[index + 1]["word"] if index + 1 < len(words) else ""
+        if _ends_sentence(word["word"], following):
             groups.append(current)
             current = []
     if current:
@@ -258,3 +282,48 @@ def _segments_from_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         {"id": i, "start": g[0]["start"], "end": g[-1]["end"], "text": "".join(w["word"] for w in g), "words": g}
         for i, g in enumerate(groups)
     ]
+
+
+def _ends_sentence(word: str, following: str) -> bool:
+    """Whether *word* ends a sentence, given the *following* word ("" after the last one).
+
+    "?" and "!" do, and so does "." unless the following word continues the sentence: it starts in lowercase ("etc.
+    and so on"), or *word* is in ABBREVIATIONS ("Dr."), initials ("J.", "U.S.", "e.g.", but not the pronoun "I.") or a
+    number cut at its decimal point ("3." then "5").
+    """
+    word, following = word.strip(), following.strip()
+    if not word.endswith("."):
+        return word.endswith(("?", "!"))
+    if not following:
+        return True
+    stem = re.sub(r"^\W+", "", word[:-1])  # without the "." and any leading punctuation, as in "¿Dr."
+    initials = stem != "I" and all(len(letter) == 1 and letter.isalpha() for letter in stem.split("."))
+    if following[0].islower() or stem.lower() in ABBREVIATIONS or initials:
+        return False
+    return not (stem[-1:].isdigit() and following[0].isdigit())
+
+
+def _rows_at_limit(generated: Any, generation_config: Any, limit: int) -> List[int]:
+    """The rows of a batch of generated tokens (prompt removed) that reached *limit* tokens without ending.
+
+    generate() stops once every row has ended or *limit* tokens are generated, and pads the rows that ended earlier: a
+    row that is *limit* tokens long and doesn't end in an end-of-text or padding token was cut off.
+    """
+    eos = generation_config.eos_token_id
+    stops = {generation_config.pad_token_id, *(eos if isinstance(eos, (list, tuple)) else [eos])}
+    return [row for row, tokens in enumerate(generated.tolist()) if len(tokens) >= limit and tokens[-1] not in stops]
+
+
+def _cut_off_warning(audio_path: Path, backend: str, limit: int, segments: List[Dict[str, Any]]) -> str:
+    """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens."""
+    first = f"from {_clock(segments[0]['start'])} to {_clock(segments[0]['end'])}"
+    chunks = f"the chunk {first}" if len(segments) == 1 else f"{len(segments)} chunks, the first {first}"
+    # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
+    return f"{audio_path}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off."
+
+
+def _clock(seconds: float) -> str:
+    """*seconds* as M:SS, or H:MM:SS from an hour on."""
+    minutes, secs = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
