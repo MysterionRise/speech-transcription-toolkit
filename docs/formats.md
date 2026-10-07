@@ -33,6 +33,7 @@ shared out in proportion to text length. Cues are never merged, so each piece ke
 
 ```json
 {
+  "schema_version": 1,
   "text": " Hello world. This is a speech recognition test.",
   "segments": [
     {
@@ -40,15 +41,25 @@ shared out in proportion to text length. Cues are never merged, so each piece ke
       "start": 0.0,
       "end": 3.2,
       "text": " Hello world. This is a speech recognition test.",
-      "words": [{"word": " Hello", "start": 0.0, "end": 0.42}]
+      "words": [{"word": " Hello", "start": 0.0, "end": 0.42, "probability": 0.98}]
     }
   ],
-  "language": "en"
+  "language": "en",
+  "duration": 3.4,
+  "language_probability": 0.99
 }
 ```
 
+- `schema_version` is the version of this layout. It goes up only when a change would make older versions misread a
+  file, not when a field is added. Files without it come from earlier versions, which wrote the same layout with
+  fewer fields.
+- `id` numbers the segments from 0, with every backend. (faster-whisper's used to start at 1.)
+- `duration` is the audio's length in seconds, and `language_probability` how likely the detected language is, from 0
+  to 1. Both are `null` when the backend doesn't report them; faster-whisper reports both.
 - `words` appears only with word timestamps (`--word-timestamps`, or automatically with `--diarize` on backends that
   support them).
-- Fields vary by backend:
-  - whisper and faster-whisper add decoding details such as `avg_logprob` and `no_speech_prob`;
-  - faster-whisper also adds `duration` and `language_probability` at the top level.
+- Fields vary by backend: whisper and faster-whisper add decoding details such as `avg_logprob` and `no_speech_prob`.
+- With `--diarize`, `speaker_segments` holds the segments with a `speaker` label each.
+
+In Python, `TranscriptionResult.load("talk.json")` reads the file back, to render it in another format; see
+[Loading a saved result](python-api.md#loading-a-saved-result).

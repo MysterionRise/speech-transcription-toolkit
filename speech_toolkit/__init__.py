@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from .api import Transcriber, transcribe
 from .backends import TranscriptionBackend, TranscriptionResult, list_backends, register_backend
+from .types import Segment, Word
 
 __version__ = "0.3.0"
 
@@ -21,6 +22,8 @@ __all__ = [
     "transcribe",
     "TranscriptionBackend",
     "TranscriptionResult",
+    "Segment",
+    "Word",
     "list_backends",
     "register_backend",
     "__version__",

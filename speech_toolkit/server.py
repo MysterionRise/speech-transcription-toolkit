@@ -224,10 +224,13 @@ def _response_body(result: TranscriptionResult, response_format: str, task: str,
 def verbose_json(result: TranscriptionResult, task: str, words: bool = False) -> Dict[str, Any]:
     """The result as OpenAI's ``verbose_json``: its segment fields, and top-level ``words`` when asked for."""
     segments = result.speaker_segments or result.segments
+    duration = result.duration
+    if duration is None:  # not reported: a duration in raw (as some backends give), else the last segment's end
+        duration = result.raw.get("duration") or (segments[-1].get("end", 0.0) if segments else 0.0)
     body: Dict[str, Any] = {
         "task": task,
         "language": result.language,
-        "duration": result.raw.get("duration") or (segments[-1].get("end", 0.0) if segments else 0.0),
+        "duration": duration,
         "text": result.text.strip(),
         "segments": [_openai_segment(i, seg) for i, seg in enumerate(segments)],
     }
