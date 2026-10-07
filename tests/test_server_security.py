@@ -400,6 +400,13 @@ DECODE_ERRORS = {
 }
 
 
+def ffmpeg_missing(path):
+    """speech_toolkit.media.load_audio's error when ffmpeg isn't installed: the server's problem, not the file's."""
+    error = AudioDecodeError("ffmpeg not found: install it and make sure it is on your PATH")
+    error.__cause__ = FileNotFoundError(2, "No such file or directory", "ffmpeg")
+    return error
+
+
 def assert_not_audio(response, path=None):
     """A 400 for undecodable audio, without the temporary file's path or the decoder's output."""
     assert response.status_code == 400
@@ -485,12 +492,13 @@ class TestSanitizedErrors:
             lambda path: ValueError(f"{path.parent} is read-only"),
             lambda path: ValueError(""),
             lambda path: FileNotFoundError(f"Audio file not found: {path}"),
+            ffmpeg_missing,
             lambda path: RuntimeError(f"CUDA out of memory while reading {path}"),
             lambda path: ModelLoadError("No model loaded. Call load_model() first."),
             lambda path: MemoryError(),
         ],
         ids=["value-error-naming-the-file", "value-error-naming-the-folder", "empty-value-error", "file-not-found"]
-        + ["runtime-error", "model-load-error", "memory-error"],
+        + ["ffmpeg-missing", "runtime-error", "model-load-error", "memory-error"],
     )
     def test_other_errors_are_generic_500s_with_details_in_the_log(self, failing_backend, temp_dir, caplog, error):
         def fail(path):

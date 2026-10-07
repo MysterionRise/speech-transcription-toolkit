@@ -291,10 +291,14 @@ def _is_decode_error(error: BaseException) -> bool:
     Backends report it in their own ways: ``AudioDecodeError`` (speech_toolkit's own decoding), ffmpeg exiting with
     an error (a ``CalledProcessError``, behind openai-whisper's ``RuntimeError``), PyAV's ``av.error.FFmpegError``
     subclasses (faster-whisper; also ``ValueError`` or ``OSError``), or any error raised in faster-whisper's audio
-    decoding, such as the ``IndexError`` for a video without sound.
+    decoding, such as the ``IndexError`` for a video without sound. One behind a ``FileNotFoundError``, such as a
+    missing ffmpeg, is the server's problem instead.
     """
     av_errors = sys.modules.get("av.error")  # PyAV, if faster-whisper imported it
-    for cause in _error_chain(error):
+    causes = list(_error_chain(error))
+    if any(isinstance(cause, FileNotFoundError) for cause in causes):
+        return False
+    for cause in causes:
         if isinstance(cause, (AudioDecodeError, subprocess.CalledProcessError)):
             return True
         if av_errors is not None and isinstance(cause, av_errors.FFmpegError):
