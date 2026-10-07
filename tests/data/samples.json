@@ -1,0 +1,42 @@
+{
+  "speech.flac": {
+    "turns": [
+      {
+        "voice": "slt",
+        "text": "Hello world. This is a speech recognition test.",
+        "start": 0.0,
+        "end": 3.385
+      }
+    ],
+    "duration": 3.385
+  },
+  "dialogue.flac": {
+    "turns": [
+      {
+        "voice": "slt",
+        "text": "Good morning. Did you finish the report?",
+        "start": 0.0,
+        "end": 2.9
+      },
+      {
+        "voice": "rms",
+        "text": "Yes, I sent it to the whole team yesterday.",
+        "start": 3.4,
+        "end": 6.595
+      },
+      {
+        "voice": "slt",
+        "text": "Great, thank you very much.",
+        "start": 7.095,
+        "end": 9.115
+      },
+      {
+        "voice": "rms",
+        "text": "No problem. See you after lunch.",
+        "start": 9.615,
+        "end": 12.15
+      }
+    ],
+    "duration": 12.15
+  }
+}

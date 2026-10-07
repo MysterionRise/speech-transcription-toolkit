@@ -136,9 +136,15 @@ python_functions = "test_*"
 addopts = [
     "--strict-markers",
     "--tb=short",
+    # Integration tests (tests/integration) run real models; select them with: pytest -m integration
+    "-m",
+    "not integration",
     "--cov",
     "--cov-report=term-missing",
     "--cov-branch",
+]
+markers = [
+    "integration: transcribes the samples in tests/data with real models; deselected unless -m selects it",
 ]
 # The last matching filter wins. Tests that expect a warning use pytest.warns or a filterwarnings mark.
 filterwarnings = [

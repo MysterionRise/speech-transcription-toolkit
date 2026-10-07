@@ -1,0 +1,100 @@
+# Every night, the unit and integration tests run against the newest release of every dependency, on the newest
+# Python, so that upstream breakage (like PyAV 19 breaking faster-whisper) shows up before users hit it. A failed run
+# opens an issue, or comments on the one still open. Run it by hand from the Actions tab ("Run workflow").
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'  # every day at 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Latest dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'  # the newest Python in ci.yml's test matrix
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    # No pip cache and no pins (requirements-dev.txt isn't used): every package is its newest release. torch and
+    # torchaudio come from the CPU-only index; pyannote (the diarize extra) needs torchaudio.
+    - name: Install every extra at its newest release (CPU-only torch)
+      id: install
+      run: |
+        pip install -U pip
+        pip install -U torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install -U ".[all]" openai pytest pytest-cov
+        pip list
+
+    - name: Restore cached models
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ~/.cache/huggingface/hub
+          ~/.cache/whisper
+        key: models-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml', 'tests/integration/**') }}
+        restore-keys: models-${{ runner.os }}-
+
+    - name: Unit tests
+      run: pytest
+
+    # Runs even when the unit tests failed, to show everything that broke.
+    - name: Integration tests
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        INTEGRATION_REQUIRE_EXTRAS: '1'
+      run: pytest -m integration --no-cov -rA --basetemp="$RUNNER_TEMP/integration"
+
+    - name: Upload test outputs
+      uses: actions/upload-artifact@v7
+      if: ${{ !cancelled() }}
+      with:
+        name: nightly-test-outputs
+        path: ${{ runner.temp }}/integration
+
+  report:
+    name: Report the failure
+    needs: [test]
+    # Also when the tests timed out, but not when someone cancelled the run.
+    if: ${{ !cancelled() && needs.test.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+    - name: Open an issue, or comment on the open one
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        TITLE: Nightly tests fail with the latest dependencies
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        number=$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
+          --jq '.[] | select(.title == env.TITLE and .pull_request == null) | .number' | head -n 1)
+        if [ -n "$number" ]; then
+          gh issue comment "$number" --body "Failed again: $RUN_URL"
+          exit 0
+        fi
+        gh issue create --title "$TITLE" --body-file - <<EOF
+        The nightly run of the unit and integration tests, with every dependency at its newest release, failed:
+        $RUN_URL
+
+        The run's log shows what failed, and its install step (pip list) the versions it used. Later failures are
+        added here as comments while this issue is open.
+        EOF
