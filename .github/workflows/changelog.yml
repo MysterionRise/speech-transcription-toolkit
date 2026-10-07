@@ -1,0 +1,43 @@
+# Every pull request adds a changelog fragment (changelog.d/<issue>.<type>.md), unless it is labelled
+# skip-changelog or comes from Dependabot. Fragments are assembled into CHANGELOG.md at release time.
+name: Changelog
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review, labeled, unlabeled ]
+
+permissions:
+  contents: read
+
+jobs:
+  fragment:
+    name: Changelog fragment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-changelog')
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - name: Install towncrier
+      run: pip install towncrier==26.9.0
+
+    - name: Check that the pull request adds a fragment
+      run: |
+        towncrier check --compare-with "origin/${{ github.base_ref }}" || {
+          echo "::error::Add changelog.d/<issue>.<type>.md (types: added, changed, deprecated, removed, fixed, security; see changelog.d/README.md), or label the pull request skip-changelog."
+          exit 1
+        }
+
+    - name: Render the release notes draft
+      run: towncrier build --draft --version 0.0.0
