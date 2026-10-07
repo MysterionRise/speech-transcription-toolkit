@@ -41,12 +41,12 @@ def configure_hf_token(token: Optional[str] = None) -> None:
 
 
 def _check_task(task: str, backend: str, capabilities: AbstractSet[str]) -> None:
-    """Raise ValueError unless *task* is "transcribe", or "translate" for a backend with that capability."""
+    """Raise UnsupportedOptionError unless *task* is "transcribe", or "translate" for a backend that can translate."""
     if task not in TASKS:
-        raise ValueError(f"task must be 'transcribe' or 'translate', not {task!r}")
+        raise UnsupportedOptionError(f"task must be 'transcribe' or 'translate', not {task!r}")
     if task == "translate" and "translate" not in capabilities:
         translators = ", ".join(backends_with("translate"))
-        raise ValueError(f"the {backend} backend can't translate; backends that translate: {translators}")
+        raise UnsupportedOptionError(f"the {backend} backend can't translate; backends that translate: {translators}")
 
 
 class Transcriber:
@@ -112,8 +112,8 @@ class Transcriber:
             audio: Path to anything ffmpeg can decode.
             language: Language code such as ``"en"`` (default: auto-detect).
             task: ``"transcribe"``, or ``"translate"`` to English with a backend that has the ``"translate"``
-                capability. Another task, or a translation the backend can't do, raises ValueError before
-                any audio is decoded.
+                capability. Another task, or a translation the backend can't do, raises
+                :class:`~speech_toolkit.UnsupportedOptionError` before any audio is decoded.
             prompt: Names, terms or a sample sentence that guide spelling (whisper, faster-whisper).
             vad: Skip silence first, which avoids made-up text in quiet parts (faster-whisper).
             word_timestamps: Add per-word timings to each segment's ``"words"``. The default (None) turns
@@ -191,7 +191,7 @@ def transcribe(
     """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once.
 
     Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`. A *task* the backend can't do
-    raises ValueError before the model loads.
+    raises :class:`~speech_toolkit.UnsupportedOptionError` before the model loads.
     """
     _check_task(task, backend, get_backend_class(backend).capabilities)
     transcriber = Transcriber(backend, model, device=device, diarize=diarize, hf_token=hf_token)

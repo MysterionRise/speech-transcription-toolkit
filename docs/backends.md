@@ -58,7 +58,8 @@ Out of memory? Use a smaller model (`-m small`) or `-b faster-whisper`.
 5. **List its packages** in the class's `requires`: their top-level import names, such as `("faster_whisper",)`.
    `--list-backends` looks them up without importing them, to say whether the backend is installed.
 6. **Declare its capabilities** in the class's `capabilities` set:
-   - `"translate"`: `task="translate"` translates to English. Without it, translation fails before any audio is decoded.
+   - `"translate"`: `task="translate"` translates to English. Without it, `Transcriber` raises `UnsupportedOptionError`
+     for a translation, before any audio is decoded.
    - `"language_detection"`: with no language given, the backend detects it and reports it in `result.language`.
    - `"prompt"`, `"vad"` and `"word_timestamps"`: optional features, accepted as keyword-only arguments of
      `transcribe()`. `Transcriber` passes only the declared ones and warns about the rest.

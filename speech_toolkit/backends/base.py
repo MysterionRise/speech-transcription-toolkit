@@ -80,8 +80,8 @@ class TranscriptionBackend(ABC):
 
     A backend lists what it can do in ``capabilities`` (all of them are opt-in):
 
-    - ``"translate"``: ``task="translate"`` translates to English. :class:`speech_toolkit.Transcriber`
-      refuses to translate with a backend that doesn't declare it, before any audio is decoded.
+    - ``"translate"``: ``task="translate"`` translates to English. Without it, :class:`speech_toolkit.Transcriber`
+      raises :class:`~speech_toolkit.UnsupportedOptionError` for a translation, before any audio is decoded.
     - ``"language_detection"``: with ``language=None``, the backend detects the language and reports it
       in ``TranscriptionResult.language``.
 

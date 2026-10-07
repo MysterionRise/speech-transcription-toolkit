@@ -138,7 +138,9 @@ class ParakeetBackend(_TransformersBackend):
             )
         self._check_ready(audio_path)
         if language:
-            warnings.warn(f"Parakeet detects the language itself; ignoring language '{language}'.")
+            warnings.warn(
+                f"Parakeet detects the language itself; ignoring language '{language}'.", SpeechToolkitWarning
+            )
 
         chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []

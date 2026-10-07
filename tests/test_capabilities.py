@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from speech_toolkit import Transcriber, cli, transcribe
+from speech_toolkit import SpeechToolkitWarning, Transcriber, UnsupportedOptionError, cli, transcribe
 from speech_toolkit.backends import (
     CAPABILITIES,
     CanaryBackend,
@@ -221,8 +221,11 @@ class TestTranscriber:
     def test_unknown_task(self, fake_backend, audio):
         transcriber = Transcriber("fake-words")
 
-        with pytest.raises(ValueError, match="task must be 'transcribe' or 'translate', not 'foo'"):
+        with pytest.raises(
+            UnsupportedOptionError, match="task must be 'transcribe' or 'translate', not 'foo'"
+        ) as caught:
             transcriber.transcribe(audio, task="foo")
+        assert isinstance(caught.value, ValueError)
         assert FakeWordsBackend.calls == []
 
     def test_translation_needs_the_capability(self, transcribe_only, audio):
@@ -231,7 +234,7 @@ class TestTranscriber:
         message = (
             f"the transcribe-only backend can't translate; backends that translate: {TRANSLATORS}, fake, fake-words"
         )
-        with pytest.raises(ValueError, match=re.escape(message)):
+        with pytest.raises(UnsupportedOptionError, match=re.escape(message)):
             transcriber.transcribe(audio, task="translate")
         assert FakeWordsBackend.calls == []  # the backend never ran
         assert transcriber.transcribe(audio).text == " Hello from talk."
@@ -241,7 +244,7 @@ class TestTranscriber:
         monkeypatch.setattr("speech_toolkit.api.load_diarization_pipeline", lambda device: "pipeline")
         monkeypatch.setattr("speech_toolkit.api.diarize_audio", diarize)
 
-        with pytest.raises(ValueError, match="can't translate"):
+        with pytest.raises(UnsupportedOptionError, match="can't translate"):
             Transcriber("transcribe-only", diarize=True).transcribe(audio, task="translate")
         diarize.assert_not_called()
 
@@ -254,7 +257,7 @@ class TestTranscriber:
         [("transcribe-only", "translate", "can't translate"), ("fake", "summarize", "task must be")],
     )
     def test_one_shot_transcribe_checks_before_loading(self, transcribe_only, audio, backend, task, error):
-        with pytest.raises(ValueError, match=error):
+        with pytest.raises(UnsupportedOptionError, match=error):
             transcribe(audio, backend=backend, task=task)
         assert FakeBackend.loaded == 0
 
@@ -371,16 +374,19 @@ class TestParakeetLanguage:
         return backend
 
     def test_given_language_is_ignored_with_a_warning(self, parakeet_modules, audio):
-        with pytest.warns(UserWarning, match="Parakeet detects the language itself; ignoring language 'de'"):
+        with pytest.warns(
+            SpeechToolkitWarning, match="Parakeet detects the language itself; ignoring language 'de'"
+        ) as caught:
             result = self._backend().transcribe(audio, language="de", verbose=False)
 
+        assert [warning.category for warning in caught] == [SpeechToolkitWarning]
         assert (result.text, result.language) == ("Hallo.", None)
 
     def test_no_language_no_warning(self, parakeet_modules, audio):
         result = self._backend().transcribe(audio, verbose=False)  # a warning would fail the test
         assert result.language is None
 
-    @pytest.mark.filterwarnings("default:Parakeet detects the language itself:UserWarning")
+    @pytest.mark.filterwarnings("default:Parakeet detects the language itself:speech_toolkit.SpeechToolkitWarning")
     def test_command_line(self, parakeet_modules, audio, tmp_path, capsys):
         out = tmp_path / "talk.json"
 
