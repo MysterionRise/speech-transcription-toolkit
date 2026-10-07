@@ -4,7 +4,7 @@
 pip install -r requirements-dev.txt   # enough for the unit tests: models are mocked
 pip install -e ".[all]"               # optional: run real models from the checkout
 pre-commit install
-pytest                                # 80% coverage required
+pytest --cov-fail-under=95            # what CI runs: fails below 95% coverage
 ```
 
 See [CONTRIBUTING.md](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CONTRIBUTING.md) for:
