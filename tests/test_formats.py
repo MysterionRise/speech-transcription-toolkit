@@ -44,9 +44,10 @@ DIARIZED = {
 class TestFormatForPath:
     @pytest.mark.parametrize(
         "path, expected",
-        [("out.srt", "srt"), ("OUT.VTT", "vtt"), ("a/b.json", "json"), ("notes.md", "txt"), ("transcript", "txt")],
+        [("out.srt", "srt"), ("OUT.VTT", "vtt"), ("a/b.json", "json"), ("out.txt", "txt"), ("transcript", "txt")],
     )
     def test_extension_picks_format(self, path, expected):
+        # Unknown extensions warn: see tests/test_formats_subtitles.py.
         assert format_for_path(pathlib.Path(path)) == expected
 
     def test_no_path_uses_default(self):
@@ -192,5 +193,5 @@ class TestSplitCues:
 
     def test_speaker_label_on_first_line(self):
         result = {**DIARIZED, "speaker_segments": [{"start": 0.0, "end": 1.0, "text": "aaa bbb", "speaker": "S1"}]}
-        assert "[S1] aaa\nbbb" in render(result, "srt", max_line_width=3)
-        assert "<v S1>aaa\nbbb" in render(result, "vtt", max_line_width=3)
+        assert "[S1] aaa\nbbb" in render(result, "srt", max_line_width=8)  # the srt label counts toward the width
+        assert "<v S1>aaa\nbbb" in render(result, "vtt", max_line_width=3)  # vtt voice tags aren't shown
