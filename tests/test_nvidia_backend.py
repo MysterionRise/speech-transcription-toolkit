@@ -15,11 +15,15 @@ from speech_toolkit.backends import get_backend
 from speech_toolkit.backends.nvidia_backend import (
     CanaryBackend,
     ParakeetBackend,
+    _clock,
+    _rows_at_limit,
     _segments_from_words,
     _words_from_tokens,
 )
+from speech_toolkit.errors import SpeechToolkitWarning
 
 RATE = 16000
+CANARY_EOS, CANARY_PAD = 3, 2  # canary-1b-v2's end-of-text and padding token ids
 
 
 class FakeBatch(dict):
@@ -196,6 +200,22 @@ class TestParakeet:
         with pytest.raises(ValueError, match="only transcribes"):
             self._backend().transcribe(audio_file, task="translate")
 
+    def test_whitespace_token_between_words(self, nvidia_modules, audio_file):
+        """The tokenizer can emit a word boundary as its own " " token; the words around it stay apart."""
+        nvidia_modules.processor.return_value = FakeBatch()
+        tokens = [
+            {"token": "Hello", "start": 0.0, "end": 0.4},
+            {"token": " ", "start": 0.4, "end": 0.5},
+            {"token": "world", "start": 0.5, "end": 0.9},
+            {"token": ".", "start": 0.9, "end": 0.9},
+        ]
+        nvidia_modules.processor.decode.return_value = ("Hello world.", [tokens])
+
+        result = self._backend().transcribe(audio_file, verbose=False, word_timestamps=True)
+
+        assert result.text == "Hello world."
+        assert [word["word"] for word in result.segments[0]["words"]] == [" Hello", " world."]
+
 
 class TestCanary:
     def _backend(self):
@@ -247,6 +267,55 @@ class TestCanary:
 
         assert processor.apply_transcription_request.call_args[1]["source_language"] == "en"
 
+    def _generate(self, nvidia_modules, *batches):
+        """Make generate() return these batches of new tokens, after the 4-token prompt that _prepare() sets up."""
+        model = nvidia_modules.transformers.CanaryForConditionalGeneration.from_pretrained.return_value.to.return_value
+        model.generation_config = SimpleNamespace(eos_token_id=CANARY_EOS, pad_token_id=CANARY_PAD)
+        model.generate.side_effect = [np.array([[9, 9, 9, 9] + row for row in batch]) for batch in batches]
+
+    def test_warns_when_a_chunk_reaches_the_token_limit(self, nvidia_modules, audio_file):
+        nvidia_modules.load_audio.return_value = np.zeros(70 * RATE, dtype=np.float32)
+        self._prepare(nvidia_modules, [["one", "two", "three"]])
+        self._generate(
+            nvidia_modules,
+            [
+                [5, CANARY_EOS, CANARY_PAD, CANARY_PAD],  # ended early, then padded
+                [5, 6, 7, 8],  # still going at the limit
+                [5, 6, 7, CANARY_EOS],  # ended right at the limit
+            ],
+        )
+
+        backend = self._backend()
+        with patch.object(CanaryBackend, "MAX_NEW_TOKENS", 4), pytest.warns(SpeechToolkitWarning) as warned:
+            result = backend.transcribe(audio_file, language="en", verbose=False)
+
+        assert [(warning.category, str(warning.message)) for warning in warned] == [
+            (
+                SpeechToolkitWarning,
+                f"{audio_file}: Canary reached its limit of 4 tokens in the chunk from 0:25 to 0:50, "
+                "so the text may be cut off.",
+            )
+        ]
+        assert [s["text"] for s in result.segments] == ["one", "two", "three"]  # the text is kept
+
+    def test_one_warning_for_several_cut_off_chunks(self, nvidia_modules, audio_file):
+        nvidia_modules.load_audio.return_value = np.zeros(70 * RATE, dtype=np.float32)
+        self._prepare(nvidia_modules, [["one", "two"], ["three"]])
+        self._generate(nvidia_modules, [[5, CANARY_EOS], [5, 6]], [[7, 8]])
+
+        backend = self._backend()
+        with patch.multiple(CanaryBackend, BATCH_SIZE=2, MAX_NEW_TOKENS=2):
+            with pytest.warns(SpeechToolkitWarning) as warned:
+                backend.transcribe(audio_file, language="en", verbose=False)
+
+        assert [(warning.category, str(warning.message)) for warning in warned] == [
+            (
+                SpeechToolkitWarning,
+                f"{audio_file}: Canary reached its limit of 2 tokens in 2 chunks, the first from 0:25 to 0:50, "
+                "so the text may be cut off.",
+            )
+        ]
+
 
 class TestWordHelpers:
     def test_words_from_tokens(self):
@@ -263,6 +332,24 @@ class TestWordHelpers:
             {"word": " geht's?", "start": 10.3, "end": 10.6},
         ]
 
+    def test_whitespace_only_token_starts_a_word(self):
+        tokens = [
+            {"token": "Hello", "start": 0.0, "end": 0.4},
+            {"token": " ", "start": 0.4, "end": 0.5},
+            {"token": "world", "start": 0.5, "end": 0.9},
+        ]
+
+        assert _words_from_tokens(tokens, offset=0.0) == [
+            {"word": " Hello", "start": 0.0, "end": 0.4},
+            {"word": " world", "start": 0.5, "end": 0.9},
+        ]
+
+    @pytest.mark.parametrize("pieces", [[" 3", ".5"], [" 3", ".", "5"]])
+    def test_decimal_tokens_stay_one_word(self, pieces):
+        tokens = [{"token": piece, "start": 0.1 * i, "end": 0.1 * (i + 1)} for i, piece in enumerate(pieces)]
+
+        assert [word["word"] for word in _words_from_tokens(tokens, offset=0.0)] == [" 3.5"]
+
     def test_segments_break_on_pauses_and_length(self):
         words = [{"word": f" w{i}", "start": float(i), "end": i + 0.5} for i in range(40)]
         words.append({"word": " late", "start": 45.0, "end": 45.5})  # after a 5 s pause
@@ -271,3 +358,75 @@ class TestWordHelpers:
 
         assert [(s["id"], s["start"], s["end"]) for s in segments] == [(0, 0.0, 29.5), (1, 30.0, 39.5), (2, 45.0, 45.5)]
         assert segments[2]["text"] == " late"
+
+
+def _sentences(text):
+    """The segments that the words of *text*, spoken without pauses, are grouped into."""
+    words = [{"word": " " + word, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, word in enumerate(text.split())]
+    return [segment["text"].strip() for segment in _segments_from_words(words)]
+
+
+class TestSentenceBreaks:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Dr. Smith is here.",
+            "It costs 3.5 dollars.",
+            "It costs 3. 5 dollars.",  # a decimal point cut between two words
+            "Mr. and Mrs. Smith met Ms. Jones on St. Mark's Square.",
+            "Real Madrid vs. Barcelona starts soon.",
+            "J. R. R. Tolkien wrote it.",
+            "The U.S. economy grew, e.g. Ohio, i.e. the Midwest.",
+            "Pens, paper, etc. and more.",
+            "She has a Ph.D. in physics.",  # not in the list, but a lowercase word follows
+            "¡Dr. García está aquí!",  # leading punctuation
+        ],
+    )
+    def test_no_break_inside_a_sentence(self, text):
+        assert _sentences(text) == [text]
+
+    @pytest.mark.parametrize(
+        "text, sentences",
+        [
+            ("Hello world. How are you? Fine!", ["Hello world.", "How are you?", "Fine!"]),
+            ("Pens, paper, etc. Then we left.", ["Pens, paper, etc.", "Then we left."]),
+            ("So did I. Then we left.", ["So did I.", "Then we left."]),
+            ("We counted to 3. Then we left.", ["We counted to 3.", "Then we left."]),
+            ("It costs 3.5. Then we paid.", ["It costs 3.5.", "Then we paid."]),
+            ("Wait... Go!", ["Wait...", "Go!"]),
+        ],
+    )
+    def test_sentence_ends(self, text, sentences):
+        assert _sentences(text) == sentences
+
+    def test_abbreviation_at_the_end_or_before_a_pause(self):
+        words = [
+            {"word": " Ask", "start": 0.0, "end": 0.3},
+            {"word": " Dr.", "start": 0.4, "end": 0.8},
+            {"word": " Smith", "start": 3.0, "end": 3.4},  # after a pause
+            {"word": " Dr.", "start": 3.5, "end": 3.9},  # the last word
+        ]
+
+        assert [s["text"] for s in _segments_from_words(words)] == [" Ask Dr.", " Smith Dr."]
+
+
+class TestTokenLimit:
+    @pytest.mark.parametrize(
+        "eos, pad, ended",
+        [
+            (3, 2, [[5, 3, 2], [5, 6, 3]]),  # padded after the end token, and ended right at the limit
+            ([3, 4], None, [[5, 3, 3], [5, 6, 4]]),  # no padding token: generate() pads with the first end token
+        ],
+    )
+    def test_rows_at_limit(self, eos, pad, ended):
+        config = SimpleNamespace(eos_token_id=eos, pad_token_id=pad)
+        generated = np.array([ended[0], [5, 6, 7], ended[1]])
+
+        assert _rows_at_limit(generated, config, limit=3) == [1]
+        assert _rows_at_limit(generated, config, limit=4) == []  # every row ended before 4 tokens
+
+    @pytest.mark.parametrize(
+        "seconds, clock", [(0.0, "0:00"), (25.05, "0:25"), (59.6, "1:00"), (754.2, "12:34"), (3725.0, "1:02:05")]
+    )
+    def test_clock(self, seconds, clock):
+        assert _clock(seconds) == clock
