@@ -9,7 +9,7 @@ transcribe recordings/ --outdir out -f vtt     # every audio file in a folder
 transcribe audio.mp3 -m large-v3 -l de         # another model, known language
 transcribe audio.mp3 -t translate -m large-v3  # translate to English (turbo can't translate)
 transcribe audio.mp3 -b faster-whisper         # faster, especially on CPU
-transcribe --list-backends                     # backends and their models
+transcribe --list-backends                     # backends, their models and capabilities
 ```
 
 Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress). `python -m speech_toolkit`
@@ -44,8 +44,8 @@ How batch mode works:
 | `audio …` | Audio or video files, or folders, to transcribe. Anything ffmpeg can decode works. |
 | `-b`, `--backend` | `whisper` (default), `faster-whisper`, `voxtral`, `parakeet` or `canary`. See [Backends](backends.md). |
 | `-m`, `--model` | Model name (default: the backend's default; see `--list-models`). |
-| `-l`, `--language` | Language code such as `en` (default: detect it). |
-| `-t`, `--task` | `transcribe` (default), or `translate` to English. |
+| `-l`, `--language` | Language code such as `en` (default: detect it). Parakeet ignores it, with a warning. |
+| `-t`, `--task` | `transcribe` (default), or `translate` to English (whisper, faster-whisper, canary). With another backend, `translate` is an error, reported before the model loads. |
 | `--device` | `cpu` or `cuda` (default: the GPU when available). |
 | `--hf-token TOKEN` | Hugging Face token for model downloads. Defaults to the `HF_TOKEN` or `HUGGINGFACE_TOKEN` environment variable, which is safer than passing it on the command line. |
 | `-q`, `--quiet` | Hide progress output. |
@@ -60,7 +60,7 @@ How batch mode works:
 | `--diarize` | Label speakers with pyannote.audio. See [Speaker labels](diarization.md). |
 | `--num-speakers N` | Exact number of speakers, if known (needs `--diarize`). |
 | `--min-speakers N`, `--max-speakers N` | Bounds on the number of speakers (needs `--diarize`). |
-| `--list-backends` | List the backends and their models, then exit. |
+| `--list-backends` | List the backends with their models and capabilities, and whether their packages are installed, then exit. |
 | `--list-models` | List the models of `--backend`, then exit. |
 | `--version` | Print the version. |
 

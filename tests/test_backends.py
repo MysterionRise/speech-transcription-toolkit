@@ -546,7 +546,7 @@ class TestFasterWhisperBackend:
         kwargs = model.transcribe.call_args[1]
         assert (kwargs["initial_prompt"], kwargs["vad_filter"], kwargs["word_timestamps"]) == ("Kubernetes", True, True)
         assert result.segments[0]["words"] == [{"word": " Hi", "start": 0.0, "end": 0.4, "probability": 0.9}]
-        assert FasterWhisperBackend.capabilities == {"prompt", "vad", "word_timestamps"}
+        assert {"prompt", "vad", "word_timestamps"} <= FasterWhisperBackend.capabilities
 
 
 class FakeInputs(dict):
