@@ -44,7 +44,8 @@ Windows with an NVIDIA GPU and on a Mac, between the TestPyPI dry run and the ta
 
 [RELEASING.md](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/RELEASING.md) has the steps:
 1. A release pull request bumps `speech_toolkit.__version__` and runs `towncrier build`.
-2. After the merge, the maintainer runs the TestPyPI dry run, pushes a `v*` tag and approves the `pypi` environment.
+2. After the merge, the maintainer runs the TestPyPI dry run and the [QA pass](manual-testing.md), pushes a `v*` tag
+   and approves the `pypi` environment.
 
 `.github/workflows/release.yml` runs CI on the tagged commit and builds the package once. It then publishes with trusted
 publishing, and creates the GitHub release with the version's `CHANGELOG.md` section as its notes.

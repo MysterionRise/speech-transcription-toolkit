@@ -75,7 +75,13 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
    - TestPyPI, like PyPI, takes each version only once, so a second dry run of the same version fails at the upload.
      To rehearse again after a fix, release a candidate: set `__version__ = "0.4.0rc1"`, merge, and push the tag
      `v0.4.0rc1`. It goes to TestPyPI and becomes a GitHub pre-release.
-4. **Tag the release** on the merged commit, and push the tag:
+4. **Run the QA pass** on the TestPyPI build, following [docs/manual-testing.md](docs/manual-testing.md): the
+   integration suite's full tier on Windows with an NVIDIA GPU, the CPU run on an Apple Silicon Mac, and the checklist.
+   - Record it in a
+     [Release QA issue](https://github.com/MysterionRise/speech-transcription-toolkit/issues/new?template=release-qa.yml),
+     with each machine's `integration-report.md`.
+   - Tag only once it passes. A fix goes to `main` and through a release candidate, as in step 3.
+5. **Tag the release** on the merged commit, and push the tag:
    ```bash
    git switch main && git pull
    git tag -a v0.4.0 -m "v0.4.0"
@@ -84,7 +90,7 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
    - The workflow runs CI and builds again, then waits for you.
    - Open the run and approve the `pypi` deployment (**Review deployments**).
    - After the upload, it creates the GitHub release.
-5. **Verify** in a clean virtualenv:
+6. **Verify** in a clean virtualenv:
    ```bash
    python -m venv /tmp/release-check && . /tmp/release-check/bin/activate
    pip install speech-transcription-toolkit==0.4.0
@@ -99,7 +105,7 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
   ```bash
   git push --delete origin v0.4.0 && git tag -d v0.4.0
   ```
-  Then tag again, as in step 4.
+  Then tag again, as in step 5.
 - **The upload failed** (for example, the trusted publisher isn't set up yet): fix the cause, then use **Re-run failed
   jobs** on the run. The build job's files are reused.
 - **The package is published, but the GitHub release failed:** re-run the failed job.

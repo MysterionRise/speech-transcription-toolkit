@@ -233,6 +233,6 @@ From the Mac, with the same key in `KEY` (replace `windows-pc` with the Windows 
 
 Open a [Release QA issue](https://github.com/MysterionRise/speech-transcription-toolkit/issues/new?template=release-qa.yml)
 for the version. Fill in both machines, tick the steps that passed, and paste both `integration-report.md` files. Note
-anything that failed, with a link to its issue. The release tag (step 4 of
+anything that failed, with a link to its issue. The release tag (step 5 of
 [Releasing](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/RELEASING.md)) waits until the
 issue shows both machines passing.
