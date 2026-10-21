@@ -20,7 +20,7 @@ import warnings
 from typing import AbstractSet, Any, Dict, Optional, Union
 
 from .backends import DEFAULT_BACKEND, TranscriptionBackend, TranscriptionResult, backends_with, get_backend_class
-from .diarization import diarize_audio, load_diarization_pipeline, merge_diarization
+from .diarization import check_speaker_hints, diarize_audio, load_diarization_pipeline, merge_diarization
 from .errors import SpeechToolkitWarning, UnsupportedOptionError
 
 TASKS = ("transcribe", "translate")
@@ -118,7 +118,8 @@ class Transcriber:
             vad: Skip silence first, which avoids made-up text in quiet parts (faster-whisper).
             word_timestamps: Add per-word timings to each segment's ``"words"``. The default (None) turns
                 them on when diarizing, so speaker labels can change mid-segment.
-            num_speakers, min_speakers, max_speakers: Speaker-count hints for diarization.
+            num_speakers, min_speakers, max_speakers: Speaker-count hints for diarization. Hints that can't be honoured,
+                such as ``min_speakers`` above ``max_speakers``, raise :class:`~speech_toolkit.UnsupportedOptionError`.
             verbose: Show the backend's progress output on stderr.
 
         Options the backend doesn't support are skipped with a warning.
@@ -127,8 +128,7 @@ class Transcriber:
             The transcript; ``result.speaker_segments`` holds speaker-labelled segments when diarizing.
         """
         _check_task(task, self.backend_name, self.backend.capabilities)
-        if (num_speakers or min_speakers or max_speakers) and not self.diarize:
-            raise UnsupportedOptionError("num_speakers, min_speakers and max_speakers need diarize=True")
+        check_speaker_hints(num_speakers, min_speakers, max_speakers, diarize=self.diarize)
         if task == "translate" and self.model_name in TURBO_MODELS:
             warnings.warn(
                 f"'{self.model_name}' isn't trained for translation and keeps the original language; "
@@ -190,10 +190,11 @@ def transcribe(
 ) -> TranscriptionResult:
     """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once.
 
-    Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`. A *task* the backend can't do
-    raises :class:`~speech_toolkit.UnsupportedOptionError` before the model loads.
+    Takes the arguments of :class:`Transcriber` and :meth:`Transcriber.transcribe`. A *task* the backend can't do, or
+    speaker hints that can't be honoured, raise :class:`~speech_toolkit.UnsupportedOptionError` before the model loads.
     """
     _check_task(task, backend, get_backend_class(backend).capabilities)
+    check_speaker_hints(num_speakers, min_speakers, max_speakers, diarize=diarize)
     transcriber = Transcriber(backend, model, device=device, diarize=diarize, hf_token=hf_token)
     return transcriber.transcribe(
         audio,
