@@ -271,11 +271,11 @@ jobs:
         INTEGRATION_REQUIRE_EXTRAS: '1'
       run: pytest -m integration --no-cov -rA --basetemp="$RUNNER_TEMP/integration"
 
-    # The unit tests that need the real ffmpeg (they skip where there is none, as in the unit test jobs). They run even
-    # when an integration test failed.
+    # The unit tests that need the real ffmpeg, for load_audio and ogg2wav (they skip where there is none, as in the
+    # unit test jobs). They run even when an integration test failed.
     - name: Run the ffmpeg tests
       if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-      run: pytest tests/test_convert.py -k TestWithFfmpeg --no-cov -rA
+      run: pytest tests/test_load_audio.py tests/test_convert.py -k TestWithFfmpeg --no-cov -rA
 
     # Only main saves (PRs restore main's cache), and also after a failed step: what was downloaded is kept.
     - name: Save the model cache

@@ -12,6 +12,7 @@ import wave
 from typing import Iterator, List
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from speech_toolkit.convert import collect_ogg_files, convert_file, decode, main, parse_args, plan_outputs
@@ -194,30 +195,21 @@ class TestPlanOutputs:
 
 
 class TestDecode:
-    """decode() runs ffmpeg with a fixed argument list and returns its PCM output."""
+    """decode() decodes with media.load_audio and turns its samples back into 16-bit PCM."""
 
-    def test_ffmpeg_arguments(self, tmp_path: pathlib.Path):
+    def test_through_load_audio(self, tmp_path: pathlib.Path):
         src = tmp_path / "talk.opus"
-        with patch("speech_toolkit.convert.subprocess.run") as run:
-            run.return_value.stdout = PCM
-            assert decode(src, 22050, 2) == PCM
+        stereo = np.array([[0.0, 0.5], [-1.0, 32767 / 32768]], dtype=np.float32)  # what ffmpeg's samples become
+        with patch("speech_toolkit.convert.load_audio", return_value=stereo) as load_audio:
+            pcm = decode(src, 22050, 2)
 
-        cmd = run.call_args.args[0]
-        pcm = "s16le" if sys.byteorder == "little" else "s16be"
-        assert cmd[0] == "ffmpeg"
-        assert cmd[cmd.index("-i") + 1] == f"file:{src}"  # a local file, whatever its name looks like
-        assert cmd[cmd.index("-i") + 2 :] == ["-f", pcm, "-acodec", f"pcm_{pcm}", "-ar", "22050", "-ac", "2", "-"]
-        assert run.call_args.kwargs == {"capture_output": True, "check": True}
+        load_audio.assert_called_once_with(src, sr=22050, channels=2)
+        assert pcm == np.array([0, 16384, -32768, 32767], dtype=np.int16).tobytes()  # exact, and interleaved
 
-    def test_ffmpeg_missing(self, tmp_path: pathlib.Path):
-        with patch("speech_toolkit.convert.subprocess.run", side_effect=FileNotFoundError("ffmpeg")):
-            with pytest.raises(AudioDecodeError, match="ffmpeg not found"):
-                decode(tmp_path / "a.ogg", 16000, 1)
-
-    def test_ffmpeg_fails(self, tmp_path: pathlib.Path):
-        error = subprocess.CalledProcessError(1, ["ffmpeg"], stderr=b"Invalid data found when processing input\n")
-        with patch("speech_toolkit.convert.subprocess.run", side_effect=error):
-            with pytest.raises(AudioDecodeError, match="can't decode it: Invalid data found when processing input$"):
+    def test_errors_pass_through(self, tmp_path: pathlib.Path):
+        error = AudioDecodeError("Failed to load audio: Invalid data found when processing input")
+        with patch("speech_toolkit.convert.load_audio", side_effect=error):
+            with pytest.raises(AudioDecodeError, match="Invalid data found"):
                 decode(tmp_path / "a.ogg", 16000, 1)
 
 
@@ -262,13 +254,13 @@ class TestConvertFile:
     def test_decode_error(self, tmp_path: pathlib.Path, capsys):
         """A file ffmpeg can't decode is reported on stderr, and no WAV is left behind."""
         src, dest = tmp_path / "corrupt.ogg", tmp_path / "out" / "corrupt.wav"
-        with patch("speech_toolkit.convert.decode", side_effect=AudioDecodeError("ffmpeg can't decode it: junk")):
+        with patch("speech_toolkit.convert.decode", side_effect=AudioDecodeError("Failed to load audio: junk")):
             assert convert_file(src, dest, 16000, 1) is False
 
         assert not dest.parent.exists()
         captured = capsys.readouterr()
         assert captured.out == ""
-        assert f"Error: failed to convert {src}: ffmpeg can't decode it: junk" in captured.err
+        assert f"Error: failed to convert {src}: Failed to load audio: junk" in captured.err
 
     def test_write_error(self, tmp_path: pathlib.Path, fake_decode, capsys):
         """An output folder that can't be created fails this file only."""
@@ -395,5 +387,5 @@ class TestWithFfmpeg:
 
         captured = capsys.readouterr()
         assert captured.out == ""
-        assert f"Error: failed to convert {broken}: ffmpeg can't decode it:" in captured.err
+        assert f"Error: failed to convert {broken}: Failed to load audio:" in captured.err
         assert not (tmp_path / "broken.wav").exists()

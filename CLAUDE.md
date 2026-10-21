@@ -35,7 +35,7 @@ speech_toolkit/
 ├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
-├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via ffmpeg and the stdlib `wave` module
+├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
     ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)

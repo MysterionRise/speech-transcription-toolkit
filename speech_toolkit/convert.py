@@ -1,9 +1,9 @@
 """The ``ogg2wav`` command: batch-convert OGG/Opus audio files to 16-bit PCM WAV.
 
 Handy for preparing speech datasets (the transcription backends decode any format themselves).
-It decodes with **ffmpeg**, which must be on PATH, and takes a list of files or a directory tree
-(.ogg, .oga and .opus, any case). The path of each WAV it writes goes to stdout, one per line;
-skipped files and errors go to stderr.
+It decodes with **ffmpeg** (through :func:`speech_toolkit.media.load_audio`), which must be on PATH,
+and takes a list of files or a directory tree (.ogg, .oga and .opus, any case). The path of each WAV
+it writes goes to stdout, one per line; skipped files and errors go to stderr.
 
 Examples
 --------
@@ -20,16 +20,14 @@ Overwrite existing WAVs:
 from __future__ import annotations
 
 import argparse
-import os
 import pathlib
-import subprocess  # nosec B404
 import sys
 import wave
 from collections import Counter
 from typing import Iterable, List, Sequence, Tuple
 
 from .errors import AudioDecodeError
-from .media import collect_files
+from .media import collect_files, load_audio
 
 OGG_EXTENSIONS = frozenset({".ogg", ".oga", ".opus"})
 
@@ -127,17 +125,12 @@ def decode(src: pathlib.Path, rate: int, channels: int) -> bytes:
     Raises:
         AudioDecodeError: If ffmpeg is missing or can't decode the file.
     """
-    pcm = "s16le" if sys.byteorder == "little" else "s16be"
-    # "file:" makes ffmpeg read a local file, even if the name looks like a URL or another protocol.
-    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", "file:" + os.fsdecode(src)]
-    cmd += ["-f", pcm, "-acodec", f"pcm_{pcm}", "-ar", str(rate), "-ac", str(channels), "-"]
-    try:
-        # A fixed argument list and no shell, so the file name can't inject commands.
-        return subprocess.run(cmd, capture_output=True, check=True).stdout  # nosec B603
-    except FileNotFoundError as e:
-        raise AudioDecodeError("ffmpeg not found: install it and make sure it is on your PATH") from e
-    except subprocess.CalledProcessError as e:
-        raise AudioDecodeError(f"ffmpeg can't decode it: {e.stderr.decode(errors='replace').strip()}") from e
+    import numpy as np  # imported lazily, like load_audio does: --help shouldn't pay for it
+
+    audio = load_audio(src, sr=rate, channels=channels)
+    audio *= 32768  # load_audio divided ffmpeg's 16-bit samples by 32768: this gives them back exactly
+    pcm: bytes = audio.astype(np.int16).tobytes()  # rows of interleaved channels, in the machine's byte order
+    return pcm
 
 
 def convert_file(src: pathlib.Path, dest: pathlib.Path, rate: int, channels: int, overwrite: bool = False) -> bool:
