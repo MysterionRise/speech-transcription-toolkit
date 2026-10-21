@@ -4,8 +4,8 @@
 backend.
 
 ```bash
-pip install "speech-transcription-toolkit[server,faster-whisper]"
-transcribe-server -b faster-whisper -m small      # http://127.0.0.1:8000/v1
+pip install "speech-transcription-toolkit[server]"
+transcribe-server -m small      # faster-whisper's small model on http://127.0.0.1:8000/v1
 ```
 
 ```python

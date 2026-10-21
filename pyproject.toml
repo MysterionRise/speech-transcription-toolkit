@@ -23,33 +23,36 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Typing :: Typed",
 ]
-# Whisper is the default backend, so a plain install transcribes out of the box. Also needs ffmpeg on PATH.
+# faster-whisper is the default backend, so a plain install transcribes out of the box, without PyTorch. Also needs
+# ffmpeg on PATH.
 dependencies = [
-    "openai-whisper>=20250625",
+    "faster-whisper>=1.2.1",
+    # faster-whisper 1.2.1 still passes av.open(metadata_errors=...), which PyAV 19 removed
+    # (SYSTRAN/faster-whisper#1492); drop this cap, and its entry in dependabot.yml, once a faster-whisper release
+    # supports PyAV 19. PyAV 17 is the last series with Python 3.10 wheels; 18 needs Python 3.11.
+    "av>=17.0.0,<19",
     "numpy>=1.26",
-    "pydub>=0.25.1",
-    "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub needs it since audioop left the stdlib
 ]
 
 [project.optional-dependencies]
-faster-whisper = [
-    "faster-whisper>=1.2.1",
-    # faster-whisper 1.2.1 still passes av.open(metadata_errors=...), which PyAV 19 removed
-    # (SYSTRAN/faster-whisper#1492); drop this cap once a faster-whisper release supports PyAV 19.
-    "av>=18.1.0,<19",
-]
-voxtral = ["transformers>=5.17.0", "mistral-common[audio]>=1.12.0"]
+# OpenAI's Whisper, on PyTorch.
+whisper = ["openai-whisper>=20250625"]
+# faster-whisper is a core dependency; the extra stays so that existing install instructions keep working.
+faster-whisper = []
+# Mistral Voxtral. Voxtral, Parakeet and Canary run on PyTorch; transformers needs 2.6 or newer.
+voxtral =["torch>=2.6", "transformers>=5.17.0", "mistral-common[audio]>=1.12.0"]
 # Parakeet and Canary; transformers' Parakeet feature extractor needs librosa.
-nvidia = ["transformers>=5.18.0", "librosa>=0.10"]
+nvidia = ["torch>=2.6", "transformers>=5.18.0", "librosa>=0.10"]
 # Speaker labels: also needs a Hugging Face token and the terms of
 # https://hf.co/pyannote/speaker-diarization-community-1 accepted.
 diarize = ["pyannote.audio>=4.0.7"]
 # transcribe-server: OpenAI-compatible HTTP API
 server = ["fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.18"]
-all = ["speech-transcription-toolkit[faster-whisper,voxtral,nvidia,diarize,server]"]
+all = ["speech-transcription-toolkit[whisper,voxtral,nvidia,diarize,server]"]
 
 [project.scripts]
 transcribe = "speech_toolkit.cli:main"
@@ -63,7 +66,7 @@ Issues = "https://github.com/MysterionRise/speech-transcription-toolkit/issues"
 [tool.setuptools.dynamic]
 version = { attr = "speech_toolkit.__version__" }
 
-# Only the package ships; tests/ and the main.py/convert.py checkout shims stay out.
+# Only the package goes in the wheel; tests/ and the main.py/convert.py checkout shims stay out of it.
 [tool.setuptools.packages.find]
 include = ["speech_toolkit*"]
 
@@ -136,9 +139,15 @@ python_functions = "test_*"
 addopts = [
     "--strict-markers",
     "--tb=short",
+    # Integration tests (tests/integration) run real models; select them with: pytest -m integration
+    "-m",
+    "not integration",
     "--cov",
     "--cov-report=term-missing",
     "--cov-branch",
+]
+markers = [
+    "integration: transcribes the samples in tests/data with real models; deselected unless -m selects it",
 ]
 # The last matching filter wins. Tests that expect a warning use pytest.warns or a filterwarnings mark.
 filterwarnings = [
@@ -146,10 +155,7 @@ filterwarnings = [
     # point at the caller (stacklevel), so when a test calls the API directly they come from the tests package.
     "error:::speech_toolkit",
     "error:::tests",
-    # Known third-party noise: pydub looks for ffmpeg when imported (the unit tests don't need it) and imports
-    # audioop (deprecated on Python 3.11 and 3.12), and Starlette deprecates its TestClient (FastAPI's) on httpx.
-    "ignore:Couldn't find ffmpeg or avconv:RuntimeWarning:pydub",
-    "ignore:'audioop' is deprecated:DeprecationWarning:pydub",
+    # Known third-party noise: Starlette deprecates its TestClient (FastAPI's) on httpx.
     "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
 ]
 

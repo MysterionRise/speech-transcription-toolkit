@@ -4,18 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (Whisper, faster-whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
+Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (faster-whisper by default, Whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
 
 ## Common Commands
 
 ```bash
 pip install -r requirements-dev.txt   # enough for unit tests (model libraries are mocked)
-pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize, server
+pip install -e ".[all]"               # real model runs; extras: whisper, voxtral, nvidia, diarize, server (core: faster-whisper, no torch)
 pre-commit install
 
-pytest                                           # all tests with a coverage report
+pytest                                           # unit tests with a coverage report
 pytest --cov-fail-under=95                       # what CI runs: fails below 95% coverage
 pytest tests/test_backends.py::TestWhisperBackend -v
+pytest -m integration                            # real models on tests/data (see Testing Notes)
 
 black . && isort --profile black . && flake8 .   # format and lint (120-char lines)
 mypy speech_toolkit
@@ -34,12 +35,12 @@ speech_toolkit/
 ├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
-├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via pydub/ffmpeg
+├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
     ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)
-    ├── whisper_backend.py          openai-whisper (default)
-    ├── faster_whisper_backend.py   faster-whisper / CTranslate2
+    ├── whisper_backend.py          openai-whisper (the `whisper` extra, on PyTorch)
+    ├── faster_whisper_backend.py   faster-whisper / CTranslate2 (default backend, a core dependency: no torch)
     ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
     └── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
 main.py, convert.py   checkout shims for the two commands (not packaged)
@@ -73,7 +74,8 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - `tests/conftest.py` has a `FakeBackend` and the `fake_backend` fixture; `tests/test_cli.py` drives `cli.main([...])` end to end with it, `tests/test_api.py` the `Transcriber`.
 - When testing `sys.exit()`, expect `SystemExit` (e.g. `pytest.raises(SystemExit, match=...)`).
 - Warnings raised by `speech_toolkit` fail the test (`filterwarnings` in `pyproject.toml`); expect them with `pytest.warns` or a `@pytest.mark.filterwarnings` mark.
-- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the integration job runs real `tiny` models on synthesized speech (not on draft PRs).
+- Integration tests (`tests/integration/`, all marked `integration`, which plain `pytest` deselects) run real models on the flite samples in `tests/data/` (`samples.json` has their text; `python tests/data/make_samples.py` regenerates them). They check WER against per-backend thresholds (`MAX_WER` in `tests/integration/helpers.py`), timestamps and stdout. A test whose extra isn't installed is skipped (it fails with `INTEGRATION_REQUIRE_EXTRAS=1`, as in CI); the diarization test also needs `HF_TOKEN`.
+- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the Integration Tests job runs `pytest -m integration` (not on draft PRs). `.github/workflows/nightly.yml` runs both against the newest release of every dependency and opens an issue when they fail.
 
 ## External Requirements
 

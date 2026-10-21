@@ -1,6 +1,7 @@
 """OpenAI Whisper transcription backend.
 
-This backend wraps the openai-whisper library for local speech-to-text transcription.
+This backend wraps the openai-whisper library for local speech-to-text transcription. openai-whisper runs on
+PyTorch, so it comes with the ``whisper`` extra: ``pip install "speech-transcription-toolkit[whisper]"``.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
-    capabilities = frozenset({"prompt", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps"})
+    requires = ("whisper",)
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -69,7 +71,8 @@ class WhisperBackend(TranscriptionBackend):
             import whisper  # imported lazily: it pulls in torch, which is slow to import
         except ImportError as e:
             raise BackendUnavailableError(
-                f"Whisper backend needs openai-whisper ({e}). Install with: pip install openai-whisper"
+                f"Whisper backend needs openai-whisper ({e}). "
+                'Install with: pip install "speech-transcription-toolkit[whisper]"'
             ) from e
 
         self._model = whisper.load_model(model_name, device=device)
