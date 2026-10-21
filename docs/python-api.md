@@ -14,7 +14,7 @@ for path in ["a.mp3", "b.mp3"]:
 
 ## Transcriber
 
-`Transcriber(backend="whisper", model=None, *, device=None, diarize=False, hf_token=None)` loads the model once.
+`Transcriber(backend="faster-whisper", model=None, *, device=None, diarize=False, hf_token=None)` loads the model once.
 With `diarize=True` it also loads the pyannote pipeline, and does that first, so a missing package or token fails
 before a large model download.
 

@@ -1,8 +1,9 @@
 """The ``ogg2wav`` command: batch-convert OGG/Opus audio files to 16-bit PCM WAV.
 
 Handy for preparing speech datasets (the transcription backends decode any format themselves).
-It relies on **ffmpeg** via *pydub* and takes a list of files or a directory tree
-(.ogg, .oga and .opus, any case).
+It decodes with **ffmpeg**, which must be on PATH, and takes a list of files or a directory tree
+(.ogg, .oga and .opus, any case). The path of each WAV it writes goes to stdout, one per line;
+skipped files and errors go to stderr.
 
 Examples
 --------
@@ -19,15 +20,20 @@ Overwrite existing WAVs:
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
+import subprocess  # nosec B404
 import sys
+import wave
+from collections import Counter
 from typing import Iterable, List, Sequence, Tuple
 
-from pydub import AudioSegment  # type: ignore  # requires ffmpeg in PATH
-
+from .errors import AudioDecodeError
 from .media import collect_files
 
 OGG_EXTENSIONS = frozenset({".ogg", ".oga", ".opus"})
+
+Job = Tuple[pathlib.Path, pathlib.Path]  # (OGG/Opus file, WAV file)
 
 ###############################################################################
 # CLI
@@ -45,7 +51,7 @@ def positive_int(value: str) -> int:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="ogg2wav",
-        description="Convert .ogg/.opus files to WAV for speech recognition.",
+        description="Convert .ogg/.opus files to WAV for speech recognition. Prints the path of each WAV it writes.",
     )
     p.add_argument(
         "inputs",
@@ -92,48 +98,74 @@ def collect_ogg_files(paths: Iterable[pathlib.Path]) -> List[Tuple[pathlib.Path,
         if path.suffix.lower() in OGG_EXTENSIONS:
             ogg_files.append((path, relative))
         else:
-            print(f"⚠️  Skipping unsupported file {path}", file=sys.stderr)
+            print(f"Skipping unsupported file {path}", file=sys.stderr)
     return ogg_files
 
 
-def convert_file(
-    src: pathlib.Path,
-    outdir: pathlib.Path | None,
-    rate: int,
-    channels: int,
-    overwrite: bool = False,
-    relative: pathlib.Path | None = None,
-) -> bool:
-    """Convert *src* OGG to WAV with requested parameters.
+def plan_outputs(files: Sequence[Tuple[pathlib.Path, pathlib.Path]], outdir: pathlib.Path | None) -> List[Job]:
+    """Pair every ``(file, relative path)`` from :func:`collect_ogg_files` with the WAV it becomes.
 
-    With *outdir*, the WAV goes to ``outdir / relative`` (so sub-folders are mirrored
-    and same-named files don't collide); otherwise it is written next to *src*.
-    Returns False if the conversion failed.
+    The WAV goes next to its file, or with *outdir* to ``outdir / relative`` (so sub-folders are mirrored). Files
+    that would share a WAV, such as ``a.ogg`` and ``a.opus``, keep their full name instead: ``a.ogg.wav``,
+    ``a.opus.wav``.
+
+    Raises:
+        ValueError: If two inputs would still write the same WAV.
+    """
+    targets = [(outdir / relative if outdir is not None else src).with_suffix(".wav") for src, relative in files]
+    counts = Counter(targets)
+    targets = [t.with_name(f"{src.name}.wav") if counts[t] > 1 else t for (src, _), t in zip(files, targets)]
+    if len(set(targets)) < len(targets):
+        raise ValueError("several inputs would write the same WAV file; rename them or use one --outdir per folder")
+    return [(src, target) for (src, _), target in zip(files, targets)]
+
+
+def decode(src: pathlib.Path, rate: int, channels: int) -> bytes:
+    """Decode *src* with ffmpeg to 16-bit PCM at *rate* Hz with *channels* interleaved channels, in the machine's
+    byte order (as :mod:`wave` expects).
+
+    Raises:
+        AudioDecodeError: If ffmpeg is missing or can't decode the file.
+    """
+    pcm = "s16le" if sys.byteorder == "little" else "s16be"
+    # "file:" makes ffmpeg read a local file, even if the name looks like a URL or another protocol.
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", "file:" + os.fsdecode(src)]
+    cmd += ["-f", pcm, "-acodec", f"pcm_{pcm}", "-ar", str(rate), "-ac", str(channels), "-"]
+    try:
+        # A fixed argument list and no shell, so the file name can't inject commands.
+        return subprocess.run(cmd, capture_output=True, check=True).stdout  # nosec B603
+    except FileNotFoundError as e:
+        raise AudioDecodeError("ffmpeg not found: install it and make sure it is on your PATH") from e
+    except subprocess.CalledProcessError as e:
+        raise AudioDecodeError(f"ffmpeg can't decode it: {e.stderr.decode(errors='replace').strip()}") from e
+
+
+def convert_file(src: pathlib.Path, dest: pathlib.Path, rate: int, channels: int, overwrite: bool = False) -> bool:
+    """Convert *src* to a 16-bit WAV at *dest* with the requested sample rate and channels.
+
+    An existing *dest* is kept unless *overwrite*. Prints *dest* to stdout once it is written; skips and errors go
+    to stderr. Returns False if the conversion failed.
     """
     if rate <= 0:
         raise ValueError(f"Sample rate must be positive, got {rate}")
 
-    if outdir is None:
-        dest_dir = src.parent
-    else:
-        dest_dir = outdir / relative.parent if relative is not None else outdir
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / f"{src.stem}.wav"
-
-    # stdout gets ASCII only: on Windows, redirected output uses a code page without symbols like ✓ and →.
-    if dest_path.exists() and not overwrite:
-        print(f"{dest_path} exists; skipping (use --overwrite).")
+    if dest.exists() and not overwrite:
+        print(f"{dest} exists; skipping (use --overwrite).", file=sys.stderr)
         return True
 
     try:
-        audio = AudioSegment.from_file(src)
-        audio = audio.set_frame_rate(rate).set_channels(channels).set_sample_width(2)  # 16‑bit
-        audio.export(dest_path, format="wav")
-        print(f"-> {dest_path}")
-        return True
-    except Exception as exc:  # pydub/ffmpeg raise many error types
-        print(f"❌ Failed to convert {src}: {exc}", file=sys.stderr)
+        frames = decode(src, rate, channels)  # before touching dest: a failed decode leaves no empty WAV behind
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(dest), "wb") as wav:
+            wav.setnchannels(channels)
+            wav.setsampwidth(2)  # 16-bit
+            wav.setframerate(rate)
+            wav.writeframes(frames)
+    except (AudioDecodeError, OSError) as e:
+        print(f"Error: failed to convert {src}: {e}", file=sys.stderr)
         return False
+    print(dest)
+    return True
 
 
 ###############################################################################
@@ -146,13 +178,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     ogg_files = collect_ogg_files(args.inputs)
     if not ogg_files:
         sys.exit("No .ogg/.opus files found.")
+    try:
+        jobs = plan_outputs(ogg_files, args.outdir)
+    except ValueError as e:
+        sys.exit(f"Error: {e}")
 
     failed = 0
-    for src, relative in ogg_files:
-        if not convert_file(src, args.outdir, args.rate, args.channels, args.overwrite, relative):
+    for src, dest in jobs:
+        if not convert_file(src, dest, args.rate, args.channels, args.overwrite):
             failed += 1
     if failed:
-        sys.exit(f"{failed} of {len(ogg_files)} files failed to convert.")
+        sys.exit(f"{failed} of {len(jobs)} files failed to convert.")
 
 
 if __name__ == "__main__":  # pragma: no cover
