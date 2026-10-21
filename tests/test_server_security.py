@@ -562,10 +562,14 @@ class TestRealBackends:
         assert_not_audio(response)
 
     @pytest.mark.parametrize(
-        "backend, module",
-        [("voxtral", "voxtral_backend"), ("parakeet", "nvidia_backend"), ("canary", "nvidia_backend")],
+        "backend, module, data",
+        [
+            ("voxtral", "voxtral_backend", {"language": "en"}),
+            ("parakeet", "nvidia_backend", {}),  # Parakeet warns about a language and ignores it
+            ("canary", "nvidia_backend", {"language": "en"}),
+        ],
     )
-    def test_transformers_backends(self, temp_dir, backend, module):
+    def test_transformers_backends(self, temp_dir, backend, module, data):
         torch = MagicMock()
         torch.cuda.is_available.return_value = False
 
@@ -574,6 +578,6 @@ class TestRealBackends:
             patch(f"speech_toolkit.backends.{module}.load_audio", side_effect=audio_decode_error),
         ):
             client = TestClient(create_app(Transcriber(backend)))
-            response = client.post(URL, files=upload(), data={"language": "en"})
+            response = client.post(URL, files=upload(), data=data)
 
         assert_not_audio(response)
