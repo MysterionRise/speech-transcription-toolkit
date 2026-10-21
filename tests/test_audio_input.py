@@ -570,6 +570,25 @@ class TestIndexAtEnd:
             ((1).to_bytes(4, "big") + b"ftyp" + (24).to_bytes(8, "big") + bytes(8) + box(b"mdat"), True),
             ((1).to_bytes(4, "big") + b"ftyp" + bytes(4), True),  # its 64-bit size cut off
         ],
+        # Short ids: pytest puts the test's id in an environment variable, which Windows limits to 32767 characters.
+        ids=[
+            "wav",
+            "mp3",
+            "short",
+            "empty",
+            "index-first",
+            "index-at-end",
+            "quicktime-wide",
+            "quicktime-moov",
+            "free-box-first",
+            "only-ftyp",
+            "cut-ftyp",
+            "size-0",
+            "damaged-size",
+            "64-bit-index-first",
+            "64-bit-index-at-end",
+            "64-bit-size-cut",
+        ],
     )
     def test_boxes(self, head, expected):
         assert _index_at_end(head) is expected
