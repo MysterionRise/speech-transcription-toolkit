@@ -1,0 +1,97 @@
+name: Release QA
+description: Record the manual QA pass before a release (docs/manual-testing.md).
+title: "Release QA: "
+labels: ["area/release"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow [docs/manual-testing.md](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/manual-testing.md)
+        on Windows with an NVIDIA GPU and on an Apple Silicon Mac, then record both machines here. Link an issue for
+        anything that failed.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The version tested, and where it was installed from.
+      placeholder: 0.4.0 from TestPyPI (dry run)
+    validations:
+      required: true
+
+  - type: textarea
+    id: machines
+    attributes:
+      label: Machines
+      description: For each machine, the OS, GPU, NVIDIA driver, CUDA (torch's build and the driver's) and Python.
+      value: |
+        - Windows: OS: ; GPU: ; driver: ; CUDA: ; Python:
+        - Mac: OS: ; chip and memory: ; Python:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: setup
+    attributes:
+      label: Setup and clean installs
+      options:
+        - label: "Windows: torch with CUDA, CTranslate2's cuBLAS and cuDNN, ffmpeg"
+        - label: "Mac: Homebrew ffmpeg"
+        - label: "The core install imports no torch, on both machines"
+        - label: "Each extra installs, and `transcribe --list-backends` shows it, on both machines"
+
+  - type: checkboxes
+    id: suite
+    attributes:
+      label: Integration suite
+      options:
+        - label: "Windows: `INTEGRATION_DEVICE=cuda INTEGRATION_TIER=full pytest -m integration` passes"
+        - label: "Mac: `INTEGRATION_DEVICE=cpu pytest -m integration` passes"
+        - label: "Only the expected models were skipped for memory"
+
+  - type: checkboxes
+    id: recordings
+    attributes:
+      label: Your own recordings
+      options:
+        - label: "A 10-minute podcast: the subtitles stay in sync, with no made-up text"
+        - label: "A meeting with 2 or 3 speakers, with --diarize"
+        - label: "A non-English clip: transcribed, translated with -m medium, translated with Canary"
+        - label: "A video file, with the subtitles opened in a player"
+        - label: "A Windows path with a drive letter and spaces"
+        - label: "An M4A phone recording, on both machines"
+
+  - type: checkboxes
+    id: errors
+    attributes:
+      label: Error paths
+      options:
+        - label: "--device cuda without the CUDA libraries"
+        - label: "A model too large for the GPU"
+        - label: "Ctrl-C during a batch"
+        - label: "A corrupt file in a batch"
+
+  - type: checkboxes
+    id: server
+    attributes:
+      label: The server, from a second machine
+      options:
+        - label: "The API key works"
+        - label: "A wrong key gets 401 before the upload completes"
+        - label: "An oversized upload gets 413"
+        - label: "/docs is hidden when a key is set"
+
+  - type: textarea
+    id: reports
+    attributes:
+      label: Integration reports
+      description: Paste integration-report.md from each machine (the suite prints where it wrote it).
+      placeholder: "## Integration report ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything that failed or looked wrong, with links to issues; anything skipped, and why.
