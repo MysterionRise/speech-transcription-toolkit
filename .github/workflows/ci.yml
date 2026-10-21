@@ -194,8 +194,10 @@ jobs:
         grep -A 4 '^  faster-whisper (default)$' backends.txt | grep 'Installed: yes'
 
     # tests/integration/test_core_install.py transcribes a sample with the default backend, using only the packages
-    # installed above (plus pytest).
+    # installed above (plus pytest). A missing package fails the test instead of skipping it.
     - name: Transcribe with the default backend
+      env:
+        INTEGRATION_REQUIRE_EXTRAS: '1'
       run: |
         pip install $(grep -E '^pytest(-cov)?==' requirements-dev.txt)
         pytest -m integration tests/integration/test_core_install.py --no-cov -rA
