@@ -154,6 +154,54 @@ jobs:
     - name: Run mypy (static type checking)
       run: mypy speech_toolkit
 
+  # What a plain `pip install .` gives users: no PyTorch, and transcription with the default backend, faster-whisper.
+  # On the oldest and the newest Python, where wheels of faster-whisper's dependencies are most likely to be missing.
+  core-install:
+    name: Core Install (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Install the package without extras
+      run: pip install .
+
+    - name: Check that no PyTorch, openai-whisper or pydub was installed
+      run: |
+        pip list
+        if pip list | grep -iE '^(torch|torchaudio|openai-whisper|transformers|pydub|audioop-lts) '; then
+          echo "::error::A plain install pulled in the packages listed above."
+          exit 1
+        fi
+
+    # Run outside the checkout, so the installed package is listed. faster-whisper must be the default and installed.
+    - name: List the backends
+      working-directory: ${{ runner.temp }}
+      run: |
+        transcribe --list-backends | tee backends.txt
+        grep -A 4 '^  faster-whisper (default)$' backends.txt | grep 'Installed: yes'
+
+    # tests/integration/test_core_install.py transcribes a sample with the default backend, using only the packages
+    # installed above (plus pytest). A missing package fails the test instead of skipping it.
+    - name: Transcribe with the default backend
+      env:
+        INTEGRATION_REQUIRE_EXTRAS: '1'
+      run: |
+        pip install $(grep -E '^pytest(-cov)?==' requirements-dev.txt)
+        pytest -m integration tests/integration/test_core_install.py --no-cov -rA
+
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -177,24 +225,24 @@ jobs:
           pyproject.toml
           requirements-dev.txt
 
-    # A stalled apt mirror can otherwise hold this step until the job times out: each try gets 3 minutes, 3 tries.
-    - name: Install system dependencies
+    # ffmpeg from PyPI, not apt, whose mirrors stalled this step for 8 to 30 minutes: imageio-ffmpeg ships a static
+    # build (ffmpeg 7.0, with Opus and Vorbis), installed in a folder of its own so the test environment doesn't see
+    # it. It has no ffprobe, which nothing here uses. nightly.yml installs the newest release the same way.
+    - name: Install ffmpeg
       timeout-minutes: 10
       run: |
-        apt_get() {
-          sudo timeout 180 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"
-        }
-        for attempt in 1 2 3; do
-          if apt_get update && apt_get install -y ffmpeg; then exit 0; fi
-          echo "::warning::Installing ffmpeg failed or timed out (attempt $attempt of 3)"
-          sleep 15
-        done
-        exit 1
+        pip install --target "$RUNNER_TEMP/imageio-ffmpeg" imageio-ffmpeg==0.6.0
+        exe=$(PYTHONPATH="$RUNNER_TEMP/imageio-ffmpeg" python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')
+        mkdir -p "$RUNNER_TEMP/bin"
+        ln -s "$exe" "$RUNNER_TEMP/bin/ffmpeg"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/bin/ffmpeg" -hide_banner -version
 
     - name: Install the package (CPU-only torch)
+      id: install
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -r requirements-dev.txt ".[faster-whisper,nvidia,server]" openai
+        pip install -r requirements-dev.txt ".[whisper,nvidia,server]" openai
 
     - name: Install speaker diarization
       if: env.HAS_HF_TOKEN == 'true'
@@ -222,6 +270,12 @@ jobs:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
         INTEGRATION_REQUIRE_EXTRAS: '1'
       run: pytest -m integration --no-cov -rA --basetemp="$RUNNER_TEMP/integration"
+
+    # The unit tests that need the real ffmpeg, for load_audio and ogg2wav (they skip where there is none, as in the
+    # unit test jobs). They run even when an integration test failed.
+    - name: Run the ffmpeg tests
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      run: pytest tests/test_load_audio.py tests/test_convert.py -k TestWithFfmpeg --no-cov -rA
 
     # Only main saves (PRs restore main's cache), and also after a failed step: what was downloaded is kept.
     - name: Save the model cache

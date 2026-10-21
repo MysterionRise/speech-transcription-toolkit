@@ -156,8 +156,9 @@ class TestBackendRegistry:
             get_backend_class("nonexistent")
 
     def test_default_backend(self):
-        """Test that default backend is whisper."""
-        assert DEFAULT_BACKEND == "whisper"
+        """The default backend is faster-whisper, the one a plain install includes (no torch), with turbo."""
+        assert DEFAULT_BACKEND == "faster-whisper"
+        assert get_backend_class(DEFAULT_BACKEND).default_model() == "turbo"
 
     def test_register_custom_backend(self, monkeypatch):
         """Test registering a custom backend."""
@@ -276,9 +277,9 @@ class TestWhisperBackend:
         assert "Unknown Whisper model" in str(exc_info.value)
 
     def test_load_model_missing_dependency(self):
-        """Test a helpful ImportError when openai-whisper isn't installed."""
+        """Without openai-whisper, the error names the extra that installs it."""
         with patch.dict(sys.modules, {"whisper": None}):
-            with pytest.raises(ImportError, match="pip install openai-whisper"):
+            with pytest.raises(ImportError, match=r'pip install "speech-transcription-toolkit\[whisper\]"'):
                 WhisperBackend().load_model("tiny")
 
     def test_transcribe_without_model(self):
@@ -435,9 +436,9 @@ class TestFasterWhisperBackend:
             FasterWhisperBackend().load_model("invalid_model")
 
     def test_load_model_missing_dependency(self):
-        """Test a helpful ImportError when faster-whisper isn't installed."""
+        """faster-whisper is a dependency of the package, so the error says to install the package."""
         with patch.dict(sys.modules, {"faster_whisper": None, "ctranslate2": None}):
-            with pytest.raises(ImportError, match=r"speech-transcription-toolkit\[faster-whisper\]"):
+            with pytest.raises(ImportError, match="pip install speech-transcription-toolkit$"):
                 FasterWhisperBackend().load_model("tiny")
 
     def test_load_model_cpu_uses_int8(self, mock_faster_whisper):

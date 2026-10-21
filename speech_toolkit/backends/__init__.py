@@ -3,8 +3,8 @@
 This module provides a registry of available transcription backends and utilities
 for loading and using them. Supported backends:
 
-- **whisper**: OpenAI Whisper (default) - fast, accurate, multiple model sizes
-- **faster-whisper**: CTranslate2 Whisper - faster and lighter, no torch needed
+- **faster-whisper**: CTranslate2 Whisper (default) - fast and light, no torch needed
+- **whisper**: OpenAI Whisper on PyTorch - the ``whisper`` extra
 - **voxtral**: Mistral Voxtral Mini/Small - strong multilingual support
 - **parakeet**: NVIDIA Parakeet TDT - fast and accurate, with word timestamps
 - **canary**: NVIDIA Canary - multilingual transcription and translation
@@ -22,7 +22,7 @@ Usage:
     backends = list_backends()
 
     # Load a backend and transcribe
-    backend = get_backend("whisper")
+    backend = get_backend("faster-whisper")
     backend.load_model("turbo")
     result = backend.transcribe(Path("audio.mp3"))
 """
@@ -47,8 +47,8 @@ _BACKENDS: Dict[str, Type[TranscriptionBackend]] = {
     "canary": CanaryBackend,
 }
 
-# Default backend
-DEFAULT_BACKEND = "whisper"
+# Default backend: faster-whisper is the one a plain install includes (no torch).
+DEFAULT_BACKEND = "faster-whisper"
 
 
 def list_backends() -> List[str]:

@@ -505,6 +505,44 @@ class TestTransformersBackends:
             self._run(backend_class, tmp_path / "gone.wav")
 
 
+class FakeVoxtralInputs(dict):
+    """Stand-in for Voxtral's processor output: a prompt of 3 tokens per chunk."""
+
+    def __init__(self, batch_size: int) -> None:
+        super().__init__(input_ids="ids")
+        self.input_ids = SimpleNamespace(shape=(batch_size, 3))
+
+    def to(self, *args: Any, **kwargs: Any) -> "FakeVoxtralInputs":
+        return self
+
+
+def test_cut_off_warning_names_samples_audio():
+    """The warning about text cut off at MAX_NEW_TOKENS names the file; samples have none, so they are "audio"."""
+    from speech_toolkit import SpeechToolkitWarning
+
+    torch, transformers = MagicMock(), MagicMock()
+    torch.cuda.is_available.return_value = False
+    eos, pad = 2, 11
+    with patch.dict(sys.modules, {"torch": torch, "transformers": transformers}):
+        backend = VoxtralBackend()
+        backend.load_model("voxtral-mini")
+        processor = transformers.AutoProcessor.from_pretrained.return_value
+        processor.apply_transcription_request.side_effect = lambda **kwargs: FakeVoxtralInputs(len(kwargs["audio"]))
+        processor.batch_decode.side_effect = [["one", "two", "three"]]
+        model = transformers.VoxtralForConditionalGeneration.from_pretrained.return_value.to.return_value
+        model.generation_config = SimpleNamespace(eos_token_id=eos, pad_token_id=pad)
+        # 70 s: three chunks; the second one's text reaches the limit of 3 tokens without ending.
+        model.generate.return_value = np.array([[1, 1, 1, 5, eos, pad], [1, 1, 1, 5, 6, 7], [1, 1, 1, 5, 6, eos]])
+        with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3):
+            with pytest.warns(SpeechToolkitWarning) as warned:
+                result = backend.transcribe(np.zeros(70 * RATE, np.float32), verbose=False)
+
+    assert [str(warning.message) for warning in warned] == [
+        "audio: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, so the text may be cut off."
+    ]
+    assert result.duration == 70.0
+
+
 ###############################################################################
 # MP4, M4A and MOV from memory
 ###############################################################################

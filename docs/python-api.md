@@ -14,7 +14,7 @@ for path in ["a.mp3", "b.mp3"]:
 
 ## Transcriber
 
-`Transcriber(backend="whisper", model=None, *, device=None, diarize=False, hf_token=None)` loads the model once.
+`Transcriber(backend="faster-whisper", model=None, *, device=None, diarize=False, hf_token=None)` loads the model once.
 With `diarize=True` it also loads the pyannote pipeline, and does that first, so a missing package or token fails
 before a large model download.
 
@@ -196,6 +196,7 @@ with open("talk.ogg", "rb") as file:
 | Option | Meaning |
 |---|---|
 | `sr` | Sample rate (default 16000). |
+| `channels` | 1 (default) mixes down to mono; 2 keeps stereo, as a `(samples, 2)` array. |
 | `max_seconds` | Decode only the first N seconds. |
 | `timeout` | Stop ffmpeg after N seconds and raise `AudioDecodeError`. |
 | `strict` | For untrusted input: accept only common audio and video formats (listed in `speech_toolkit.media.STRICT_FORMATS`), and refuse playlists (HLS, DASH), concat lists and anything else that would make ffmpeg open more files. |

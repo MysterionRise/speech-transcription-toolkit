@@ -79,8 +79,8 @@ class Transcriber:
     """A loaded model, plus a speaker-diarization pipeline with ``diarize=True``, reusable across files.
 
     Args:
-        backend: Backend name, see :func:`speech_toolkit.list_backends`.
-        model: Model name (default: the backend's default, e.g. Whisper ``turbo``).
+        backend: Backend name, see :func:`speech_toolkit.list_backends` (default: ``"faster-whisper"``).
+        model: Model name (default: the backend's default, e.g. ``turbo`` for faster-whisper).
         device: ``"cpu"``, ``"cuda"`` or None to pick automatically.
         diarize: Also label speakers with pyannote.audio (needs the ``diarize`` extra and a Hugging Face token).
         hf_token: Hugging Face token for model downloads (default: ``HF_TOKEN`` or ``HUGGINGFACE_TOKEN``).
