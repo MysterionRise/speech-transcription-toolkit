@@ -514,8 +514,8 @@ class TestFasterWhisperBackend:
         assert result.text == "Hallo Welt"
         assert result.language == "de"
         assert [(s["id"], s["start"], s["end"], s["text"]) for s in result.segments] == [
-            (1, 0.0, 1.5, " Hallo"),
-            (2, 1.5, 3.0, " Welt"),
+            (0, 0.0, 1.5, " Hallo"),  # faster-whisper counts from 1, the result from 0
+            (1, 1.5, 3.0, " Welt"),
         ]
         assert result.to_dict()["duration"] == 3.0
         assert "words" not in result.segments[0]
