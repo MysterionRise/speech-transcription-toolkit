@@ -8,9 +8,10 @@ models download from the Hugging Face Hub on first use.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError
+from ..types import Segment
 from .base import TranscriptionBackend, TranscriptionResult
 
 
@@ -136,20 +137,27 @@ class FasterWhisperBackend(TranscriptionBackend):
             vad_filter=vad,
             word_timestamps=word_timestamps,
         )
-        segments = [_segment(seg) for seg in segment_iter]  # a generator: decoding happens while iterating
+        # segment_iter is a generator: decoding happens while it is iterated.
+        segments = [_segment(index, seg) for index, seg in enumerate(segment_iter)]
 
         return TranscriptionResult(
             text="".join(seg["text"] for seg in segments).strip(),
             segments=segments,
             language=info.language,
+            # Also in raw, where earlier versions put them.
             raw={"duration": info.duration, "language_probability": info.language_probability},
+            duration=info.duration,
+            language_probability=info.language_probability,
         )
 
 
-def _segment(seg: Any) -> Dict[str, Any]:
-    """A faster-whisper Segment in the standard format (with "words" when word timestamps were asked for)."""
-    segment: Dict[str, Any] = {
-        "id": seg.id,
+def _segment(index: int, seg: Any) -> Segment:
+    """A faster-whisper Segment in the standard format (with "words" when word timestamps were asked for).
+
+    faster-whisper numbers segments from 1; *index*, the segment's position, numbers them from 0 like other backends.
+    """
+    segment: Segment = {
+        "id": index,
         "start": seg.start,
         "end": seg.end,
         "text": seg.text,

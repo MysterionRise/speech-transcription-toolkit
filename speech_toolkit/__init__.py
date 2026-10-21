@@ -24,6 +24,7 @@ from .errors import (
     SpeechToolkitWarning,
     UnsupportedOptionError,
 )
+from .types import Segment, Word
 
 __version__ = "0.3.0"
 
@@ -32,6 +33,8 @@ __all__ = [
     "transcribe",
     "TranscriptionBackend",
     "TranscriptionResult",
+    "Segment",
+    "Word",
     "list_backends",
     "register_backend",
     "SpeechToolkitError",
