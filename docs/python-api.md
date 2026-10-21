@@ -42,16 +42,60 @@ The Hugging Face token, from `hf_token`, `HF_TOKEN` or `HUGGINGFACE_TOKEN`, is e
 
 `TranscriptionResult` has:
 - `text`: the full transcript.
-- `segments`: dicts with `start`, `end` (seconds) and `text`.
+- `segments`: dicts with `id` (counting from 0), `start` and `end` (seconds) and `text`.
   - With word timestamps on, each also has `words`: a list of `{"word", "start", "end"}` dicts.
   - Some backends add their own fields.
 - `language`: the language code, detected or given.
-- `speaker_segments`: with diarization, the segments with a `speaker` label each; otherwise `None`.
-- `raw`: extra backend output, for example faster-whisper's `duration` and `language_probability`.
+- `duration`: the audio's length in seconds, if the backend reports it (faster-whisper does); otherwise `None`.
+- `language_probability`: how likely the detected language is, from 0 to 1, if the backend reports it (faster-whisper
+  does); otherwise `None`.
+- `speaker_segments`: with diarization, the segments with a `speaker` label each, and a `segment_id`: the `id` of
+  the segment in `segments` each one comes from. Otherwise `None`.
+- `raw`: other backend output. faster-whisper also keeps `duration` and `language_probability` here, as before.
 - `render(fmt="txt", max_line_width=None)`: the result as txt, srt, vtt or json text.
 - `save(path, fmt=None, max_line_width=None)`: writes the rendered result, taking the format from the extension.
+- `to_dict()`: the result as a dict, as the JSON output has it.
 
 See [Output formats](formats.md) for what each format contains.
+
+### Loading a saved result
+
+A result saved as JSON, by `result.save("talk.json")` or `transcribe --json`, loads back, so you can render it in
+another format without transcribing again:
+
+```python
+from speech_toolkit import TranscriptionResult
+
+result = TranscriptionResult.load("talk.json")
+result.save("talk.srt", max_line_width=42)
+```
+
+- `TranscriptionResult.from_dict(data)` does the same for a dict, such as `to_dict()`'s or `json.load()`'s:
+  `from_dict(result.to_dict())` gives back an equal result, speaker segments included.
+- Keys that aren't result fields go to `raw`, so backend-specific fields come back too. Keys of `raw` that repeat a
+  result field aren't written, so they don't come back: whisper's `raw`, its whole output, comes back empty, and
+  faster-whisper's `duration` and `language_probability` come back as the attributes only.
+- JSON saved by earlier versions, without `schema_version`, loads too.
+- Data that isn't a transcription result raises `ValueError`, with a message that says what is wrong and where. So
+  does a newer `schema_version` than this version reads: upgrade to load the file. A missing file raises
+  `FileNotFoundError`.
+
+### Types
+
+`Segment` and `Word` are `TypedDict`s that describe a segment and a word for type checkers; at run time they are plain
+dicts. A backend can build its segments with them:
+
+```python
+from typing import List
+
+from speech_toolkit import Segment, TranscriptionResult
+
+segments: List[Segment] = [{"id": 0, "start": 0.0, "end": 1.5, "text": " Hello."}]
+result = TranscriptionResult(text=" Hello.", segments=segments)
+```
+
+`result.segments` is typed `List[Dict[str, Any]]` for now, so code that reads backend-specific keys keeps
+type-checking.
 
 ## Errors and warnings
 
@@ -69,7 +113,8 @@ built-in error the library raised before, so `except ValueError` and the like ke
 | `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded: accept its terms and set a token, see [Speaker labels](diarization.md). |
 
 A missing input file raises the built-in `FileNotFoundError`, and the `whisper` backend passes on openai-whisper's own
-download and loading errors.
+download and loading errors. Loading a saved result that isn't one raises the built-in `ValueError`; see
+[Loading a saved result](#loading-a-saved-result).
 
 ```python
 from speech_toolkit import ModelNotFoundError, SpeechToolkitError, transcribe
@@ -92,6 +137,35 @@ from speech_toolkit import SpeechToolkitWarning
 
 warnings.filterwarnings("ignore", category=SpeechToolkitWarning)
 ```
+
+## Decoding audio
+
+`load_audio()` decodes audio or video with ffmpeg into a mono float32 NumPy array at 16 kHz, the input speech models
+take.
+
+```python
+from speech_toolkit.media import load_audio
+
+audio = load_audio("talk.mp3")                   # a path
+audio = load_audio(data, strict=True)            # bytes, from an untrusted upload say
+with open("talk.ogg", "rb") as file:
+    audio = load_audio(file, max_seconds=3600)   # a binary file object, streamed to ffmpeg
+```
+
+| Option | Meaning |
+|---|---|
+| `sr` | Sample rate (default 16000). |
+| `max_seconds` | Decode only the first N seconds. |
+| `timeout` | Stop ffmpeg after N seconds and raise `AudioDecodeError`. |
+| `strict` | For untrusted input: accept only common audio and video formats (listed in `speech_toolkit.media.STRICT_FORMATS`), and refuse playlists (HLS, DASH), concat lists and anything else that would make ffmpeg open more files. |
+
+- **Bytes and file objects** reach ffmpeg through a pipe; a file object is read in chunks from its current position,
+  never whole. A pipe can't seek, so an MP4, M4A or MOV file with its index at the end, as phones often record them,
+  decodes only from a path.
+- **Safety:** ffmpeg opens local files only, never URLs, and runs without your environment's secrets, such as
+  `HF_TOKEN`.
+- **Errors:** failures raise `AudioDecodeError`, whose message ends with ffmpeg's reason, without file paths.
+- **Memory:** decoding peaks at about 6 bytes per sample, some 1 GB for three hours of audio.
 
 ## Custom backends
 

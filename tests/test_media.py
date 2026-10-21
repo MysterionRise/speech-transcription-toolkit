@@ -1,40 +1,10 @@
-"""Tests for speech_toolkit.media: ffmpeg decoding and silence-aware chunking."""
+"""Tests for speech_toolkit.media: silence-aware chunking (ffmpeg decoding is in test_load_audio.py)."""
 
 from __future__ import annotations
 
-import subprocess
-from unittest.mock import patch
-
 import numpy as np
-import pytest
 
-from speech_toolkit.media import SAMPLE_RATE, load_audio, split_audio
-
-
-class TestLoadAudio:
-    def test_decodes_16_bit_pcm_to_float(self):
-        pcm = np.array([0, 16384, -32768], dtype=np.int16).tobytes()
-        with patch("speech_toolkit.media.subprocess.run") as run:
-            run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=pcm)
-            audio = load_audio("talk.mp3")
-
-        assert audio.dtype == np.float32
-        assert audio.tolist() == [0.0, 0.5, -1.0]
-        cmd = run.call_args[0][0]
-        assert cmd[0] == "ffmpeg"
-        assert cmd[cmd.index("-i") + 1] == "talk.mp3"
-        assert cmd[cmd.index("-ar") + 1] == str(SAMPLE_RATE)
-
-    def test_missing_ffmpeg(self):
-        with patch("speech_toolkit.media.subprocess.run", side_effect=FileNotFoundError("ffmpeg")):
-            with pytest.raises(RuntimeError, match="ffmpeg not found"):
-                load_audio("talk.mp3")
-
-    def test_undecodable_file(self):
-        error = subprocess.CalledProcessError(1, ["ffmpeg"], stderr=b"talk.mp3: Invalid data found\n")
-        with patch("speech_toolkit.media.subprocess.run", side_effect=error):
-            with pytest.raises(RuntimeError, match="Failed to load audio: talk.mp3: Invalid data found$"):
-                load_audio("talk.mp3")
+from speech_toolkit.media import SAMPLE_RATE, split_audio
 
 
 def _seconds(chunks):
