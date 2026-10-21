@@ -1,8 +1,8 @@
 """faster-whisper transcription backend.
 
 faster-whisper re-implements Whisper on CTranslate2: it is several times faster than
-openai-whisper, uses less memory and does not need torch. It is the default backend and a core
-dependency; models download from the Hugging Face Hub on first use.
+openai-whisper, uses less memory and does not need torch. Needs the ``faster-whisper`` extra;
+models download from the Hugging Face Hub on first use.
 """
 
 from __future__ import annotations
