@@ -1,6 +1,9 @@
 # Troubleshooting
 
 - **Out of memory:** use a smaller model (`-m small`) or `-b faster-whisper`.
+- **"faster-whisper runs on the CPU instead of the GPU", "CUDA libraries not found", `cublas64_12.dll` or
+  `cudnn_ops64_9.dll` not found:** the GPU needs NVIDIA's cuBLAS (and cuDNN before CTranslate2 4.6.3), which pip
+  doesn't install with faster-whisper. See [GPU](install.md#gpu). `--device cpu` runs on the CPU without the check.
 - **Parakeet/Canary "requires extra packages":** `pip install "speech-transcription-toolkit[nvidia]"` (needs
   transformers 5.18+).
 - **Diarization "could not download":**
