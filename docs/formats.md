@@ -59,7 +59,8 @@ shared out in proportion to text length. Cues are never merged, so each piece ke
 - `words` appears only with word timestamps (`--word-timestamps`, or automatically with `--diarize` on backends that
   support them).
 - Fields vary by backend: whisper and faster-whisper add decoding details such as `avg_logprob` and `no_speech_prob`.
-- With `--diarize`, `speaker_segments` holds the segments with a `speaker` label each.
+- With `--diarize`, `speaker_segments` holds the segments with a `speaker` label each, and a `segment_id`: the `id`
+  of the segment in `segments` each one comes from.
 
 In Python, `TranscriptionResult.load("talk.json")` reads the file back, to render it in another format; see
 [Loading a saved result](python-api.md#loading-a-saved-result).

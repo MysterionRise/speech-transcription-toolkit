@@ -55,6 +55,7 @@ class Segment(_SegmentTiming, total=False):
 
     - ``words``: the segment's words with their times, when word timestamps are on.
     - ``speaker``: the speaker label, such as ``"SPEAKER_00"``, in ``TranscriptionResult.speaker_segments``.
+    - ``segment_id``: in ``speaker_segments``, the ``id`` of the transcript segment the speaker segment comes from.
     - ``tokens``, ``temperature``, ``avg_logprob``, ``compression_ratio`` and ``no_speech_prob``: Whisper's decoding
       details, from the whisper and faster-whisper backends.
 
@@ -63,6 +64,7 @@ class Segment(_SegmentTiming, total=False):
 
     words: List[Word]
     speaker: str
+    segment_id: int  # speaker segments: the id of the transcript segment it comes from
     tokens: Optional[List[int]]
     temperature: Optional[float]
     avg_logprob: Optional[float]

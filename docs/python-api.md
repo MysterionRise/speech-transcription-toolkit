@@ -49,7 +49,8 @@ The Hugging Face token, from `hf_token`, `HF_TOKEN` or `HUGGINGFACE_TOKEN`, is e
 - `duration`: the audio's length in seconds, if the backend reports it (faster-whisper does); otherwise `None`.
 - `language_probability`: how likely the detected language is, from 0 to 1, if the backend reports it (faster-whisper
   does); otherwise `None`.
-- `speaker_segments`: with diarization, the segments with a `speaker` label each; otherwise `None`.
+- `speaker_segments`: with diarization, the segments with a `speaker` label each, and a `segment_id`: the `id` of
+  the segment in `segments` each one comes from. Otherwise `None`.
 - `raw`: other backend output. faster-whisper also keeps `duration` and `language_probability` here, as before.
 - `render(fmt="txt", max_line_width=None)`: the result as txt, srt, vtt or json text.
 - `save(path, fmt=None, max_line_width=None)`: writes the rendered result, taking the format from the extension.

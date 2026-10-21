@@ -196,7 +196,8 @@ def _segments(value: List[Any], where: str, *, speakers: bool = False) -> List[D
         for key in ("start", "end"):
             _field(segment, key, "a number", name)
         _field(segment, "text", "a string", name)
-        _field(segment, "id", "an integer", name, optional=True)
+        for key in ("id", "segment_id"):
+            _field(segment, key, "an integer", name, optional=True)
         _field(segment, "speaker", "a string", name, optional=not speakers)
         words = _field(segment, "words", "a list", name, optional=True)
         if words is not None:

@@ -19,6 +19,7 @@ import pytest
 import speech_toolkit
 from speech_toolkit import Segment, TranscriptionResult, Word
 from speech_toolkit.backends import get_backend, list_backends
+from speech_toolkit.diarization import merge_diarization
 from speech_toolkit.server import verbose_json
 from speech_toolkit.types import SCHEMA_VERSION
 
@@ -41,15 +42,19 @@ def diarized_result() -> TranscriptionResult:
     ]
     first = {"id": 0, "start": 0.0, "end": 1.6, "text": " Hello there. Hi.", "avg_logprob": -0.2, "words": words}
     second = {"id": 1, "start": 2.0, "end": 3.0, "text": " Bye.", "avg_logprob": -0.4}
+    # As merge_diarization() gives them: ids of their own, and segment_id naming the transcript segment. The first
+    # segment splits in two, and its pieces leave out the whole segment's decoding details.
+    hello = {"start": 0.0, "end": 1.0, "text": " Hello there.", "words": words[:2], "speaker": "SPEAKER_00"}
+    hi = {"start": 1.2, "end": 1.6, "text": " Hi.", "words": words[2:], "speaker": "SPEAKER_01"}
     return TranscriptionResult(
         text=" Hello there. Hi. Bye.",
         segments=[first, second],
         language="en",
         raw={"model": "tiny"},  # a backend-specific field
         speaker_segments=[
-            {**first, "end": 1.0, "text": " Hello there.", "words": words[:2], "speaker": "SPEAKER_00"},
-            {**first, "start": 1.2, "text": " Hi.", "words": words[2:], "speaker": "SPEAKER_01"},
-            {**second, "speaker": "SPEAKER_00"},
+            {**hello, "id": 0, "segment_id": 0},
+            {**hi, "id": 1, "segment_id": 0},
+            {**second, "speaker": "SPEAKER_00", "id": 2, "segment_id": 1},
         ],
         duration=3.5,
         language_probability=0.97,
@@ -66,7 +71,7 @@ class TestTypes:
 
     def test_required_and_optional_keys(self):
         assert Segment.__required_keys__ == {"id", "start", "end", "text"}
-        assert {"words", "speaker", "tokens", "avg_logprob", "no_speech_prob"} <= Segment.__optional_keys__
+        assert {"words", "speaker", "segment_id", "tokens", "avg_logprob"} <= Segment.__optional_keys__
         assert Word.__required_keys__ == {"word", "start", "end"}
         assert Word.__optional_keys__ == {"probability"}
 
@@ -143,6 +148,22 @@ class TestRoundTrip:
 
         assert loaded.to_dict() == result.to_dict()
         assert TranscriptionResult.load(str(tmp_path / "talk.json")).render("srt") == result.render("srt")
+
+    def test_speaker_segments_keep_their_segment_id(self, tmp_path):
+        """merge_diarization() names each speaker segment's transcript segment in segment_id; loading keeps it."""
+        result = diarized_result()
+        result.speaker_segments = merge_diarization({"segments": result.segments}, [(0.0, 1.1, "A"), (1.1, 3.0, "B")])
+
+        from_dict = TranscriptionResult.from_dict(result.to_dict())
+        from_file = TranscriptionResult.load(result.save(tmp_path / "talk.json"))
+
+        for loaded in (from_dict, from_file):
+            assert [(s["id"], s["segment_id"], s["speaker"]) for s in loaded.speaker_segments] == [
+                (0, 0, "A"),
+                (1, 0, "B"),
+                (2, 1, "B"),
+            ]
+            assert loaded.speaker_segments == result.speaker_segments
 
     def test_without_diarization(self):
         result = TranscriptionResult(" Hi.", [SEGMENT], "en")
@@ -299,6 +320,11 @@ MALFORMED = [
         {"text": "", "segments": [], "speaker_segments": [segment()]},
         "'speaker_segments[0].speaker' is missing",
         id="no-speaker",
+    ),
+    pytest.param(
+        {"text": "", "segments": [], "speaker_segments": [segment(speaker="A", segment_id="0")]},
+        "'speaker_segments[0].segment_id' must be an integer or null, not a string",
+        id="segment-id-string",
     ),
     pytest.param(
         {"text": "", "segments": [], "speaker_segments": [segment(speaker=None)]},
