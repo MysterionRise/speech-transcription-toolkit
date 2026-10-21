@@ -8,10 +8,14 @@ from speech_toolkit.backends import TranscriptionBackend, TranscriptionResult
 
 
 class FakeBackend(TranscriptionBackend):
-    """Backend that 'transcribes' instantly and, like Whisper, prints to stdout while working."""
+    """Backend that 'transcribes' instantly and, like Whisper, prints to stdout while working.
+
+    It translates and reports the language, but takes none of the optional transcribe() keywords.
+    """
 
     name = "fake"
     description = "Fake backend for tests"
+    capabilities = frozenset({"translate", "language_detection"})
     loaded = 0
 
     @classmethod
@@ -40,7 +44,7 @@ class FakeWordsBackend(FakeBackend):
     """FakeBackend that also takes the optional transcribe() keywords and records what it got."""
 
     name = "fake-words"
-    capabilities = frozenset({"prompt", "vad", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps"})
     calls: list = []
     tasks: list = []
 

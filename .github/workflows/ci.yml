@@ -154,6 +154,54 @@ jobs:
     - name: Run mypy (static type checking)
       run: mypy speech_toolkit
 
+  # What a plain `pip install .` gives users: no PyTorch, and transcription with the default backend, faster-whisper.
+  # On the oldest and the newest Python, where wheels of faster-whisper's dependencies are most likely to be missing.
+  core-install:
+    name: Core Install (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Install the package without extras
+      run: pip install .
+
+    - name: Check that no PyTorch, openai-whisper or pydub was installed
+      run: |
+        pip list
+        if pip list | grep -iE '^(torch|torchaudio|openai-whisper|transformers|pydub|audioop-lts) '; then
+          echo "::error::A plain install pulled in the packages listed above."
+          exit 1
+        fi
+
+    # Run outside the checkout, so the installed package is listed. faster-whisper must be the default and installed.
+    - name: List the backends
+      working-directory: ${{ runner.temp }}
+      run: |
+        transcribe --list-backends | tee backends.txt
+        grep -A 4 '^  faster-whisper (default)$' backends.txt | grep 'Installed: yes'
+
+    # tests/integration/test_core_install.py transcribes a sample with the default backend, using only the packages
+    # installed above (plus pytest). A missing package fails the test instead of skipping it.
+    - name: Transcribe with the default backend
+      env:
+        INTEGRATION_REQUIRE_EXTRAS: '1'
+      run: |
+        pip install $(grep -E '^pytest(-cov)?==' requirements-dev.txt)
+        pytest -m integration tests/integration/test_core_install.py --no-cov -rA
+
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -161,6 +209,9 @@ jobs:
     # Skipped on draft PRs (marking the PR ready runs it); runs on main, ready PRs, manual and called runs.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 30
+    env:
+      # pyannote's diarization model is gated: the diarization test runs once the HF_TOKEN secret exists (#13).
+      HAS_HF_TOKEN: ${{ secrets.HF_TOKEN != '' }}
 
     steps:
     - uses: actions/checkout@v7
@@ -170,20 +221,38 @@ jobs:
       with:
         python-version: '3.12'
         cache: pip
-        cache-dependency-path: pyproject.toml
+        cache-dependency-path: |
+          pyproject.toml
+          requirements-dev.txt
 
-    - name: Install system dependencies
+    # ffmpeg from PyPI, not apt, whose mirrors stalled this step for 8 to 30 minutes: imageio-ffmpeg ships a static
+    # build (ffmpeg 7.0, with Opus and Vorbis), installed in a folder of its own so the test environment doesn't see
+    # it. It has no ffprobe, which nothing here uses. nightly.yml installs the newest release the same way.
+    - name: Install ffmpeg
+      timeout-minutes: 10
       run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+        pip install --target "$RUNNER_TEMP/imageio-ffmpeg" imageio-ffmpeg==0.6.0
+        exe=$(PYTHONPATH="$RUNNER_TEMP/imageio-ffmpeg" python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')
+        mkdir -p "$RUNNER_TEMP/bin"
+        ln -s "$exe" "$RUNNER_TEMP/bin/ffmpeg"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/bin/ffmpeg" -hide_banner -version
 
     - name: Install the package (CPU-only torch)
+      id: install
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install ".[faster-whisper,nvidia,server]" openai
+        pip install -r requirements-dev.txt ".[whisper,nvidia,server]" openai
 
-    # Model weights (several GB) come from the cache that runs on main save. The key changes with this file, which
-    # names the models; the newest older cache is restored then, so only new models download.
+    - name: Install speaker diarization
+      if: env.HAS_HF_TOKEN == 'true'
+      run: |
+        pip install torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install ".[diarize]"
+
+    # Model weights (several GB) come from the cache that runs on main save. The key changes with the files that name
+    # the models (this workflow and the integration tests); the newest older cache is restored then, so only new
+    # models download.
     - name: Restore cached models
       id: models
       uses: actions/cache/restore@v6
@@ -191,103 +260,22 @@ jobs:
         path: |
           ~/.cache/huggingface/hub
           ~/.cache/whisper
-        key: models-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+        key: models-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml', 'tests/integration/**') }}
         restore-keys: models-${{ runner.os }}-
 
-    - name: Create speech samples
-      run: |
-        # Synthesized speech (ffmpeg's flite source), so the test checks real words.
-        ffmpeg -loglevel error -f lavfi -i "flite=text='Hello world. This is a speech recognition test.':voice=slt" -ar 16000 speech.wav
-        mkdir batch
-        cp speech.wav batch/one.wav
-        cp speech.wav batch/two.wav
+    # tests/integration: real models transcribe the samples in tests/data. Here a missing package fails its tests
+    # instead of skipping them, and -rA prints each transcript with its word error rate.
+    - name: Run the integration tests
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        INTEGRATION_REQUIRE_EXTRAS: '1'
+      run: pytest -m integration --no-cov -rA --basetemp="$RUNNER_TEMP/integration"
 
-    - name: Whisper transcript on stdout
-      run: |
-        transcribe speech.wav -m tiny > out.txt
-        cat out.txt
-        grep -qiE "hello|world" out.txt
-        # stdout must carry only the transcript (progress goes to stderr)
-        test "$(wc -l < out.txt)" -eq 1
-
-    - name: Subtitles and JSON output
-      run: |
-        transcribe speech.wav -m tiny -q -o out.srt --json out.json
-        cat out.srt
-        grep -q -- "-->" out.srt
-        python -c "import json; assert json.load(open('out.json'))['segments']"
-
-    - name: Batch mode
-      run: |
-        transcribe batch -m tiny -q --outdir subs -f vtt
-        head -n 5 subs/one.vtt subs/two.vtt
-        grep -q "WEBVTT" subs/one.vtt
-
-    - name: faster-whisper backend
-      run: |
-        transcribe speech.wav -b faster-whisper -m tiny -q > fw.txt
-        cat fw.txt
-        grep -qiE "hello|world" fw.txt
-
-    - name: Accuracy options and subtitle lines
-      run: |
-        transcribe speech.wav -b faster-whisper -m tiny -q --vad --prompt "Speech recognition." --max-line-width 20 -o lines.srt
-        cat lines.srt
-        test "$(grep -c -- '-->' lines.srt)" -ge 2  # 47 characters at 20 per line, 2 lines per cue
-
-    - name: Parakeet backend
-      run: |
-        transcribe speech.wav -b parakeet -q --word-timestamps -o parakeet.json
-        python -c "import json; d = json.load(open('parakeet.json')); print(d['text']); assert d['segments'][0]['words']"
-        grep -qiE "hello|world" parakeet.json
-
-    - name: Canary backend
-      run: |
-        transcribe speech.wav -b canary -l en -q > canary.txt
-        cat canary.txt
-        grep -qiE "hello|world" canary.txt
-
-    - name: Python API
-      run: |
-        cd "$RUNNER_TEMP"  # import the installed package, not the checkout
-        python - <<'EOF'
-        import os
-        from speech_toolkit import Transcriber
-
-        transcriber = Transcriber("faster-whisper", "tiny")
-        result = transcriber.transcribe(os.path.join(os.environ["GITHUB_WORKSPACE"], "speech.wav"))
-        print(result.text)
-        assert "hello" in result.text.lower() or "world" in result.text.lower()
-        result.save(os.path.join(os.environ["GITHUB_WORKSPACE"], "api.vtt"))
-        EOF
-        head -n 4 "$GITHUB_WORKSPACE/api.vtt"
-
-    - name: OpenAI-compatible server
-      run: |
-        transcribe-server -b faster-whisper -m tiny --port 8765 > server.log 2>&1 &
-        SERVER_PID=$!
-        for _ in $(seq 60); do curl -sf http://127.0.0.1:8765/health && break; sleep 2; done
-        curl -sf http://127.0.0.1:8765/health || { cat server.log; exit 1; }
-        python - <<'EOF'
-        from openai import OpenAI
-
-        client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")
-
-        def transcribe(**options):
-            with open("speech.wav", "rb") as audio:
-                return client.audio.transcriptions.create(model="whisper-1", file=audio, **options)
-
-        text = transcribe().text
-        print(text)
-        assert "hello" in text.lower() or "world" in text.lower()
-        srt = transcribe(response_format="srt")
-        print(srt)
-        assert "-->" in srt
-        verbose = transcribe(response_format="verbose_json", timestamp_granularities=["word"])
-        print([w.word for w in verbose.words])
-        assert verbose.words and verbose.segments
-        EOF
-        kill "$SERVER_PID"
+    # The unit tests that need the real ffmpeg, for load_audio and ogg2wav (they skip where there is none, as in the
+    # unit test jobs). They run even when an integration test failed.
+    - name: Run the ffmpeg tests
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      run: pytest tests/test_load_audio.py tests/test_convert.py -k TestWithFfmpeg --no-cov -rA
 
     # Only main saves (PRs restore main's cache), and also after a failed step: what was downloaded is kept.
     - name: Save the model cache
@@ -299,19 +287,10 @@ jobs:
           ~/.cache/whisper
         key: ${{ steps.models.outputs.cache-primary-key }}
 
+    # Every test's files (transcripts, subtitles, JSON, the server's log), one folder per test.
     - name: Upload test outputs
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: integration-test-outputs
-        path: |
-          out.txt
-          out.srt
-          out.json
-          subs/
-          fw.txt
-          lines.srt
-          parakeet.json
-          canary.txt
-          api.vtt
-          server.log
+        path: ${{ runner.temp }}/integration
