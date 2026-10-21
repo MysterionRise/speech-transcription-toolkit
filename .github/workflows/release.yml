@@ -1,50 +1,222 @@
-# Publishes to PyPI and creates a GitHub release when a version tag (v0.1.0, ...) is pushed.
-# One-time setup on PyPI: add a trusted publisher for this repository, workflow "release.yml",
-# environment "pypi" (https://docs.pypi.org/trusted-publishers/).
+# Builds and publishes a release; RELEASING.md has the steps. One-time setup (#13): trusted publishers on PyPI and
+# TestPyPI for this workflow, with the environments "pypi" and "testpypi" (https://docs.pypi.org/trusted-publishers/).
+#
+# - Run workflow (workflow_dispatch), the dry run: CI, build, upload to TestPyPI.
+# - Pre-release tag (v0.4.0rc1): CI, build, TestPyPI, then a GitHub pre-release.
+# - Final release tag (v0.4.0): CI, build, PyPI once the maintainer approves the pypi environment, then the GitHub
+#   release with the version's CHANGELOG.md section as notes.
+#
+# Nothing is published unless CI passes on the commit and a tag matches speech_toolkit.__version__. The publish jobs
+# upload the files the build job made, and get no permission but the OIDC token that trusted publishing needs.
+# Actions are pinned to commits (Dependabot updates them), since these jobs make and publish the package.
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}  # each job asks for what it needs
 
 jobs:
-  release:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: pypi
-      url: https://pypi.org/p/speech-transcription-toolkit
+  # The whole of ci.yml, Integration Tests included, on the commit being released.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
     permissions:
-      contents: write  # create the GitHub release
-      id-token: write  # PyPI trusted publishing (no API token needed)
+      contents: read
+
+  build:
+    name: Build
+    needs: [ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
         python-version: '3.12'
 
-    - name: Check the tag matches the package version
-      run: |
-        version=$(python -c "import speech_toolkit; print(speech_toolkit.__version__)")
-        if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-          echo "::error::Tag $GITHUB_REF_NAME doesn't match speech_toolkit.__version__ ($version)"
-          exit 1
-        fi
+    - name: Install the release tools
+      run: pip install -r requirements-release.txt
 
-    - name: Build
+    - name: Build the wheel and sdist
+      run: python -m build
+
+    - name: Check the package metadata
+      run: twine check --strict dist/*
+
+    # A tag must be "v" + the version of the files just built: speech_toolkit.__version__, written as PyPI writes it.
+    - name: Check the tag matches the version
+      id: version
+      shell: python
       run: |
-        pip install build twine
-        python -m build
-        twine check --strict dist/*
+        import os
+        import pathlib
+        import sys
+
+        from packaging.utils import parse_wheel_filename
+
+        files = sorted(path.name for path in pathlib.Path("dist").iterdir())
+        wheels = [name for name in files if name.endswith(".whl")]
+        if len(files) != 2 or len(wheels) != 1:
+            print(f"::error::Expected a wheel and an sdist in dist/, found {files}")
+            sys.exit(1)
+        version = parse_wheel_filename(wheels[0])[1]
+        tag = os.environ["GITHUB_REF_NAME"]
+        if os.environ["GITHUB_REF_TYPE"] == "tag" and tag != f"v{version}":
+            print(f"::error::Tag {tag} doesn't match speech_toolkit.__version__ ({version}, as PyPI writes it)")
+            sys.exit(1)
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"version={version}\nprerelease={str(version.is_prerelease).lower()}\n")
+        print(f"Version {version}" + (" (pre-release)" if version.is_prerelease else ""))
+
+    # The section towncrier wrote for the version, "## [0.4.0](...) - <date>", up to the next "## " heading. A final
+    # release tag stops here without one; a pre-release or the dry run only warns (and shows the notes in the summary).
+    - name: Extract the release notes from CHANGELOG.md
+      shell: python
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        PRERELEASE: ${{ steps.version.outputs.prerelease }}
+      run: |
+        import os
+        import pathlib
+        import re
+        import sys
+
+        version = os.environ["VERSION"]
+        heading = re.compile(rf"## \[?v?{re.escape(version)}\]?(?=[\s(]|$)")
+        lines, found = [], False
+        for line in pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines():
+            if line.startswith("## "):
+                if found:
+                    break
+                found = bool(heading.match(line))
+            elif found:
+                lines.append(line)
+        notes = "\n".join(lines).strip()
+        if not notes:
+            message = (
+                f"CHANGELOG.md has no section for {version}: run towncrier build --version {version} (see RELEASING.md)"
+            )
+            if os.environ["GITHUB_REF_TYPE"] == "tag" and os.environ["PRERELEASE"] == "false":
+                print(f"::error::{message}")
+                sys.exit(1)
+            print(f"::warning::{message}")
+        pathlib.Path("release-notes.md").write_text(notes + "\n" if notes else "", encoding="utf-8")
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(f"## Release notes for {version}\n\n{notes or '_No CHANGELOG.md section._'}\n")
+
+    # overwrite: a re-run of this job replaces its files (the publish jobs always run after it).
+    - name: Upload the distributions
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: release-dist
+        path: dist/
+        if-no-files-found: error
+        overwrite: true
+
+    - name: Upload the release notes
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: release-notes
+        path: release-notes.md
+        if-no-files-found: error
+        overwrite: true
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [ci, build]
+    # The dry run, and pre-release tags.
+    if: github.event_name == 'workflow_dispatch' || needs.build.outputs.prerelease == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/speech-transcription-toolkit/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write  # trusted publishing
+
+    steps:
+    - name: Download the distributions
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+      with:
+        name: release-dist
+        path: dist/
+
+    - name: Publish to TestPyPI
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      with:
+        repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [ci, build]
+    # Final release tags only; the pypi environment waits for the maintainer's approval.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
+      needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/speech-transcription-toolkit/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write  # trusted publishing
+
+    steps:
+    - name: Download the distributions
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+      with:
+        name: release-dist
+        path: dist/
 
     - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
 
-    - name: Create the GitHub release
+  github-release:
+    name: GitHub release
+    needs: [build, publish-testpypi, publish-pypi]
+    # Tags only, after the upload: to PyPI for a final release, to TestPyPI for a pre-release. One of the two publish
+    # jobs is always skipped, so the condition checks the right one's result itself.
+    if: >-
+      !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (
+      (needs.build.outputs.prerelease == 'false' && needs.publish-pypi.result == 'success') ||
+      (needs.build.outputs.prerelease == 'true' && needs.publish-testpypi.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # create the release
+
+    steps:
+    - name: Download the distributions
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+      with:
+        name: release-dist
+        path: dist/
+
+    - name: Download the release notes
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+      with:
+        name: release-notes
+
+    - name: Create the release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      run: |
+        options=(--repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --verify-tag)
+        # The CHANGELOG.md section; a pre-release without one gets GitHub's generated notes.
+        if [ -s release-notes.md ]; then options+=(--notes-file release-notes.md); else options+=(--generate-notes); fi
+        if [ "$PRERELEASE" = true ]; then options+=(--prerelease); fi
+        gh release create "$GITHUB_REF_NAME" dist/* "${options[@]}"

@@ -56,4 +56,5 @@ sized for one person or agent and one pull request. Issues are grouped into wave
 
 ## Releases
 
-See [docs/development.md](docs/development.md#releases).
+See [RELEASING.md](RELEASING.md): the release pull request, the TestPyPI dry run, tagging, and what the release
+workflow checks before it publishes.
