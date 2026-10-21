@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 # Voxtral's transcription mode returns text without timestamps, so audio is split into
 # chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
@@ -36,7 +39,7 @@ class VoxtralBackend(TranscriptionBackend):
 
     name = "voxtral"
     description = "Mistral Voxtral - open-weight multilingual speech-to-text"
-    capabilities = frozenset()  # transcription only, and it doesn't report the language
+    capabilities = frozenset({"waveform"})  # transcription only, and it doesn't report the language
     requires = ("torch", "transformers", "mistral_common")
 
     # Available Voxtral models
@@ -106,7 +109,7 @@ class VoxtralBackend(TranscriptionBackend):
 
     def transcribe(
         self,
-        audio_path: Path,
+        audio_path: Union[Path, "np.ndarray"],
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
@@ -114,7 +117,7 @@ class VoxtralBackend(TranscriptionBackend):
         """Transcribe audio using Voxtral.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz).
             language: Language code or None for auto-detection.
             task: Only 'transcribe' is supported.
             verbose: Print progress to stderr.
@@ -133,10 +136,11 @@ class VoxtralBackend(TranscriptionBackend):
         if task != "transcribe":
             raise UnsupportedOptionError("The Voxtral backend only supports --task transcribe.")
 
-        if not audio_path.exists():
+        if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        chunks = split_audio(load_audio(audio_path), CHUNK_SECONDS)
+        samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(samples, CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
         for first in range(0, len(chunks), BATCH_SIZE):

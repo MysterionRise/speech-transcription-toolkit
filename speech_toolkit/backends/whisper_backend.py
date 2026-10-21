@@ -6,10 +6,13 @@ This backend wraps the openai-whisper library for local speech-to-text transcrip
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError
 from .base import TranscriptionBackend, TranscriptionResult
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 
 class WhisperBackend(TranscriptionBackend):
@@ -21,7 +24,7 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
-    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps", "waveform"})
     requires = ("whisper",)
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
@@ -79,7 +82,7 @@ class WhisperBackend(TranscriptionBackend):
 
     def transcribe(
         self,
-        audio_path: Path,
+        audio_path: Union[Path, "np.ndarray"],
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
@@ -90,7 +93,7 @@ class WhisperBackend(TranscriptionBackend):
         """Transcribe audio using Whisper.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz), which Whisper takes as is.
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
@@ -107,7 +110,7 @@ class WhisperBackend(TranscriptionBackend):
         if self._model is None:
             raise ModelLoadError("No model loaded. Call load_model() first.")
 
-        if not audio_path.exists():
+        if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Build transcription kwargs
@@ -126,7 +129,8 @@ class WhisperBackend(TranscriptionBackend):
             kwargs["word_timestamps"] = True
 
         # Run transcription
-        raw_result: Dict[str, Any] = self._model.transcribe(str(audio_path), **kwargs)
+        audio = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        raw_result: Dict[str, Any] = self._model.transcribe(audio, **kwargs)
 
         # Convert to standardized format
         segments = [_segment(seg) for seg in raw_result.get("segments", [])]

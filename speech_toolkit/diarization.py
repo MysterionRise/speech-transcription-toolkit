@@ -7,10 +7,13 @@ import itertools
 import operator
 import os
 import pathlib
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .errors import BackendUnavailableError, DiarizationError, UnsupportedOptionError
 from .media import SAMPLE_RATE, load_audio
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 
@@ -98,17 +101,21 @@ def check_speaker_hints(
 
 
 def diarize_audio(
-    audio_path: pathlib.Path,
+    audio_path: Union[pathlib.Path, "np.ndarray"],
     pipeline: Any,
     num_speakers: Optional[int] = None,
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
 ) -> List[Tuple[float, float, str]]:
-    """Return list of (start, end, speaker_label): none for audio shorter than MIN_DIARIZATION_SECONDS."""
+    """Return list of (start, end, speaker_label): none for audio shorter than MIN_DIARIZATION_SECONDS.
+
+    *audio_path* is a file, decoded with :func:`~speech_toolkit.media.load_audio`, or its samples already decoded: a
+    1-D float32 NumPy array at 16 kHz, so a caller that also transcribes them decodes the file once.
+    """
     import torch
 
     # Decode with ffmpeg here so pyannote needs no audio I/O backend of its own, whatever the format.
-    audio = load_audio(audio_path)
+    audio = load_audio(audio_path) if isinstance(audio_path, (str, os.PathLike)) else audio_path
     if len(audio) < MIN_DIARIZATION_SECONDS * SAMPLE_RATE:  # too short to tell speakers apart
         return []
     waveform = torch.from_numpy(audio).unsqueeze(0)

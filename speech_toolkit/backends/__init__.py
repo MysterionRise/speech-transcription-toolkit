@@ -32,7 +32,7 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
-from .base import CAPABILITIES, TranscriptionBackend, TranscriptionResult
+from .base import CAPABILITIES, AudioInput, TranscriptionBackend, TranscriptionResult
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
@@ -139,4 +139,5 @@ __all__ = [
     "register_backend",
     "CAPABILITIES",
     "DEFAULT_BACKEND",
+    "AudioInput",
 ]
