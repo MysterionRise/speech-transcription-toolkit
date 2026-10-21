@@ -97,15 +97,19 @@ class TestDeclarations:
     @pytest.mark.parametrize(
         "backend_class, capabilities, requires",
         [
-            (WhisperBackend, {"translate", "language_detection", "prompt", "word_timestamps"}, ("whisper",)),
+            (
+                WhisperBackend,
+                {"translate", "language_detection", "prompt", "word_timestamps", "waveform"},
+                ("whisper",),
+            ),
             (
                 FasterWhisperBackend,
-                {"translate", "language_detection", "prompt", "vad", "word_timestamps"},
+                {"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"},
                 ("faster_whisper",),
             ),
-            (VoxtralBackend, set(), ("torch", "transformers", "mistral_common")),
-            (ParakeetBackend, {"word_timestamps"}, ("torch", "transformers", "librosa")),
-            (CanaryBackend, {"translate"}, ("torch", "transformers", "librosa")),
+            (VoxtralBackend, {"waveform"}, ("torch", "transformers", "mistral_common")),
+            (ParakeetBackend, {"word_timestamps", "waveform"}, ("torch", "transformers", "librosa")),
+            (CanaryBackend, {"translate", "waveform"}, ("torch", "transformers", "librosa")),
         ],
     )
     def test_builtin_backends(self, backend_class, capabilities, requires):
@@ -179,11 +183,11 @@ class TestListBackends:
         backends = listing(capsys.readouterr().out)
 
         assert {name: fields["Capabilities"] for name, fields in backends.items()} == {
-            "whisper": "translate, language detection, prompt, word timestamps",
-            "faster-whisper": "translate, language detection, prompt, vad, word timestamps",
-            "voxtral": "transcription only",
-            "parakeet": "word timestamps",
-            "canary": "translate",
+            "whisper": "translate, language detection, prompt, word timestamps, waveform",
+            "faster-whisper": "translate, language detection, prompt, vad, word timestamps, waveform",
+            "voxtral": "waveform",
+            "parakeet": "word timestamps, waveform",
+            "canary": "translate, waveform",
         }
         assert backends["whisper"]["Models"].endswith("large-v3-turbo, turbo")
 

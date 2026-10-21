@@ -145,8 +145,8 @@ class ParakeetBackend(_TransformersBackend):
                 f"Parakeet detects the language itself; ignoring language '{language}'.", SpeechToolkitWarning
             )
 
-        samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
-        chunks = split_audio(samples, self.CHUNK_SECONDS)
+        audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(audio, self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []
         for number, (offset, samples) in enumerate(chunks, start=1):
             words += self._transcribe_chunk(samples, offset)
@@ -161,6 +161,7 @@ class ParakeetBackend(_TransformersBackend):
             text="".join(segment["text"] for segment in segments).strip(),
             segments=segments,
             language=None,  # Parakeet doesn't report the language it detected
+            duration=len(audio) / SAMPLE_RATE,
         )
 
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
@@ -215,8 +216,8 @@ class CanaryBackend(_TransformersBackend):
                 SpeechToolkitWarning,
             )
 
-        samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
-        chunks = split_audio(samples, self.CHUNK_SECONDS)
+        audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(audio, self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
         for first in range(0, len(chunks), self.BATCH_SIZE):
             batch = chunks[first : first + self.BATCH_SIZE]
@@ -230,6 +231,7 @@ class CanaryBackend(_TransformersBackend):
             text=" ".join(segment["text"] for segment in segments if segment["text"]),
             segments=segments,
             language="en" if task == "translate" else (language or "en"),
+            duration=len(audio) / SAMPLE_RATE,
         )
 
     def _transcribe_batch(self, chunks: Sequence[Any], language: str, task: str) -> List[str]:

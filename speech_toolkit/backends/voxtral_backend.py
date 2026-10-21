@@ -139,8 +139,8 @@ class VoxtralBackend(TranscriptionBackend):
         if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
-        chunks = split_audio(samples, CHUNK_SECONDS)
+        audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(audio, CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
         for first in range(0, len(chunks), BATCH_SIZE):
@@ -155,6 +155,7 @@ class VoxtralBackend(TranscriptionBackend):
             text=" ".join(seg["text"] for seg in segments if seg["text"]),
             segments=segments,
             language=language,  # Voxtral doesn't report the detected language
+            duration=len(audio) / SAMPLE_RATE,
         )
 
     def _transcribe_batch(self, chunks: Sequence[Any], language: Optional[str]) -> List[str]:

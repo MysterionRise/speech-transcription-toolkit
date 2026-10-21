@@ -183,6 +183,8 @@ class Transcriber:
             result = self.backend.transcribe(
                 cast(pathlib.Path, backend_audio), language=language, task=task, verbose=verbose, **options
             )
+        if result.duration is None and not isinstance(source, pathlib.Path):  # a backend's own duration is kept
+            result.duration = len(source) / SAMPLE_RATE
         if self._pipeline is not None:
             turns = diarize_audio(
                 source,
@@ -309,7 +311,9 @@ def _decode(audio: Union[bytes, bytearray, memoryview, IO[bytes], "np.ndarray"])
     if callable(getattr(audio, "read", None)):
         stream = cast(IO[bytes], audio)
         head = _read_head(stream)
-        return _load_from_temporary_file(head, stream) if _index_at_end(head) else load_audio(_Rewound(head, stream))
+        if _index_at_end(head):
+            return _load_from_temporary_file(head, stream)
+        return load_audio(cast(IO[bytes], _Rewound(head, stream)))  # load_audio() only calls read()
     import numpy as np
 
     return np.ascontiguousarray(audio)  # checked by _check_audio(); torch can't take negative strides

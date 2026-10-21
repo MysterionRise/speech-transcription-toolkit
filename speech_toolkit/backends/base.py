@@ -38,7 +38,8 @@ class TranscriptionResult:
         segments: The segments, dicts shaped like :class:`~speech_toolkit.Segment`: ``id`` (counting from 0),
             ``start`` and ``end`` in seconds, ``text``, and optional keys such as ``words``.
         language: Detected or specified language code.
-        duration: Length of the audio in seconds, if the backend reports it (faster-whisper does); otherwise None.
+        duration: Length of the audio in seconds, if the backend reports it (all built-in backends but whisper do), or
+            if Transcriber decoded the audio itself (in-memory input, diarization); otherwise None.
         language_probability: Probability of the detected language, from 0 to 1, if the backend reports it
             (faster-whisper does); otherwise None.
         raw: Raw result from the underlying model (backend-specific).

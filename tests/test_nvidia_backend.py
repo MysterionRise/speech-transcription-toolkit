@@ -76,8 +76,8 @@ class TestLoading:
         assert CanaryBackend.default_model() == "canary-1b-v2"
         assert isinstance(get_backend("parakeet"), ParakeetBackend)
         assert isinstance(get_backend("canary"), CanaryBackend)
-        assert ParakeetBackend.capabilities == {"word_timestamps"}
-        assert CanaryBackend.capabilities == {"translate"}
+        assert ParakeetBackend.capabilities == {"word_timestamps", "waveform"}
+        assert CanaryBackend.capabilities == {"translate", "waveform"}
 
     def test_load_model_cuda_uses_half_precision(self, nvidia_modules):
         nvidia_modules.torch.cuda.is_available.return_value = True

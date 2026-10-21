@@ -18,7 +18,8 @@ for path in ["a.mp3", "b.mp3"]:
 With `diarize=True` it also loads the pyannote pipeline, and does that first, so a missing package or token fails
 before a large model download.
 
-`transcriber.transcribe(audio, language=None, task="transcribe", *, ...)` transcribes one file. Keyword options:
+`transcriber.transcribe(audio, language=None, task="transcribe", *, ...)` transcribes one recording: a file, its
+content, a file object or the samples, see [Audio input](#audio-input). Keyword options:
 
 | Option | Meaning |
 |---|---|
@@ -30,13 +31,50 @@ before a large model download.
 
 Options the backend doesn't support are skipped with a warning. A translation the backend can't do raises
 `UnsupportedOptionError` before any audio is decoded; the one-shot `transcribe()` raises it before loading the model.
-`transcriber.supports("vad")` tells you in advance; it also takes `"prompt"`, `"word_timestamps"`, `"translate"` and
-`"language_detection"`, see [Backends](backends.md#what-each-backend-supports).
+`transcriber.supports("vad")` tells you in advance; it also takes `"prompt"`, `"word_timestamps"`, `"translate"`,
+`"language_detection"` and `"waveform"`, see [Backends](backends.md#what-each-backend-supports) and
+[Custom backends](#custom-backends).
 
 `transcribe(audio, backend=..., model=..., **options)` loads a model and transcribes one file in a single call. To
 transcribe several files, create a `Transcriber` once instead.
 
 The Hugging Face token, from `hf_token`, `HF_TOKEN` or `HUGGINGFACE_TOKEN`, is exported as `HF_TOKEN` for model downloads.
+
+### Audio input
+
+`audio` can be any of these:
+
+| Input | For example |
+|---|---|
+| A path to anything ffmpeg decodes, as a `str` or `pathlib.Path` | `"talk.mp3"` |
+| The file's content: `bytes`, `bytearray` or `memoryview` | an upload's body |
+| A binary file object, read from its current position to the end and left open | `open("talk.ogg", "rb")`, `sys.stdin.buffer`, `io.BytesIO(data)` |
+| The samples: a 1-D `float32` NumPy array of mono audio at 16 kHz | what `load_audio()` returns |
+
+```python
+import numpy as np
+from speech_toolkit.media import load_audio
+
+transcriber.transcribe(data)                                   # bytes
+with open("talk.ogg", "rb") as file:
+    transcriber.transcribe(file)
+transcriber.transcribe(load_audio("talk.mp3"))                 # samples
+transcriber.transcribe(int16_samples.astype(np.float32) / 32768)
+```
+
+- **Arrays** must be 1-D `float32` samples at 16 kHz. Other arrays raise `ValueError` instead of being converted,
+  because their scale and sample rate can't be told from the data: convert `int16` samples as above, average stereo
+  channels, resample other rates, or pass the file instead. Other types raise `TypeError`.
+- **Decoded once:** in-memory input is decoded with ffmpeg once, and the backend and speaker labelling share the
+  samples. A path is decoded once too: by the backend itself or, with `diarize=True` and a backend that takes samples
+  (all the built-in ones do), by the `Transcriber` for both.
+- **MP4, M4A and MOV in memory:** ffmpeg reads in-memory input through a pipe, which can't seek, so it can't decode
+  these when their index comes after the audio, as phones record them. `transcribe()` checks where the index is (in a
+  file object, within its first 64 KiB): such a file is copied to a temporary file, decoded from there and deleted. A
+  file with its index first streams through the pipe.
+- **Untrusted input:** `transcribe()` decodes with `load_audio()`'s defaults. For uploads, decode with
+  `load_audio(data, strict=True, max_seconds=..., timeout=...)` first and pass the samples; see
+  [Decoding audio](#decoding-audio).
 
 ## Results
 
@@ -46,7 +84,9 @@ The Hugging Face token, from `hf_token`, `HF_TOKEN` or `HUGGINGFACE_TOKEN`, is e
   - With word timestamps on, each also has `words`: a list of `{"word", "start", "end"}` dicts.
   - Some backends add their own fields.
 - `language`: the language code, detected or given.
-- `duration`: the audio's length in seconds, if the backend reports it (faster-whisper does); otherwise `None`.
+- `duration`: the audio's length in seconds. The faster-whisper, Parakeet, Canary and Voxtral backends report it, and
+  otherwise it comes from the decoded samples: for in-memory input, and with diarization. It is `None` only when a
+  backend that doesn't report it, such as whisper, transcribes a path without diarization.
 - `language_probability`: how likely the detected language is, from 0 to 1, if the backend reports it (faster-whisper
   does); otherwise `None`.
 - `speaker_segments`: with diarization, the segments with a `speaker` label each, and a `segment_id`: the `id` of
@@ -113,7 +153,8 @@ built-in error the library raised before, so `except ValueError` and the like ke
 | `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded: accept its terms and set a token, see [Speaker labels](diarization.md). |
 
 A missing input file raises the built-in `FileNotFoundError`, and the `whisper` backend passes on openai-whisper's own
-download and loading errors. Loading a saved result that isn't one raises the built-in `ValueError`; see
+download and loading errors. Audio of a type `transcribe()` can't take raises the built-in `TypeError`, and an array
+that isn't 1-D `float32` raises `ValueError`, see [Audio input](#audio-input). Loading a saved result that isn't one raises the built-in `ValueError`; see
 [Loading a saved result](#loading-a-saved-result).
 
 ```python
@@ -161,7 +202,7 @@ with open("talk.ogg", "rb") as file:
 
 - **Bytes and file objects** reach ffmpeg through a pipe; a file object is read in chunks from its current position,
   never whole. A pipe can't seek, so an MP4, M4A or MOV file with its index at the end, as phones often record them,
-  decodes only from a path.
+  decodes only from a path. `Transcriber.transcribe()` takes care of that itself, see [Audio input](#audio-input).
 - **Safety:** ffmpeg opens local files only, never URLs, and runs without your environment's secrets, such as
   `HF_TOKEN`.
 - **Errors:** failures raise `AudioDecodeError`, whose message ends with ffmpeg's reason, without file paths.
@@ -178,6 +219,26 @@ class MyBackend(TranscriptionBackend):
     ...
 
 register_backend("mine", MyBackend)
+```
+
+`Transcriber` passes the audio as the first positional argument of `transcribe()`: a `pathlib.Path` to the file, or,
+for in-memory input, a temporary 16-bit WAV file that is deleted when `transcribe()` returns.
+
+**Samples instead of a file:** declare the `waveform` capability, and `transcribe()` may get the samples instead of
+the path: a 1-D `float32` NumPy array of mono audio at 16 kHz. `Transcriber` passes them whenever it has decoded the
+audio, for in-memory input and for diarization, so nothing is decoded twice and no temporary file is written.
+
+```python
+from pathlib import Path
+
+from speech_toolkit.media import load_audio
+
+class MyBackend(TranscriptionBackend):
+    capabilities = frozenset({"waveform"})
+
+    def transcribe(self, audio_path, language=None, task="transcribe", verbose=True):
+        samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        ...
 ```
 
 See [Adding a backend](backends.md#adding-a-backend) for the details.
