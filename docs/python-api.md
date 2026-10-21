@@ -226,7 +226,8 @@ for in-memory input, a temporary 16-bit WAV file that is deleted when `transcrib
 
 **Samples instead of a file:** declare the `waveform` capability, and `transcribe()` may get the samples instead of
 the path: a 1-D `float32` NumPy array of mono audio at 16 kHz. `Transcriber` passes them whenever it has decoded the
-audio, for in-memory input and for diarization, so nothing is decoded twice and no temporary file is written.
+audio, for in-memory input and for diarization, so nothing is decoded twice and no temporary file is written. The
+built-in backends all declare it; `transcribe --list-backends` doesn't show it, since only the Python API uses it.
 
 ```python
 from pathlib import Path

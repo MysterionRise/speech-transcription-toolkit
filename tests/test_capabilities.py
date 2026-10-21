@@ -183,11 +183,11 @@ class TestListBackends:
         backends = listing(capsys.readouterr().out)
 
         assert {name: fields["Capabilities"] for name, fields in backends.items()} == {
-            "whisper": "translate, language detection, prompt, word timestamps, waveform",
-            "faster-whisper": "translate, language detection, prompt, vad, word timestamps, waveform",
-            "voxtral": "waveform",
-            "parakeet": "word timestamps, waveform",
-            "canary": "translate, waveform",
+            "whisper": "translate, language detection, prompt, word timestamps",
+            "faster-whisper": "translate, language detection, prompt, vad, word timestamps",
+            "voxtral": "transcription only",
+            "parakeet": "word timestamps",
+            "canary": "translate",
         }
         assert backends["whisper"]["Models"].endswith("large-v3-turbo, turbo")
 
@@ -219,6 +219,26 @@ class TestListBackends:
             "Installed": "yes",
         }
         assert backends["fake"]["Capabilities"] == "translate, language detection"
+
+    def test_api_only_capabilities_are_not_shown(self, fake_backend, capsys):
+        """The listing leaves out "waveform": only the Python API can pass samples, the command line can't."""
+
+        class SamplesOnly(FakeBackend):
+            capabilities = frozenset({"waveform"})
+
+        class Translator(FakeBackend):
+            capabilities = frozenset({"waveform", "translate"})
+
+        register_backend("samples-only", SamplesOnly)
+        register_backend("translator", Translator)
+        cli.main(["--list-backends"])
+        out = capsys.readouterr().out
+        backends = listing(out)
+
+        assert "waveform" not in out
+        assert backends["samples-only"]["Capabilities"] == "transcription only"
+        assert backends["translator"]["Capabilities"] == "translate"
+        assert all("waveform" in get_backend_class(name).capabilities for name in ("whisper", "voxtral"))
 
 
 class TestTranscriber:
