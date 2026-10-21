@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/LICENSE)
 
 Offline speech-to-text from the command line or Python.
-- Pick a backend: Whisper, faster-whisper, Voxtral, or NVIDIA's Parakeet and Canary.
+- Pick a backend: faster-whisper (the default, no PyTorch needed), Whisper, Voxtral, or NVIDIA's Parakeet and Canary.
 - Optionally label speakers.
 - Get plain text, subtitles or JSON.
 
@@ -16,15 +16,15 @@ Your audio never leaves your machine; models download once, on first use.
 Needs Python 3.10+ and [ffmpeg](https://ffmpeg.org/download.html) (`apt install ffmpeg` / `brew install ffmpeg`).
 
 ```bash
-pip install speech-transcription-toolkit                    # Whisper (default backend)
-pip install "speech-transcription-toolkit[faster-whisper]"  # add the faster-whisper backend
+pip install speech-transcription-toolkit             # faster-whisper, the default backend; no PyTorch
+pip install "speech-transcription-toolkit[whisper]"  # add OpenAI's Whisper (installs PyTorch)
 ```
 
 The first PyPI release is on its way. Until then, install from GitHub:
 `pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise/speech-transcription-toolkit"`.
 
 Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels), `[server]` (OpenAI-compatible API) and
-`[all]`. See [Installation](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/install.md).
+`[all]`; all but `[server]` install PyTorch. See [Installation](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/install.md).
 
 ## Quick start
 
@@ -32,9 +32,9 @@ Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker l
 transcribe audio.mp3                           # transcript to stdout
 transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json)
 transcribe recordings/ --outdir out -f vtt     # every audio file in a folder
-transcribe audio.mp3 -b faster-whisper         # faster, especially on CPU
+transcribe audio.mp3 -b whisper                # another backend: OpenAI's Whisper
 transcribe meeting.wav --diarize -o notes.txt  # label speakers (needs the diarize extra and HF_TOKEN)
-transcribe-server -b faster-whisper            # OpenAI-compatible API on http://127.0.0.1:8000/v1
+transcribe-server                              # OpenAI-compatible API on http://127.0.0.1:8000/v1
 ```
 
 ```python

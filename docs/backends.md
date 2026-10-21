@@ -2,15 +2,15 @@
 
 | Backend | Models (default in bold) | Notes |
 |---|---|---|
-| `whisper` | tiny … large-v3, **turbo** | OpenAI Whisper |
-| `faster-whisper` | tiny … large-v3, distil-\*, **turbo** | The same models, several times faster; runs on CTranslate2 instead of PyTorch |
+| `faster-whisper` (default) | tiny … large-v3, distil-\*, **turbo** | Whisper's models, several times faster; runs on CTranslate2 instead of PyTorch |
+| `whisper` | tiny … large-v3, **turbo** | OpenAI Whisper, on PyTorch |
 | `voxtral` | **voxtral-mini**, voxtral-small | Mistral Voxtral (3B and 24B); transcription only, timestamps per ~30 s |
 | `parakeet` | **parakeet-tdt-0.6b-v3**, parakeet-tdt-0.6b-v2 | NVIDIA Parakeet: fast and accurate, word timestamps. v3: English + 24 European languages, detected automatically; v2: English only |
 | `canary` | **canary-1b-v2** | NVIDIA Canary: the same 25 languages; translates to English. Can't detect the language: give it with `-l` (default English). Timestamps per ~30 s |
 
 `transcribe --list-backends` lists them with their models and capabilities, and says whether each one's packages are
-installed. `transcribe --list-models -b <backend>` lists one backend's models. Each backend except `whisper` needs its
-[extra](install.md#extras).
+installed. `transcribe --list-models -b <backend>` lists one backend's models. faster-whisper comes with every install;
+each other backend needs its [extra](install.md#extras).
 
 ## What each backend supports
 

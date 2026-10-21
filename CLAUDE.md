@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (Whisper, faster-whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
+Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (faster-whisper by default, Whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
 
 ## Common Commands
 
 ```bash
 pip install -r requirements-dev.txt   # enough for unit tests (model libraries are mocked)
-pip install -e ".[all]"               # real model runs; extras: faster-whisper, voxtral, nvidia, diarize, server
+pip install -e ".[all]"               # real model runs; extras: whisper, voxtral, nvidia, diarize, server (core: faster-whisper, no torch)
 pre-commit install
 
 pytest                                           # unit tests with a coverage report
@@ -35,12 +35,12 @@ speech_toolkit/
 ├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
-├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via pydub/ffmpeg
+├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
     ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)
-    ├── whisper_backend.py          openai-whisper (default)
-    ├── faster_whisper_backend.py   faster-whisper / CTranslate2
+    ├── whisper_backend.py          openai-whisper (the `whisper` extra, on PyTorch)
+    ├── faster_whisper_backend.py   faster-whisper / CTranslate2 (default backend, a core dependency: no torch)
     ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
     └── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
 main.py, convert.py   checkout shims for the two commands (not packaged)

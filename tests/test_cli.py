@@ -28,7 +28,7 @@ class TestParseArgs:
         assert args.task == "transcribe"
         assert args.diarize is False
         assert args.quiet is False
-        assert args.backend == "whisper"
+        assert args.backend == "faster-whisper"
         assert args.format is None
 
     def test_parse_args_custom_model(self):

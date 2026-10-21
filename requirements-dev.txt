@@ -8,9 +8,6 @@ pre-commit>=4.6.2
 pytest==9.1.1
 pytest-cov==7.1.0
 
-# Imported by speech_toolkit/convert.py
-pydub>=0.25.1
-audioop-lts>=0.2.2; python_version >= "3.13"
 # Audio decoding and chunking (speech_toolkit/media.py); unpinned so each Python gets a matching wheel
 numpy>=1.26
 

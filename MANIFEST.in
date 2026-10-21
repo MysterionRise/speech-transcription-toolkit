@@ -1,2 +1,6 @@
-# Ship the whole test suite in the sdist (setuptools alone would skip conftest.py).
+# Ship the unit tests in the sdist (setuptools alone would skip conftest.py), and the checkout shims that they run.
 recursive-include tests *.py
+include main.py convert.py
+# The integration tests download models and transcribe the samples in tests/data: they run from a checkout.
+prune tests/integration
+prune tests/data
