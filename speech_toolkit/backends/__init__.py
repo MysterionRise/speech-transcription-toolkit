@@ -3,14 +3,17 @@
 This module provides a registry of available transcription backends and utilities
 for loading and using them. Supported backends:
 
-- **whisper**: OpenAI Whisper (default) - fast, accurate, multiple model sizes
-- **faster-whisper**: CTranslate2 Whisper - faster and lighter, no torch needed
+- **faster-whisper**: CTranslate2 Whisper (default) - fast and light, no torch needed
+- **whisper**: OpenAI Whisper on PyTorch - the ``whisper`` extra
 - **voxtral**: Mistral Voxtral Mini/Small - strong multilingual support
 - **parakeet**: NVIDIA Parakeet TDT - fast and accurate, with word timestamps
 - **canary**: NVIDIA Canary - multilingual transcription and translation
 
 Heavy libraries (torch, transformers, ...) are imported only when a model is loaded,
 so importing this package and listing backends/models stays fast.
+
+Each backend class declares what it can do in ``capabilities`` (see ``CAPABILITIES``), and
+``backends_with()`` names the backends that declare one, e.g. the ones that translate.
 
 Usage:
     from speech_toolkit.backends import get_backend, list_backends
@@ -19,7 +22,7 @@ Usage:
     backends = list_backends()
 
     # Load a backend and transcribe
-    backend = get_backend("whisper")
+    backend = get_backend("faster-whisper")
     backend.load_model("turbo")
     result = backend.transcribe(Path("audio.mp3"))
 """
@@ -29,7 +32,7 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
-from .base import TranscriptionBackend, TranscriptionResult
+from .base import CAPABILITIES, TranscriptionBackend, TranscriptionResult
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
@@ -44,13 +47,18 @@ _BACKENDS: Dict[str, Type[TranscriptionBackend]] = {
     "canary": CanaryBackend,
 }
 
-# Default backend
-DEFAULT_BACKEND = "whisper"
+# Default backend: faster-whisper is the one a plain install includes (no torch).
+DEFAULT_BACKEND = "faster-whisper"
 
 
 def list_backends() -> List[str]:
     """Return list of registered backend names."""
     return list(_BACKENDS.keys())
+
+
+def backends_with(capability: str) -> List[str]:
+    """Names of the registered backends that declare *capability*, such as ``"translate"``, in registry order."""
+    return [name for name, backend_class in _BACKENDS.items() if capability in backend_class.capabilities]
 
 
 def get_backend(name: str) -> TranscriptionBackend:
@@ -125,8 +133,10 @@ __all__ = [
     "ParakeetBackend",
     "CanaryBackend",
     "list_backends",
+    "backends_with",
     "get_backend",
     "get_backend_class",
     "register_backend",
+    "CAPABILITIES",
     "DEFAULT_BACKEND",
 ]

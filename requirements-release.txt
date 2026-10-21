@@ -1,0 +1,6 @@
+# What the build job of .github/workflows/release.yml installs, pinned so a release builds with known tools.
+# build and twine match requirements-dev.txt, which CI's package check uses (tests/test_release_workflow.py checks it).
+build==1.6.1
+twine==7.0.0
+# The build job reads the version from the wheel's file name
+packaging==26.3
