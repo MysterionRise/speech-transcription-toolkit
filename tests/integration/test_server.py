@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import socket
 import subprocess
@@ -12,9 +13,24 @@ from typing import Any, Iterator
 
 import pytest
 
-from tests.integration.helpers import BACKEND_ARGS, assert_timeline, assert_wer, command_env, parse_cues, require
+from tests.integration.devices import device_args
+from tests.integration.helpers import (
+    BACKEND_ARGS,
+    EventLog,
+    assert_timeline,
+    assert_wer,
+    instrumented_env,
+    parse_cues,
+    require,
+)
 
 STARTUP_TIMEOUT = 300  # seconds, model download included
+
+
+@dataclasses.dataclass(frozen=True)
+class Server:
+    url: str  # the API's base URL
+    events: EventLog  # what the server's instrumentation records
 
 
 def free_port() -> int:
@@ -29,29 +45,41 @@ def wait_until_healthy(url: str, process: subprocess.Popen, log: pathlib.Path) -
     deadline = time.monotonic() + STARTUP_TIMEOUT
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            pytest.fail(f"transcribe-server exited with {process.returncode}:\n{log.read_text(encoding='utf-8')}")
+            pytest.fail(f"transcribe-server exited with {process.returncode}:\n{read_log(log)}")
         try:
             with opener.open(url, timeout=5):
                 return
         except OSError:  # not listening yet
             time.sleep(1)
-    pytest.fail(f"transcribe-server didn't answer within {STARTUP_TIMEOUT} s:\n{log.read_text(encoding='utf-8')}")
+    pytest.fail(f"transcribe-server didn't answer within {STARTUP_TIMEOUT} s:\n{read_log(log)}")
+
+
+def read_log(log: pathlib.Path) -> str:
+    return log.read_text(encoding="utf-8", errors="replace")
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """A transcribe-server with faster-whisper tiny on a free port; yields its base URL. Its log is server.log."""
+def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
+    """A transcribe-server with faster-whisper tiny on a free port, with --device from INTEGRATION_DEVICE.
+
+    It runs through the instrumentation, like the transcribe command: the tests fail unless its model is on
+    INTEGRATION_DEVICE. Its log is server.log.
+    """
     require("server", "faster-whisper")
     folder = tmp_path_factory.mktemp("server")
-    log, port = folder / "server.log", free_port()
-    command = [sys.executable, "-m", "speech_toolkit.server", *BACKEND_ARGS["faster-whisper"], "--port", str(port)]
+    log, port, events = folder / "server.log", free_port(), EventLog(folder / "instrument-events.jsonl")
+    module = ["tests.integration.instrument", "speech_toolkit.server"]  # python -m speech_toolkit.server, instrumented
+    command = [sys.executable, "-m", *module, *BACKEND_ARGS["faster-whisper"], "--port", str(port), *device_args()]
     with log.open("w", encoding="utf-8") as out:
-        process = subprocess.Popen(command, cwd=folder, env=command_env(), stdout=out, stderr=subprocess.STDOUT)
-    try:
+        env = instrumented_env(events.path)
+        process = subprocess.Popen(command, cwd=folder, env=env, stdout=out, stderr=subprocess.STDOUT)
+    try:  # the server stops even when a check below fails
         wait_until_healthy(f"http://127.0.0.1:{port}/health", process, log)
-        yield f"http://127.0.0.1:{port}/v1"
+        if not events.record():  # the model loads before the server answers; this checks its device
+            pytest.fail(f"the instrumentation recorded no model load:\n{read_log(log)}")
+        yield Server(f"http://127.0.0.1:{port}/v1", events)
     finally:
-        process.terminate()
+        process.terminate()  # TerminateProcess on Windows, SIGTERM elsewhere
         try:
             process.wait(timeout=30)
         except subprocess.TimeoutExpired:
@@ -60,11 +88,18 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 
 @pytest.fixture(scope="module")
-def client(server: str) -> Iterator[Any]:
+def client(server: Server) -> Iterator[Any]:
     from openai import OpenAI
 
-    with OpenAI(base_url=server, api_key="unused", max_retries=0, timeout=300) as client:
+    with OpenAI(base_url=server.url, api_key="unused", max_retries=0, timeout=300) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def record_requests(server: Server) -> Iterator[None]:
+    """After each test, its transcriptions go in the report, with the WER the test checked."""
+    yield
+    server.events.record()
 
 
 def create_transcription(client: Any, path: pathlib.Path, **options: Any) -> Any:
