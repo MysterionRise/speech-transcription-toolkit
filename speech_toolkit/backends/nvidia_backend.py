@@ -12,7 +12,7 @@ import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..errors import (
     BackendUnavailableError,
@@ -23,6 +23,9 @@ from ..errors import (
 )
 from ..media import SAMPLE_RATE, load_audio, split_audio
 from .base import TranscriptionBackend, TranscriptionResult
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 INSTALL_HINT = 'Install with: pip install "speech-transcription-toolkit[nvidia]"'
 # Parakeet word timings are grouped into segments that end at a sentence, a pause or this length.
@@ -90,10 +93,10 @@ class _TransformersBackend(TranscriptionBackend):
         self._model_name = model_name
         self._device = device
 
-    def _check_ready(self, audio_path: Path) -> None:
+    def _check_ready(self, audio_path: Union[Path, "np.ndarray"]) -> None:
         if self._model is None or self._processor is None:
             raise ModelLoadError("No model loaded. Call load_model() first.")
-        if not audio_path.exists():
+        if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
 
@@ -103,7 +106,7 @@ class ParakeetBackend(_TransformersBackend):
     name = "parakeet"
     description = "NVIDIA Parakeet TDT - fast, accurate English/European speech-to-text with word timestamps"
     # No "language_detection": v3 detects the language internally but can't report it.
-    capabilities = frozenset({"word_timestamps"})
+    capabilities = frozenset({"word_timestamps", "waveform"})
 
     MODELS = {
         "parakeet-tdt-0.6b-v3": "nvidia/parakeet-tdt-0.6b-v3",  # 25 European languages, detected automatically
@@ -115,7 +118,7 @@ class ParakeetBackend(_TransformersBackend):
 
     def transcribe(
         self,
-        audio_path: Path,
+        audio_path: Union[Path, "np.ndarray"],
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
@@ -125,7 +128,7 @@ class ParakeetBackend(_TransformersBackend):
         """Transcribe audio with Parakeet; segments end at sentences or pauses.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz).
             language: Ignored, with a warning: the model detects the language itself. The result's
                 language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
@@ -147,7 +150,8 @@ class ParakeetBackend(_TransformersBackend):
                 f"Parakeet detects the language itself; ignoring language '{language}'.", SpeechToolkitWarning
             )
 
-        chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
+        audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(audio, self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []
         for number, (offset, samples) in enumerate(chunks, start=1):
             words += self._transcribe_chunk(samples, offset)
@@ -162,6 +166,7 @@ class ParakeetBackend(_TransformersBackend):
             text="".join(segment["text"] for segment in segments).strip(),
             segments=segments,
             language=None,  # Parakeet doesn't report the language it detected
+            duration=len(audio) / SAMPLE_RATE,
         )
 
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
@@ -181,7 +186,8 @@ class CanaryBackend(_TransformersBackend):
 
     name = "canary"
     description = "NVIDIA Canary - multilingual speech-to-text and translation to English (25 European languages)"
-    capabilities = frozenset({"translate"})  # no "language_detection": it needs the language, else assumes English
+    # No "language_detection": it needs the language, else assumes English.
+    capabilities = frozenset({"translate", "waveform"})
 
     MODELS = {"canary-1b-v2": "nvidia/canary-1b-v2"}
     MODEL_CLASS = "CanaryForConditionalGeneration"
@@ -192,7 +198,7 @@ class CanaryBackend(_TransformersBackend):
 
     def transcribe(
         self,
-        audio_path: Path,
+        audio_path: Union[Path, "np.ndarray"],
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
@@ -200,7 +206,7 @@ class CanaryBackend(_TransformersBackend):
         """Transcribe (or translate to English) audio with Canary.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz).
             language: Language code of the speech; Canary can't detect it, so None means English.
             task: 'transcribe', or 'translate' to English.
             verbose: Print progress to stderr.
@@ -216,7 +222,8 @@ class CanaryBackend(_TransformersBackend):
                 SpeechToolkitWarning,
             )
 
-        chunks = split_audio(load_audio(audio_path), self.CHUNK_SECONDS)
+        audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        chunks = split_audio(audio, self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
         for first in range(0, len(chunks), self.BATCH_SIZE):
@@ -234,6 +241,7 @@ class CanaryBackend(_TransformersBackend):
             text=" ".join(segment["text"] for segment in segments if segment["text"]),
             segments=segments,
             language="en" if task == "translate" else (language or "en"),
+            duration=len(audio) / SAMPLE_RATE,
         )
 
     def _transcribe_batch(self, chunks: Sequence[Any], language: str, task: str) -> Tuple[List[str], List[int]]:
@@ -334,12 +342,16 @@ def _rows_at_limit(generated: Any, generation_config: Any, limit: int) -> List[i
     return [row for row, tokens in enumerate(generated.tolist()) if len(tokens) >= limit and tokens[-1] not in stops]
 
 
-def _cut_off_warning(audio_path: Path, backend: str, limit: int, segments: List[Dict[str, Any]]) -> str:
+def _cut_off_warning(
+    audio_path: Union[Path, "np.ndarray"], backend: str, limit: int, segments: List[Dict[str, Any]]
+) -> str:
     """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens."""
     first = f"from {_clock(segments[0]['start'])} to {_clock(segments[0]['end'])}"
     chunks = f"the chunk {first}" if len(segments) == 1 else f"{len(segments)} chunks, the first {first}"
     # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
-    return f"{audio_path}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off."
+    # Samples (the "waveform" capability) have no name.
+    source = audio_path if isinstance(audio_path, Path) else "audio"
+    return f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off."
 
 
 def _clock(seconds: float) -> str:

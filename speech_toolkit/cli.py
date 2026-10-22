@@ -312,8 +312,16 @@ def show_backends() -> None:
         print()
 
 
+# Capabilities --list-backends leaves out: only the Python API can use them (it passes backends decoded samples).
+API_ONLY_CAPABILITIES = frozenset({"waveform"})
+
+
 def _capability_list(capabilities: AbstractSet[str]) -> str:
-    """Capabilities as text, e.g. "translate, language detection": known ones in their usual order, then others."""
+    """Capabilities as text, e.g. "translate, language detection": known ones in their usual order, then others.
+
+    Capabilities only the Python API can use, such as "waveform", aren't shown.
+    """
+    capabilities = set(capabilities) - API_ONLY_CAPABILITIES
     names = [name for name in CAPABILITIES if name in capabilities] + sorted(set(capabilities) - set(CAPABILITIES))
     return ", ".join(name.replace("_", " ") for name in names) or "transcription only"
 
