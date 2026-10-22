@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import pathlib
+
 import pytest
 
 from speech_toolkit.backends import TranscriptionBackend, TranscriptionResult
@@ -59,6 +62,41 @@ class FakeWordsBackend(FakeBackend):
                 {"word": f" {audio_path.stem}.", "start": 1.0, "end": 1.5},
             ]
         return TranscriptionResult(text=segment["text"], segments=[segment], language="en")
+
+
+class FakeWaveformBackend(FakeBackend):
+    """FakeBackend with the "waveform" capability: it takes samples as they are and, like Parakeet, decodes a path
+    with load_audio() itself. Its transcript names the samples it heard (their number and a digest), and it records
+    what it was given in ``received``.
+    """
+
+    name = "fake-waveform"
+    capabilities = frozenset({"language_detection", "word_timestamps", "waveform"})
+    received: list = []
+
+    def transcribe(self, audio_path, language=None, task="transcribe", verbose=True, **options):
+        from speech_toolkit.media import SAMPLE_RATE, load_audio
+
+        FakeWaveformBackend.received.append(audio_path)
+        samples = load_audio(audio_path) if isinstance(audio_path, pathlib.Path) else audio_path
+        text = f" {len(samples)} samples {hashlib.sha256(samples.tobytes()).hexdigest()[:16]}."
+        segment = {"id": 0, "start": 0.0, "end": len(samples) / SAMPLE_RATE, "text": text}
+        if options.get("word_timestamps"):
+            segment["words"] = [{"word": text, "start": 0.0, "end": segment["end"]}]
+        return TranscriptionResult(text=text, segments=[segment], language="en")
+
+
+@pytest.fixture
+def fake_waveform_backend(monkeypatch):
+    """Register FakeWaveformBackend as 'fake-waveform' (and FakeBackend as 'fake') for the duration of a test."""
+    from speech_toolkit.backends import _BACKENDS
+
+    monkeypatch.setattr(
+        "speech_toolkit.backends._BACKENDS", {**_BACKENDS, "fake": FakeBackend, "fake-waveform": FakeWaveformBackend}
+    )
+    FakeBackend.loaded = 0
+    FakeWaveformBackend.received = []
+    return FakeWaveformBackend
 
 
 @pytest.fixture

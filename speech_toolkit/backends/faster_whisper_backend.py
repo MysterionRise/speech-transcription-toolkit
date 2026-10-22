@@ -16,11 +16,14 @@ import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError, SpeechToolkitWarning
 from ..types import Segment
 from .base import TranscriptionBackend, TranscriptionResult
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 
 class FasterWhisperBackend(TranscriptionBackend):
@@ -28,7 +31,7 @@ class FasterWhisperBackend(TranscriptionBackend):
 
     name = "faster-whisper"
     description = "faster-whisper - CTranslate2 Whisper: faster, lighter, no torch needed"
-    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"})
     requires = ("faster_whisper",)
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
@@ -119,7 +122,7 @@ class FasterWhisperBackend(TranscriptionBackend):
 
     def transcribe(
         self,
-        audio_path: Path,
+        audio_path: Union[Path, "np.ndarray"],
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
@@ -131,7 +134,7 @@ class FasterWhisperBackend(TranscriptionBackend):
         """Transcribe audio using faster-whisper.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz), which it takes as is.
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
@@ -149,11 +152,11 @@ class FasterWhisperBackend(TranscriptionBackend):
         if self._model is None:
             raise ModelLoadError("No model loaded. Call load_model() first.")
 
-        if not audio_path.exists():
+        if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         segment_iter, info = self._model.transcribe(
-            str(audio_path),
+            str(audio_path) if isinstance(audio_path, Path) else audio_path,
             language=language,
             task=task,
             log_progress=verbose,

@@ -13,13 +13,21 @@ import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Mapping, Optional, Tuple, Union, cast
 
 from ..formats import format_for_path, render, write_text
+from ..media import AudioSource
 from ..types import SCHEMA_VERSION, Segment
 
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
+
 # What a backend can declare in ``capabilities`` (see TranscriptionBackend), in the order they are listed.
-CAPABILITIES = ("translate", "language_detection", "prompt", "vad", "word_timestamps")
+CAPABILITIES = ("translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform")
+
+# What speech_toolkit.Transcriber.transcribe() takes: a path, the file's content (bytes), a binary file object, or the
+# waveform itself, a 1-D float32 NumPy array of mono samples at 16 kHz.
+AudioInput = Union[AudioSource, "np.ndarray"]
 
 
 class TranscriptionResult:
@@ -30,7 +38,8 @@ class TranscriptionResult:
         segments: The segments, dicts shaped like :class:`~speech_toolkit.Segment`: ``id`` (counting from 0),
             ``start`` and ``end`` in seconds, ``text``, and optional keys such as ``words``.
         language: Detected or specified language code.
-        duration: Length of the audio in seconds, if the backend reports it (faster-whisper does); otherwise None.
+        duration: Length of the audio in seconds, if the backend reports it (all built-in backends but whisper do), or
+            if Transcriber decoded the audio itself (in-memory input, diarization); otherwise None.
         language_probability: Probability of the detected language, from 0 to 1, if the backend reports it
             (faster-whisper does); otherwise None.
         raw: Raw result from the underlying model (backend-specific).
@@ -254,6 +263,11 @@ class TranscriptionBackend(ABC):
       raises :class:`~speech_toolkit.UnsupportedOptionError` for a translation, before any audio is decoded.
     - ``"language_detection"``: with ``language=None``, the backend detects the language and reports it
       in ``TranscriptionResult.language``.
+    - ``"waveform"``: ``transcribe()`` also takes the audio itself in place of a path: a 1-D float32 NumPy array of
+      mono samples at 16 kHz, as :func:`speech_toolkit.media.load_audio` returns. :class:`speech_toolkit.Transcriber`
+      passes one when it has decoded the audio already (in-memory input, or diarization, which needs the samples
+      too), so each file is decoded once. A backend without it always gets a path: the file given, or a temporary
+      WAV file, deleted afterwards, for in-memory input.
 
     Optional features, which the backend accepts as keyword-only arguments of ``transcribe()``:
 
@@ -316,7 +330,8 @@ class TranscriptionBackend(ABC):
         """Transcribe an audio file.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the audio file. A backend with the "waveform" capability may get the samples instead,
+                as a 1-D float32 NumPy array at 16 kHz. Transcriber passes this argument positionally.
             language: Language code (e.g., 'en', 'es'). None for auto-detect.
             task: 'transcribe', or 'translate' to English (Transcriber asks for it only with the
                 "translate" capability).
