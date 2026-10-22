@@ -20,9 +20,6 @@ pip install speech-transcription-toolkit             # faster-whisper, the defau
 pip install "speech-transcription-toolkit[whisper]"  # add OpenAI's Whisper (installs PyTorch)
 ```
 
-The first PyPI release is on its way. Until then, install from GitHub:
-`pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise/speech-transcription-toolkit"`.
-
 Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker labels), `[server]` (OpenAI-compatible API) and
 `[all]`; all but `[server]` install PyTorch. See [Installation](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/docs/install.md).
 

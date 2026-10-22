@@ -8,13 +8,11 @@ pip install speech-transcription-toolkit             # faster-whisper, the defau
 pip install "speech-transcription-toolkit[whisper]"  # add OpenAI's Whisper (installs PyTorch)
 ```
 
-> **Not on PyPI yet.** The first release is tracked in
-> [#28](https://github.com/MysterionRise/speech-transcription-toolkit/issues/28). Until then, install from GitHub:
->
-> ```bash
-> pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise/speech-transcription-toolkit"
-> pip install "speech-transcription-toolkit[whisper] @ git+https://github.com/MysterionRise/speech-transcription-toolkit"
-> ```
+To try the latest changes before they're released, install from GitHub:
+
+```bash
+pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise/speech-transcription-toolkit"
+```
 
 The default backend, faster-whisper, runs on [CTranslate2](https://github.com/OpenNMT/CTranslate2) instead of PyTorch,
 so a plain install is light: no torch, which takes several GB on Linux. The `whisper`, `voxtral`, `nvidia` and `diarize`
