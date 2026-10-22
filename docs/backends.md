@@ -38,7 +38,8 @@ a warning and skips the option. It doesn't fail the run.
 
 ## Devices and precision
 
-The GPU is used when available; force a device with `--device cpu` or `--device cuda`.
+The GPU is used when available; force a device with `--device cpu` or `--device cuda`. An NVIDIA GPU needs NVIDIA's
+CUDA libraries, and on Windows a CUDA build of PyTorch: see [GPU setup](install.md#gpu).
 
 | Backend | GPU (CUDA) | CPU |
 |---|---|---|

@@ -32,9 +32,11 @@ speech_toolkit/
 ├── api.py          Transcriber (loads diarization, then the model, once) and the one-shot transcribe()
 ├── cli.py          `transcribe` command: parse_args → plan_outputs → run_jobs (load_transcriber, write_output)
 ├── diarization.py  load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
+├── errors.py       SpeechToolkitError and its subclasses (each also the built-in error it replaced), SpeechToolkitWarning
 ├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
+├── types.py        Segment / Word TypedDicts and SCHEMA_VERSION for JSON results
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()

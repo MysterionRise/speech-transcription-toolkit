@@ -139,8 +139,9 @@ On both machines, in the new virtual environment (`$wheel` is the downloaded whe
 
 ### Windows, on the GPU, full tier
 
-1. CTranslate2 (faster-whisper) needs cuBLAS for CUDA 12 and cuDNN 9, which it doesn't bundle. Install them with pip,
-   and put their folders on the `PATH` in every new terminal (or add them to your user `PATH`):
+1. CTranslate2 (faster-whisper) needs cuBLAS for CUDA 12, and before CTranslate2 4.6.3 cuDNN 9, which it doesn't
+   bundle ([GPU setup](install.md#gpu) has the details). Install them with pip, and put their folders on the `PATH` in
+   every new terminal (or add them to your user `PATH`):
    ```powershell
    pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
    $sp = python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
@@ -195,9 +196,10 @@ With the installed `transcribe` command, on Windows (on the GPU) unless a step s
 
 Each one fails cleanly: a message that says what went wrong, and a non-zero exit code.
 
-- [ ] **`--device cuda` without the CUDA libraries** (#56): in a new terminal, without the cuBLAS and cuDNN folders on
-  the `PATH`, run `transcribe talk.mp3 -b faster-whisper --device cuda`. It falls back to the CPU with a warning, or
-  says which library is missing; it doesn't crash or hang.
+- [ ] **The GPU without the CUDA libraries** (#56): in a new terminal, without the cuBLAS and cuDNN folders on the
+  `PATH` or under `%CUDA_PATH%`, run `transcribe talk.mp3 -b faster-whisper`. It prints one warning naming the missing
+  library and transcribes on the CPU. With `--device cuda` added, it stops with the same message instead. Neither
+  crashes or hangs.
 - [ ] **A model too large for the GPU:** `transcribe talk.mp3 -b voxtral --device cuda` on a GPU with less than 12 GB.
   It reports the out-of-memory error.
 - [ ] **Ctrl-C during a batch:** `transcribe recordings --outdir subs`, then Ctrl-C during the second file. It stops

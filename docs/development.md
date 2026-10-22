@@ -18,14 +18,16 @@ speech_toolkit/
 ├── api.py          Transcriber (loads diarization, then the model, once) and the one-shot transcribe()
 ├── cli.py          the transcribe command
 ├── diarization.py  pyannote pipeline loading, diarization and merging speakers into segments
+├── errors.py       the exceptions (SpeechToolkitError and its subclasses) and SpeechToolkitWarning
 ├── formats.py      txt/srt/vtt/json rendering and subtitle line splitting
 ├── media.py        folder scanning, ffmpeg decoding, splitting long audio in pauses
 ├── server.py       transcribe-server, the OpenAI-compatible API
+├── types.py        the Segment and Word TypedDicts, and the JSON schema version
 ├── convert.py      the ogg2wav command
 └── backends/       the backend registry, the TranscriptionBackend base class and one module per backend
 docs/               user documentation (one page per topic)
 changelog.d/        changelog fragments, assembled into CHANGELOG.md at release time
-tests/              unit tests; heavy model libraries are mocked
+tests/              unit tests, with heavy model libraries mocked; tests/integration runs real models
 ```
 
 `main.py` and `convert.py` at the top level are shims for running the two commands from a checkout; they aren't packaged.
