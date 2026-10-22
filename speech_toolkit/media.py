@@ -87,6 +87,7 @@ def load_audio(
     source: AudioSource,
     sr: int = SAMPLE_RATE,
     *,
+    channels: int = 1,
     max_seconds: Optional[float] = None,
     timeout: Optional[float] = None,
     strict: bool = False,
@@ -99,6 +100,8 @@ def load_audio(
             and file objects reach ffmpeg through its standard input (``pipe:0``). A pipe can't seek, so an MP4, M4A
             or MOV file whose index comes after its audio, as phones often record them, decodes only from a path.
         sr: Sample rate of the result.
+        channels: 1 (the default) mixes the audio down to mono, what speech models take. More keeps that many
+            channels (ffmpeg's ``-ac``), as a ``(samples, channels)`` array: ``ogg2wav --channels 2`` uses it.
         max_seconds: Decode at most this many seconds from the start (ffmpeg's ``-t``); the rest is ignored.
         timeout: Stop ffmpeg and raise :class:`AudioDecodeError` if decoding takes longer than this many seconds.
         strict: For untrusted input. ffmpeg may then use only the demuxers in :data:`STRICT_FORMATS`, the common
@@ -124,17 +127,20 @@ def load_audio(
             missing file and, with *strict*, a format that isn't allowed. The message ends with ffmpeg's reason,
             without the input's path or ffmpeg's banner. It is also a ``RuntimeError``.
         TypeError: If *source* isn't a path, bytes or a binary file object.
-        ValueError: If *max_seconds* or *timeout* isn't a positive number.
+        ValueError: If *channels* isn't a positive whole number, or *max_seconds* or *timeout* isn't a positive
+            number.
         OSError: If reading the file object fails (whatever else its ``read()`` raises propagates too); ffmpeg's
             result is discarded then, since its input was cut short.
     """
     import numpy as np  # imported lazily: listing backends shouldn't pay for it
 
+    if not isinstance(channels, int) or channels < 1:
+        raise ValueError(f"channels must be a positive whole number, got {channels!r}")
     for name, value in (("max_seconds", max_seconds), ("timeout", timeout)):
         if value is not None and not value > 0:
             raise ValueError(f"{name} must be a positive number of seconds, got {value!r}")
     with _FfmpegInput(source) as ffmpeg_input:
-        cmd = _ffmpeg_command(ffmpeg_input.url, sr, max_seconds, strict)
+        cmd = _ffmpeg_command(ffmpeg_input.url, sr, max_seconds, strict, channels)
         done = _run_ffmpeg(cmd, timeout, ffmpeg_input)
     stderr = done.stderr or b""
     # ffmpeg can also exit successfully having decoded nothing, such as an MP4 whose index it couldn't seek back to.
@@ -143,7 +149,7 @@ def load_audio(
         raise AudioDecodeError(f"Failed to load audio: {reason}")
     audio = np.frombuffer(done.stdout, np.int16).astype(np.float32)
     audio /= 32768.0  # in place: ffmpeg's output and this array are the only copies
-    return audio
+    return audio.reshape(-1, channels) if channels > 1 else audio  # ffmpeg interleaves the channels
 
 
 class _FfmpegInput:
@@ -216,8 +222,8 @@ class _FfmpegInput:
         return memoryview(chunk or b"").cast("B")
 
 
-def _ffmpeg_command(url: str, sr: int, max_seconds: Optional[float], strict: bool) -> List[str]:
-    """The ffmpeg command that decodes *url* to mono 16-bit PCM at *sr* Hz on stdout."""
+def _ffmpeg_command(url: str, sr: int, max_seconds: Optional[float], strict: bool, channels: int = 1) -> List[str]:
+    """The ffmpeg command that decodes *url* to 16-bit PCM at *sr* Hz on stdout, mono or with *channels*."""
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "0"]
     # Input options: only local files and the pipe, perhaps only common formats, and perhaps only the first seconds.
     cmd += ["-protocol_whitelist", "file,pipe"]
@@ -225,7 +231,7 @@ def _ffmpeg_command(url: str, sr: int, max_seconds: Optional[float], strict: boo
         cmd += ["-format_whitelist", ",".join(STRICT_FORMATS)]
     if max_seconds is not None:
         cmd += ["-t", f"{max_seconds:.6f}".rstrip("0").rstrip(".")]  # ffmpeg refuses exponents such as 1e-05
-    cmd += ["-i", url, "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(sr), "-"]
+    cmd += ["-i", url, "-f", "s16le", "-ac", str(channels), "-acodec", "pcm_s16le", "-ar", str(sr), "-"]
     return cmd
 
 

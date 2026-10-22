@@ -1,12 +1,11 @@
 """The ``transcribe`` command: offline speech-to-text with optional speaker labels.
 
-Transcribes audio/video with a pluggable backend (Whisper, faster-whisper, Voxtral, Parakeet,
-Canary) and can
-label speakers with pyannote.audio. Nothing is sent to a cloud API.
+Transcribes audio/video with a pluggable backend (faster-whisper by default, Whisper, Voxtral,
+Parakeet, Canary) and can label speakers with pyannote.audio. Nothing is sent to a cloud API.
 
 Examples
 --------
-Transcript to stdout (Whisper turbo by default):
+Transcript to stdout (faster-whisper's turbo model by default):
     transcribe audio.mp3
 
 Subtitles, format taken from the file extension:
@@ -15,12 +14,13 @@ Subtitles, format taken from the file extension:
 Every audio file in a folder, one .vtt per file:
     transcribe recordings/ --outdir subs -f vtt
 
-Other backends:
-    transcribe audio.mp3 -b faster-whisper -m small
+Other models and backends:
+    transcribe audio.mp3 -m small
+    transcribe audio.mp3 -b whisper      # needs the ``whisper`` extra
     transcribe audio.mp3 -b voxtral
 
 Better accuracy and readable subtitles:
-    transcribe talk.mp3 -b faster-whisper --vad --prompt "Kubernetes, Grafana" -o talk.srt --max-line-width 42
+    transcribe talk.mp3 --vad --prompt "Kubernetes, Grafana" -o talk.srt --max-line-width 42
 
 Speaker labels (needs the ``diarize`` extra and a Hugging Face token):
     transcribe meeting.wav --diarize --num-speakers 3
@@ -79,8 +79,9 @@ Examples:
   %(prog)s audio.mp3                          # transcript to stdout
   %(prog)s audio.mp3 -o audio.srt             # subtitles (format from extension)
   %(prog)s recordings/ --outdir subs -f vtt   # every audio file in a folder
-  %(prog)s audio.mp3 -b faster-whisper -m small
-  %(prog)s talk.mp3 -b faster-whisper --vad --prompt "Kubernetes, Grafana"
+  %(prog)s audio.mp3 -m small                 # a smaller, faster model
+  %(prog)s audio.mp3 -b whisper               # OpenAI's Whisper (the whisper extra)
+  %(prog)s talk.mp3 --vad --prompt "Kubernetes, Grafana"
   %(prog)s talk.mp3 -o talk.srt --max-line-width 42
   %(prog)s meeting.wav --diarize --num-speakers 3
   %(prog)s --list-models --backend voxtral
@@ -361,18 +362,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         show_models(args.backend)
         return
 
-    fmt = args.format or format_for_path(args.output)
-    jobs = plan_outputs(args, fmt)
-    if not jobs:
-        sys.exit("Error: no audio files found.")
-    missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
-    if missing:  # checked before the (slow) model load
-        sys.exit(f"Error: file not found: {', '.join(missing)}")
-
     stdout = sys.stdout
     # Libraries print progress and debug text to stdout; send it to stderr so stdout carries only the transcript.
+    # Warnings, from the format lookup on, print as one line each.
     with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr):
         warnings.showwarning = _print_warning
+        fmt = args.format or format_for_path(args.output)
+        jobs = plan_outputs(args, fmt)
+        if not jobs:
+            sys.exit("Error: no audio files found.")
+        missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
+        if missing:  # checked before the (slow) model load
+            sys.exit(f"Error: file not found: {', '.join(missing)}")
         failures = run_jobs(args, jobs, fmt, stdout)
     if failures:
         sys.exit(1 if len(jobs) == 1 else f"Error: {failures} of {len(jobs)} files failed.")

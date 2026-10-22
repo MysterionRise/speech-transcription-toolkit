@@ -33,7 +33,7 @@ REQUIRE_EXTRAS = os.getenv("INTEGRATION_REQUIRE_EXTRAS", "") not in ("", "0")
 
 # The modules each backend or feature imports, and what installs them.
 PACKAGES: Dict[str, Tuple[Tuple[str, ...], str]] = {
-    "whisper": (("whisper",), "openai-whisper"),
+    "whisper": (("whisper",), '-e ".[whisper]"'),
     "faster-whisper": (("faster_whisper",), '-e ".[faster-whisper]"'),
     "parakeet": (("torch", "transformers", "librosa"), '-e ".[nvidia]"'),
     "canary": (("torch", "transformers", "librosa"), '-e ".[nvidia]"'),
@@ -44,7 +44,7 @@ PACKAGES: Dict[str, Tuple[Tuple[str, ...], str]] = {
 
 # The transcribe options that select each backend and its model.
 BACKEND_ARGS: Dict[str, Tuple[str, ...]] = {
-    "whisper": ("-m", "tiny"),
+    "whisper": ("-b", "whisper", "-m", "tiny"),
     "faster-whisper": ("-b", "faster-whisper", "-m", "tiny"),
     "parakeet": ("-b", "parakeet"),
     "canary": ("-b", "canary", "-l", "en"),  # Canary can't detect the language
