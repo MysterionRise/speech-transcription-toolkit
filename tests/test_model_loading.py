@@ -396,7 +396,9 @@ class TestParseDevice:
         assert describe_devices({"mps", "cpu"}) == "auto, cpu or mps"
         assert check_device("cuda:3", {"cuda"}, "x") == Device("cuda", 3)
         assert check_device("auto", (), "x").auto
-        with pytest.raises(UnsupportedOptionError, match="^the x backend can't run on cuda; the devices it takes: auto"):
+        with pytest.raises(
+            UnsupportedOptionError, match="^the x backend can't run on cuda; the devices it takes: auto"
+        ):
             check_device("cuda:3", {"cpu"}, "x")
 
     def test_backends_on(self):
@@ -411,7 +413,10 @@ class TestFasterWhisperDevices:
             with pytest.raises(UnsupportedOptionError) as error:
                 FasterWhisperBackend().load_model("tiny", device="mps")
 
-        assert str(error.value) == "the faster-whisper backend can't run on mps; the devices it takes: auto, cpu, cuda or cuda:N"
+        assert (
+            str(error.value)
+            == "the faster-whisper backend can't run on mps; the devices it takes: auto, cpu, cuda or cuda:N"
+        )
 
     def test_cuda_n_becomes_device_index(self, ct2):
         ct2.ctranslate2.get_cuda_device_count.return_value = 2
@@ -668,7 +673,9 @@ class TestComputeType:
 
         whisper_module.load_model.assert_called_once_with("tiny", device=None)
         assert OldStyleBackend.calls == [("base", None)]
-        with pytest.raises(UnsupportedOptionError, match="^the whisper backend has no option 'compute_type'; it takes no"):
+        with pytest.raises(
+            UnsupportedOptionError, match="^the whisper backend has no option 'compute_type'; it takes no"
+        ):
             Transcriber("whisper", "tiny", compute_type="float16")
 
     def test_argument_wins_over_options(self, ct2):
@@ -850,7 +857,7 @@ class TestCommandLine:
         assert "or mps for an Apple GPU (whisper, voxtral, parakeet, canary)." in model_group
         assert "--compute-type TYPE " in model_group
         assert "such as int8 or float16 (faster-whisper, voxtral, parakeet, canary)." in model_group
-        assert "-O, --option KEY=VALUE\n" in model_group
+        assert "--option KEY=VALUE\n" in model_group  # "-O KEY=VALUE, --option KEY=VALUE" before Python 3.13
 
     def test_server_takes_them_too(self):
         args = server_parse_args(["--device", "cuda:1", "--compute-type", "int8", "-O", "cpu_threads=2"])
@@ -874,43 +881,51 @@ class TestListings:
 
         faster = backends["faster-whisper"]
         assert faster[0].startswith("Models: tiny, ")  # the lines that were there stay first, in their order
-        assert faster[1] == (
+        assert faster[1].startswith("Capabilities: translate, ")
+        assert faster[2].startswith("Installed: ")
+        assert faster[3] == (
             "Custom models: a Hugging Face repo id (org/name) of a CTranslate2 model or a local CTranslate2 model folder"
         )
-        assert faster[2].startswith("Capabilities: translate, ")
-        assert faster[3] == "Devices: auto, cpu, cuda or cuda:N"
-        assert faster[4].startswith(
+        assert faster[4] == "Devices: auto, cpu, cuda or cuda:N"
+        assert faster[5].startswith(
             "-O compute_type=auto|default|int8|int8_float32|int8_float16|int8_bfloat16|int16|float16|bfloat16|float32: "
             "Precision; auto: float16 on a GPU and int8 on the CPU"
         )
-        assert faster[4].endswith("(default: auto)")
-        assert faster[5].startswith("-O cpu_threads=INT: Threads on the CPU;")
-        assert faster[5].endswith("(default: 0)")
-        assert faster[6].startswith("Installed: ")
+        assert faster[5].endswith("(default: auto)")
+        assert faster[6].startswith("-O cpu_threads=INT: Threads on the CPU;")
+        assert faster[6].endswith("(default: 0)")
 
-        assert backends["whisper"][1:4] == [
+        whisper = backends["whisper"]
+        assert whisper[1] == "Capabilities: translate, language detection, prompt, word timestamps"
+        assert whisper[3:] == [
             "Custom models: a local checkpoint file (.pt)",
-            "Capabilities: translate, language detection, prompt, word timestamps",
             "Devices: auto, cpu, cuda, cuda:N or mps",
         ]
-        assert not any(line.startswith("-O") for line in backends["whisper"])
         canary = [line.split(":", 1)[0] for line in backends["canary"]]
         assert canary == [
             "Models",
-            "Custom models",
             "Capabilities",
+            "Installed",
+            "Custom models",
             "Devices",
             "-O compute_type=auto|float32|float16|bfloat16",
             "-O max_new_tokens=INT",
-            "Installed",
         ]
+
+    def test_installed_stays_four_lines_down(self, capsys):
+        """CI's Core Install job finds "Installed: yes" within 4 lines of "  faster-whisper (default)"."""
+        cli.show_backends()
+        lines = capsys.readouterr().out.splitlines()
+
+        header = lines.index("  faster-whisper (default)")
+        assert lines[header + 4].startswith("    Installed: ")
 
     def test_custom_backend_lines_unchanged(self, custom_backends, capsys):
         cli.main(["--list-backends"])
         backends = listing(capsys.readouterr().out)
 
         assert [line.split(":")[0] for line in backends["old-style"]] == ["Models", "Capabilities", "Installed"]
-        assert backends["with-options"][4:6] == [
+        assert backends["with-options"][5:7] == [
             "-O beam_width=INT: Beams (default: 5)",
             "-O greedy=true|false: Decode greedily (default: false)",
         ]
@@ -918,7 +933,10 @@ class TestListings:
     @pytest.mark.parametrize(
         "backend, custom",
         [
-            ("faster-whisper", "a Hugging Face repo id (org/name) of a CTranslate2 model or a local CTranslate2 model folder"),
+            (
+                "faster-whisper",
+                "a Hugging Face repo id (org/name) of a CTranslate2 model or a local CTranslate2 model folder",
+            ),
             ("whisper", "a local checkpoint file (.pt)"),
             ("voxtral", "a Hugging Face repo id (org/name) or a local model folder"),
         ],

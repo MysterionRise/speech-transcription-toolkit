@@ -35,6 +35,8 @@ def test_backend_options(speech, transcribe):
     """-O and --compute-type reach faster-whisper, which transcribes as well as without them."""
     require("faster-whisper")
 
-    run = transcribe(speech.path, *BACKEND_ARGS["faster-whisper"], "-q", "-O", "cpu_threads=2", "--compute-type", "auto")
+    run = transcribe(
+        speech.path, *BACKEND_ARGS["faster-whisper"], "-q", "-O", "cpu_threads=2", "--compute-type", "auto"
+    )
 
     assert_wer(run.stdout, speech, "faster-whisper")

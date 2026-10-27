@@ -364,10 +364,11 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO
 
 
 def show_backends() -> None:
-    """Display the backends: description, models, capabilities, devices, options and whether their packages are
-    installed. A line is left out when the backend declares nothing for it (custom models, devices, options).
+    """Display the backends: description, models, capabilities, whether their packages are installed, and then the
+    custom models, devices and options each declares (a line is left out when it declares nothing for it).
 
-    The installed check looks the packages up without importing them, so listing stays instant.
+    The first lines of each backend stay as they were, in the same places, for scripts that read them. The installed
+    check looks the packages up without importing them, so listing stays instant.
     """
     print("Available transcription backends:\n")
     for name in list_backends():
@@ -378,15 +379,15 @@ def show_backends() -> None:
         print(f"  {name}{default_marker}")
         print(f"    {backend_class.description}")
         print(f"    Models: {', '.join(backend_class.available_models())}")
+        print(f"    Capabilities: {_capability_list(backend_class.capabilities)}")
+        print(f"    Installed: {installed}")
         custom = backend_class.describe_custom_models()
         if custom:
             print(f"    Custom models: {custom}")
-        print(f"    Capabilities: {_capability_list(backend_class.capabilities)}")
         if backend_class.DEVICES is not None:
             print(f"    Devices: {describe_devices(backend_class.DEVICES)}")
         for option_name, option in backend_class.OPTIONS.items():
             print(f"    -O {option_name}={option.metavar}: {option.describe()}")
-        print(f"    Installed: {installed}")
         print()
 
 
