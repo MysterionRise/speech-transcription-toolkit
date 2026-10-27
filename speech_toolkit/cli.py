@@ -14,6 +14,12 @@ Subtitles, format taken from the file extension:
 Every audio file in a folder, one .vtt per file:
     transcribe recordings/ --outdir subs -f vtt
 
+Several formats from one transcription, skipping the files done already:
+    transcribe recordings/ --outdir subs -f srt,json --skip-existing
+
+Audio piped into standard input:
+    cat talk.mp3 | transcribe -
+
 Other models and backends:
     transcribe audio.mp3 -m small
     transcribe audio.mp3 -b whisper      # needs the ``whisper`` extra
@@ -30,8 +36,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
+import os
 import pathlib
 import sys
+import time
 import warnings
 from collections import Counter
 from typing import AbstractSet, List, Optional, Sequence, TextIO, Tuple
@@ -48,7 +57,26 @@ from .media import MEDIA_EXTENSIONS, collect_files
 # its own file (shown with its type); KeyboardInterrupt still stops the run.
 FILE_ERRORS = (SpeechToolkitError, OSError, RuntimeError, ValueError)
 
-Job = Tuple[pathlib.Path, Optional[pathlib.Path]]  # (input file, output file or None for stdout)
+STDIN = pathlib.Path("-")
+"""The input ``-``: audio piped into standard input. With --outdir, its outputs are named ``stdin.<format>``."""
+STDIN_NAME = "stdin"
+
+
+@dataclasses.dataclass(frozen=True)
+class Output:
+    """One rendering of a transcript: format *fmt*, written to *path*, or to stdout when *path* is None."""
+
+    fmt: str
+    path: Optional[pathlib.Path] = None
+
+
+@dataclasses.dataclass(frozen=True)
+class Job:
+    """An input (a file, or STDIN) and its outputs, all rendered from one transcription."""
+
+    audio: pathlib.Path
+    outputs: Tuple[Output, ...]
+
 
 ###############################################################################
 # Argument parsing
@@ -79,6 +107,8 @@ Examples:
   %(prog)s audio.mp3                          # transcript to stdout
   %(prog)s audio.mp3 -o audio.srt             # subtitles (format from extension)
   %(prog)s recordings/ --outdir subs -f vtt   # every audio file in a folder
+  %(prog)s recordings/ -f srt,json --skip-existing   # two formats; resume a stopped run
+  cat audio.mp3 | %(prog)s -                  # audio from standard input
   %(prog)s audio.mp3 -m small                 # a smaller, faster model
   %(prog)s audio.mp3 -b whisper               # OpenAI's Whisper (the whisper extra)
   %(prog)s talk.mp3 --vad --prompt "Kubernetes, Grafana"
@@ -90,7 +120,9 @@ Examples:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     # Positional inputs (optional when using --list-* flags)
-    parser.add_argument("audio", type=pathlib.Path, nargs="*", help="Audio/video files or folders to transcribe.")
+    parser.add_argument(
+        "audio", type=input_path, nargs="*", help="Audio/video files or folders to transcribe; - reads standard input."
+    )
 
     add_model_options(parser)
     parser.add_argument("-l", "--language", default=None, help="Language code, e.g. 'en' (default: auto-detect).")
@@ -132,20 +164,57 @@ def add_model_options(parser: argparse.ArgumentParser) -> None:
     model.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
 
 
+def input_path(value: str) -> pathlib.Path:
+    """argparse type for inputs: a path, or STDIN itself for ``-`` (so that ``./-`` is still a file named "-")."""
+    return STDIN if value == "-" else pathlib.Path(value)
+
+
+def is_stdin(path: pathlib.Path) -> bool:
+    """Whether *path* is the input ``-``: standard input."""
+    return path is STDIN
+
+
+def format_list(value: str) -> Tuple[str, ...]:
+    """argparse type for --format: a format, several separated by commas (``srt,json``), or ``all`` of them."""
+    names = [name.strip().lower() for name in value.split(",") if name.strip()]
+    if not names or any(name not in FORMATS and name != "all" for name in names):
+        raise argparse.ArgumentTypeError(
+            f"invalid format {value!r}: choose from {', '.join(FORMATS)}, several separated by commas, or all"
+        )
+    return tuple(FORMATS) if "all" in names else tuple(dict.fromkeys(names))
+
+
 def add_output_options(parser: argparse.ArgumentParser) -> None:
-    """Where transcripts go, and in which format."""
+    """Where transcripts go, and in which formats."""
     output = parser.add_argument_group("output")
     output.add_argument("-o", "--output", type=pathlib.Path, help="Write the transcript to this file, not stdout.")
     output.add_argument(
-        "-f", "--format", choices=FORMATS, help="Output format (default: from the --output extension, else txt)."
+        "-f",
+        "--format",
+        type=format_list,
+        metavar="FORMAT",
+        help=f"Output format: {', '.join(FORMATS)}. Several separated by commas (srt,json), or all, write a file "
+        "each from one transcription (default: from the --output extension, else txt).",
     )
-    output.add_argument("--outdir", type=pathlib.Path, help="Write one file per input into this folder.")
-    output.add_argument("--json", type=pathlib.Path, help="Also write the full result as JSON to this file.")
+    output.add_argument("--outdir", type=pathlib.Path, help="Write each input's output files into this folder.")
+    output.add_argument(
+        "--json",
+        type=pathlib.Path,
+        metavar="FILE",
+        help="Also write the full result as JSON to this file (one input; for several, add json to --format).",
+    )
+    output.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Keep output files that already exist: transcribe only the inputs with an output missing, and write "
+        "just the missing ones (default: overwrite them).",
+    )
     output.add_argument(
         "--max-line-width",
         type=positive_int,
         metavar="N",
-        help="Split subtitles into lines of at most N characters, 2 lines per cue (srt/vtt).",
+        help="Split subtitles into lines of at most N columns, 2 lines per cue (srt/vtt). Chinese, Japanese and "
+        "Korean characters take two columns.",
     )
 
 
@@ -189,8 +258,9 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
     """Reject option combinations that can't work (exits via parser.error), before any model loads."""
     if not args.audio:
         parser.error("the following arguments are required: audio")
-    if (args.output or args.json) and is_batch(args):
-        parser.error("--output and --json take a single input file; use --outdir for several files")
+    problem = output_problem(args)
+    if problem:
+        parser.error(problem)
     try:
         check_speaker_hints(args.num_speakers, args.min_speakers, args.max_speakers, diarize=args.diarize, flags=True)
     except UnsupportedOptionError as e:
@@ -201,24 +271,59 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error(f"the {args.backend} backend can't translate; backends that translate: {', '.join(translators)}")
 
 
+def output_problem(args: argparse.Namespace) -> Optional[str]:
+    """Why the inputs and the output options don't fit together, or None when they do."""
+    stdin = any(is_stdin(path) for path in args.audio)
+    if stdin and len(args.audio) > 1:
+        return "- (standard input) must be the only input"
+    if args.output and is_batch(args):
+        return "--output takes a single input file and format; use --outdir for several"
+    if args.json and several_inputs(args):
+        return "--json takes a single input file; for one JSON file per input, add json to --format (-f srt,json)"
+    if stdin and is_batch(args) and args.outdir is None:
+        return f"several formats from standard input need --outdir, where they are named {STDIN_NAME}.<format>"
+    return None
+
+
+def several_inputs(args: argparse.Namespace) -> bool:
+    """Whether the inputs are several files, or a folder."""
+    return len(args.audio) > 1 or (not is_stdin(args.audio[0]) and args.audio[0].is_dir())
+
+
 def is_batch(args: argparse.Namespace) -> bool:
-    """Batch mode writes one output file per input instead of printing a single transcript."""
-    return args.outdir is not None or len(args.audio) > 1 or args.audio[0].is_dir()
+    """Batch mode writes each input's transcript to files instead of printing a single one.
+
+    Several inputs, a folder, several formats and --outdir turn it on.
+    """
+    return args.outdir is not None or len(args.format or ()) > 1 or several_inputs(args)
 
 
-def plan_outputs(args: argparse.Namespace, fmt: str) -> List[Job]:
-    """Pair every input file with the file its transcript goes to (None means stdout)."""
+def output_file(base: pathlib.Path, fmt: str) -> pathlib.Path:
+    """The file format *fmt* of an input goes to: *base*, named after the input, with the format as extension."""
+    return base.with_name(f"{base.name}.{fmt}")
+
+
+def plan_outputs(args: argparse.Namespace, formats: Sequence[str]) -> List[Job]:
+    """Pair every input with its outputs: a file per format (or stdout for a single transcript), and --json's file."""
+    extra = (Output("json", args.json),) if args.json else ()
     if not is_batch(args):
-        return [(args.audio[0], args.output)]
+        return [Job(args.audio[0], (Output(formats[0], args.output), *extra))]
 
-    files = collect_files(args.audio, MEDIA_EXTENSIONS)
-    targets = [(args.outdir / rel if args.outdir else src).with_suffix(f".{fmt}") for src, rel in files]
-    # talk.mp3 and talk.wav would both become talk.<fmt>; keep the full name for those.
-    counts = Counter(targets)
-    targets = [t.with_name(f"{src.name}.{fmt}") if counts[t] > 1 else t for (src, _), t in zip(files, targets)]
-    if len(set(targets)) < len(targets):
+    if is_stdin(args.audio[0]):
+        files = [(args.audio[0], pathlib.Path(STDIN_NAME))]
+    else:
+        files = collect_files(args.audio, MEDIA_EXTENSIONS)
+    # An input's outputs are named after it, each with its format's extension: talk.mp3 gives talk.srt and talk.json.
+    bases = [(args.outdir / rel if args.outdir else src).with_suffix("") for src, rel in files]
+    # talk.mp3 and talk.wav would share theirs; keep the full name for those (talk.mp3.srt).
+    counts = Counter(bases)
+    bases = [base.with_name(src.name) if counts[base] > 1 else base for (src, _), base in zip(files, bases)]
+    if len(set(bases)) < len(bases):
         sys.exit("Error: several inputs would write the same output file; rename them or use one --outdir per folder.")
-    return [(src, target) for (src, _), target in zip(files, targets)]
+    return [
+        Job(src, (*(Output(fmt, output_file(base, fmt)) for fmt in formats), *extra))
+        for (src, _), base in zip(files, bases)
+    ]
 
 
 ###############################################################################
@@ -234,58 +339,157 @@ def load_transcriber(args: argparse.Namespace) -> Transcriber:
     return Transcriber(args.backend, model_name, device=args.device, diarize=args.diarize, hf_token=args.hf_token)
 
 
-def word_timestamps_option(args: argparse.Namespace, fmt: str, transcriber: Transcriber) -> Optional[bool]:
+def word_timestamps_option(
+    args: argparse.Namespace, formats: AbstractSet[str], transcriber: Transcriber
+) -> Optional[bool]:
     """--word-timestamps forces word timings; subtitle line splitting uses them when the backend has them."""
-    splits_lines = args.max_line_width and fmt in ("srt", "vtt")
+    splits_lines = args.max_line_width and not formats.isdisjoint({"srt", "vtt"})
     if args.word_timestamps or (splits_lines and transcriber.supports("word_timestamps")):
         return True
     return None  # the library's default: on for diarization
 
 
 def write_output(text: str, dest: Optional[pathlib.Path], stdout: TextIO) -> None:
-    """Write *text* to *dest*, or print it to *stdout* when there is no destination."""
+    """Write *text* to *dest*, or print it to *stdout* when there is no destination.
+
+    The file is written under a temporary name beside *dest*, then renamed, so an error or Ctrl-C while writing
+    leaves no half-written file: *dest* is complete, or as it was before.
+    """
     if dest is None:
         print(text, file=stdout)
-    else:
-        write_text(dest, text)
-
-
-def run_jobs(args: argparse.Namespace, jobs: List[Job], fmt: str, stdout: TextIO) -> int:
-    """Transcribe every job, carrying on after any per-file error. Returns the number of failed files."""
+        return
+    temporary = dest.with_name(f".{dest.name}.{os.getpid()}.part")
     try:
-        transcriber = load_transcriber(args)
+        write_text(temporary, text)
+        temporary.replace(dest)
+    finally:
+        temporary.unlink(missing_ok=True)  # already gone once renamed
+
+
+def pending_outputs(job: Job, skip_existing: bool) -> Tuple[Output, ...]:
+    """The outputs of *job* to write: all of them, or with --skip-existing those whose file doesn't exist yet."""
+    if not skip_existing:
+        return job.outputs
+    return tuple(output for output in job.outputs if output.path is None or not output.path.exists())
+
+
+def shown_name(audio: pathlib.Path) -> str:
+    """An input as progress lines and error messages show it."""
+    return "standard input" if is_stdin(audio) else str(audio)
+
+
+def elapsed_time(seconds: float) -> str:
+    """A duration as the summary shows it: ``12.3 s``, ``4:05`` or ``1:02:03``."""
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+@dataclasses.dataclass
+class Summary:
+    """What a run did with its *total* inputs: how many it transcribed (done), skipped and failed, and whether Ctrl-C
+    stopped it."""
+
+    total: int
+    done: int = 0
+    skipped: int = 0
+    failed: int = 0
+    interrupted: bool = False
+    started: float = dataclasses.field(default_factory=time.monotonic)
+
+    def line(self) -> str:
+        """The line shown at the end of a run."""
+        counts = f"{self.done} done, {self.skipped} skipped, {self.failed} failed"
+        elapsed = elapsed_time(time.monotonic() - self.started)
+        if self.interrupted:
+            left = self.total - self.done - self.skipped - self.failed
+            return f"Interrupted after {elapsed}: {counts}, {left} left."
+        return f"Finished in {elapsed}: {counts}."
+
+
+def show_job(job: Job, counter: Optional[str], skipped: bool) -> None:
+    """Show the input of *job* on stderr: in batch mode after its *counter* (``[2/5] ``), else only when skipped."""
+    if counter is not None or skipped:
+        note = " (skipped: its outputs exist)" if skipped else ""
+        print(f"{counter or ''}{shown_name(job.audio)}{note}", file=sys.stderr)
+
+
+def load_or_exit(args: argparse.Namespace) -> Transcriber:
+    """The transcriber of load_transcriber(); a model that can't load ends the program with the reason."""
+    try:
+        return load_transcriber(args)
     except (ImportError, *FILE_ERRORS) as e:
         sys.exit(f"Error: {e}")
 
-    word_timestamps = word_timestamps_option(args, fmt, transcriber)
-    failures = 0
-    for audio, dest in jobs:
-        try:
-            result = transcriber.transcribe(
-                audio,
-                args.language,
-                args.task,
-                prompt=args.prompt,
-                vad=args.vad,
-                word_timestamps=word_timestamps,
-                num_speakers=args.num_speakers,
-                min_speakers=args.min_speakers,
-                max_speakers=args.max_speakers,
-                verbose=not args.quiet,
-            )
-            write_output(result.render(fmt, args.max_line_width), dest, stdout)
-            if args.json:
-                write_output(result.render("json"), args.json, stdout)
-        except Exception as e:  # one bad file doesn't stop the batch; KeyboardInterrupt isn't an Exception
-            failures += 1
-            # Other errors also show their type: a KeyError's message is just the key.
-            message = str(e) if isinstance(e, FILE_ERRORS) else f"{type(e).__name__}: {e}".removesuffix(": ")
-            print(f"Error: {audio}: {message}", file=sys.stderr)
-            continue
 
-        if dest is not None and not args.quiet:
-            print(f"→ {dest}", file=sys.stderr)
-    return failures
+def run_jobs(args: argparse.Namespace, jobs: List[Job], stdout: TextIO) -> Summary:
+    """Transcribe every job and write its outputs, carrying on after any per-file error. Returns the summary.
+
+    The model loads before the first transcription, so a run with nothing left to do (--skip-existing) loads none.
+    In batch mode, each input gets an ``[i/N]`` line on stderr and the run a summary at the end; -q hides them.
+    Ctrl-C stops the run and shows the summary; the files written so far are complete.
+    """
+    batch = is_batch(args)
+    summary = Summary(len(jobs))
+    formats = {output.fmt for job in jobs for output in job.outputs}
+    transcriber: Optional[Transcriber] = None
+    word_timestamps: Optional[bool] = None
+    try:
+        for number, job in enumerate(jobs, start=1):
+            outputs = pending_outputs(job, args.skip_existing)
+            if not args.quiet:
+                show_job(job, f"[{number}/{len(jobs)}] " if batch else None, skipped=not outputs)
+            if not outputs:
+                summary.skipped += 1
+                continue
+            if transcriber is None:
+                transcriber = load_or_exit(args)
+                word_timestamps = word_timestamps_option(args, formats, transcriber)
+            if transcribe_job(args, transcriber, job.audio, outputs, word_timestamps, stdout):
+                summary.done += 1
+            else:
+                summary.failed += 1
+    except KeyboardInterrupt:
+        summary.interrupted = True
+    if not args.quiet and (batch or summary.interrupted):
+        print(summary.line(), file=sys.stderr)
+    return summary
+
+
+def transcribe_job(
+    args: argparse.Namespace,
+    transcriber: Transcriber,
+    audio: pathlib.Path,
+    outputs: Sequence[Output],
+    word_timestamps: Optional[bool],
+    stdout: TextIO,
+) -> bool:
+    """Transcribe *audio* (standard input for STDIN) and write each of *outputs*. Returns False after an error."""
+    try:
+        result = transcriber.transcribe(
+            sys.stdin.buffer if is_stdin(audio) else audio,
+            args.language,
+            args.task,
+            prompt=args.prompt,
+            vad=args.vad,
+            word_timestamps=word_timestamps,
+            num_speakers=args.num_speakers,
+            min_speakers=args.min_speakers,
+            max_speakers=args.max_speakers,
+            verbose=not args.quiet,
+        )
+        for output in outputs:
+            write_output(result.render(output.fmt, args.max_line_width), output.path, stdout)
+            if output.path is not None and not args.quiet:
+                print(f"→ {output.path}", file=sys.stderr)
+    except Exception as e:  # one bad file doesn't stop the batch; KeyboardInterrupt isn't an Exception
+        # Other errors also show their type: a KeyError's message is just the key.
+        message = str(e) if isinstance(e, FILE_ERRORS) else f"{type(e).__name__}: {e}".removesuffix(": ")
+        print(f"Error: {shown_name(audio)}: {message}", file=sys.stderr)
+        return False
+    return True
 
 
 ###############################################################################
@@ -358,6 +562,29 @@ def _print_warning(
     print(f"Warning: {message}", file=sys.stderr)
 
 
+def utf8_when_redirected(stream: TextIO) -> None:
+    """On Windows, make *stream* write UTF-8 when it is redirected to a file or a pipe.
+
+    It would use the ANSI code page then, such as cp1252, which can't encode most scripts: a Chinese or Russian
+    transcript would stop the program. A console takes any text already, and PYTHONIOENCODING, when set, wins.
+    """
+    platform = sys.platform  # read at run time, so tests can set it (mypy takes `sys.platform` checks as static)
+    if platform != "win32" or os.environ.get("PYTHONIOENCODING"):
+        return
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None and not stream.isatty():
+        reconfigure(encoding="utf-8")
+
+
+def check_inputs(jobs: Sequence[Job]) -> None:
+    """Exit unless every input file exists and, when the input is ``-``, audio is piped into standard input."""
+    missing = [str(job.audio) for job in jobs if not (is_stdin(job.audio) or job.audio.is_file())]
+    if missing:
+        sys.exit(f"Error: file not found: {', '.join(missing)}")
+    if any(is_stdin(job.audio) for job in jobs) and (sys.stdin is None or sys.stdin.isatty()):
+        sys.exit("Error: - reads audio piped into standard input, as in: cat talk.mp3 | transcribe -")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -371,17 +598,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
 
     stdout = sys.stdout
+    utf8_when_redirected(stdout)
     # Libraries print progress and debug text to stdout; send it to stderr so stdout carries only the transcript.
     # Warnings, from the format lookup on, print as one line each.
     with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr):
         warnings.showwarning = _print_warning
-        fmt = args.format or format_for_path(args.output)
-        jobs = plan_outputs(args, fmt)
+        formats = args.format or (format_for_path(args.output),)
+        jobs = plan_outputs(args, formats)
         if not jobs:
             sys.exit("Error: no audio files found.")
-        missing = [str(audio) for audio, _ in jobs if not audio.is_file()]
-        if missing:  # checked before the (slow) model load
-            sys.exit(f"Error: file not found: {', '.join(missing)}")
-        failures = run_jobs(args, jobs, fmt, stdout)
-    if failures:
-        sys.exit(1 if len(jobs) == 1 else f"Error: {failures} of {len(jobs)} files failed.")
+        check_inputs(jobs)  # before the (slow) model load
+        summary = run_jobs(args, jobs, stdout)
+    if summary.interrupted:
+        sys.exit(130)  # the exit status of a program stopped by Ctrl-C
+    if summary.failed:
+        sys.exit(1 if len(jobs) == 1 else f"Error: {summary.failed} of {len(jobs)} files failed.")
