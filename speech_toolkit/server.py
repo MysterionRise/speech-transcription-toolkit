@@ -8,18 +8,22 @@ Apps and SDKs written for OpenAI's speech-to-text endpoints work offline against
     client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused")
     print(client.audio.transcriptions.create(model="whisper-1", file=open("talk.mp3", "rb")).text)
 
-The server runs one model, so the request's ``model`` field is accepted and ignored. Needs the
-``server`` extra.
+The server runs one model, so the request's ``model`` field is accepted and ignored. One worker thread runs it,
+taking the requests in turn from a bounded queue: when the queue is full, more requests get a 503 at once, and
+``/health`` answers straight away however busy the model is. Needs the ``server`` extra.
 """
 
 # No "from __future__ import annotations": FastAPI reads the endpoints' annotations at runtime, and the
 # endpoints are defined inside create_app() where its imports live.
 
 import argparse
+import asyncio
 import codecs
+import functools
 import ipaddress
 import json
 import logging
+import math
 import os
 import pathlib
 import secrets
@@ -27,13 +31,33 @@ import subprocess  # nosec B404 - only for CalledProcessError, the error of a fa
 import sys
 import tempfile
 import threading
+import time
 import traceback
-from typing import Any, Awaitable, BinaryIO, Callable, Dict, Iterator, List, Mapping, MutableMapping, Optional, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    BinaryIO,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    TypeVar,
+)
 
 from . import AudioDecodeError, __version__
 from .api import Transcriber
 from .backends import TranscriptionResult
 from .cli import FILE_ERRORS, add_model_options, load_transcriber, positive_int
+from .media import SAMPLE_RATE, load_audio
+
+if TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
 
 INSTALL_HINT = 'transcribe-server needs the server extra: pip install "speech-transcription-toolkit[server]"'
 RESPONSE_FORMATS = ("json", "text", "srt", "vtt", "verbose_json")
@@ -45,6 +69,22 @@ UPLOAD_SUFFIXES = frozenset(".aac .flac .m4a .mkv .mov .mp3 .mp4 .mpeg .mpga .og
 # What OpenAI answers for a file it can't decode.
 NOT_AUDIO = "Audio file might be corrupted or unsupported"
 SERVER_ERROR = "The server had an error while processing the request; its log has the details."
+# The endpoints whose requests take a place in the queue for the model.
+TRANSCRIPTION_PATHS = frozenset({"/v1/audio/transcriptions", "/v1/audio/translations"})
+DEFAULT_MAX_QUEUE = 8
+# Three hours: decoding them takes some 1 GB of memory (see media.load_audio).
+DEFAULT_MAX_AUDIO_SECONDS = 3 * 60 * 60
+# Uploads are decoded this many seconds past the limit, so that audio longer than the limit can be told from audio
+# that ends at it. ffmpeg stops there: the rest of the file is never decoded.
+AUDIO_LIMIT_MARGIN = 1.0
+# Seconds that decoding one upload may take. The longest audio allowed by default decodes in a minute or two.
+DECODE_TIMEOUT = 600.0
+# A 503's Retry-After is the average time of recent requests, rounded up and kept within these bounds (seconds).
+MIN_RETRY_AFTER, MAX_RETRY_AFTER = 1, 60
+# The weight of the latest request in that average, an exponential moving average.
+RECENT_WEIGHT = 0.3
+# The status logged for a request whose client left while it waited: nginx's "client closed request".
+CLIENT_CLOSED = 499
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +94,8 @@ Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+
+T = TypeVar("T")
 
 
 class APIError(Exception):
@@ -67,22 +109,112 @@ class APIError(Exception):
         error_type: str = "invalid_request_error",
         param: Optional[str] = None,
         code: Optional[str] = None,
+        headers: Optional[Mapping[str, str]] = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.body = {"error": {"message": message, "type": error_type, "param": param, "code": code}}
+        self.headers = dict(headers or {})
 
 
 class _Service:
-    """Request handling behind the routes: auth, upload limits, validation and one-at-a-time transcription."""
+    """Request handling behind the routes: auth, upload limits, validation, and the queue in front of the model.
 
-    def __init__(self, transcriber: Transcriber, api_key: Optional[str], max_upload_mb: float) -> None:
+    One worker thread runs the model, which isn't thread-safe, taking the requests in turn. Besides the request it
+    transcribes, at most *max_queue* requests are let in to wait (from the start of their upload); the guard refuses
+    more with a 503 before reading them. The counts are kept under a lock of their own, never held for longer than
+    it takes to change or read them, so ``/health`` never waits for the model.
+    """
+
+    def __init__(
+        self,
+        transcriber: Transcriber,
+        api_key: Optional[str],
+        max_upload_mb: float,
+        *,
+        max_queue: int = DEFAULT_MAX_QUEUE,
+        max_audio_seconds: Optional[float] = DEFAULT_MAX_AUDIO_SECONDS,
+    ) -> None:
         self.transcriber = transcriber
         self.api_key = api_key
         self.max_upload_mb = max_upload_mb
         self.max_bytes = int(max_upload_mb * 1024 * 1024)
         self.max_request_bytes = self.max_bytes + FORM_OVERHEAD
-        self.lock = threading.Lock()  # one model: requests are transcribed one at a time
+        self.max_queue = max_queue
+        self.max_audio_seconds = max_audio_seconds
+        # The worker thread starts with the first request; it ends when the executor is garbage-collected or Python
+        # exits, after finishing its request.
+        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="transcribe-server")
+        self._counts = threading.Lock()
+        self.admitted = 0  # requests let in and not finished: being received, waiting, or being transcribed
+        self.transcribing = 0  # 1 while the worker runs a request
+        self.request_seconds: Optional[float] = None  # the average time of recent requests in the worker
+
+    def admit(self) -> bool:
+        """Let a transcription request in, if the model or a place in the queue is free; release it with leave()."""
+        with self._counts:
+            if self.admitted > self.max_queue:
+                return False
+            self.admitted += 1
+            return True
+
+    def leave(self) -> None:
+        with self._counts:
+            self.admitted -= 1
+
+    def status(self) -> Dict[str, int]:
+        """The queue, for /health."""
+        with self._counts:
+            waiting = max(0, self.admitted - self.transcribing)
+            return {"transcribing": self.transcribing, "waiting": waiting, "max_queue": self.max_queue}
+
+    def busy(self) -> APIError:
+        """The 503 for a request that finds the queue full."""
+        with self._counts:
+            average = self.request_seconds or MIN_RETRY_AFTER
+        seconds = min(MAX_RETRY_AFTER, max(MIN_RETRY_AFTER, math.ceil(average)))
+        message = f"The server is busy with other requests; retry in {seconds} s."
+        return APIError(503, message, error_type="server_error", headers={"Retry-After": str(seconds)})
+
+    async def run(self, receive: Receive, job: Callable[[], T]) -> T:
+        """Run *job* in the worker thread, after the requests before it, and return what it returns.
+
+        A job whose client disconnects while it waits is dropped: the request ends with a 499 and frees its place.
+        One whose client disconnects while it runs goes on to the end, since the model can't be stopped mid-way: the
+        request keeps its place until then, and the upload that the job reads stays open.
+
+        Args:
+            receive: The request's ASGI receive(). The body has been read, so it returns only on a disconnect.
+            job: What the worker runs.
+        """
+        future = self.worker.submit(self._work, job)
+        waiter = asyncio.wrap_future(future)
+        left = asyncio.ensure_future(_disconnected(receive))
+        try:
+            await asyncio.wait((waiter, left), return_when=asyncio.FIRST_COMPLETED)
+            if not waiter.done():  # the client left
+                if future.cancel():  # the job hadn't started, and now never will
+                    logger.info("A client disconnected while its request waited for the model; dropped the request.")
+                    raise APIError(CLIENT_CLOSED, "The client closed the request.")
+                await asyncio.wait((waiter,))
+            return waiter.result()
+        finally:
+            left.cancel()
+            future.cancel()  # in case this request was cancelled, as when the server stops: the job then never runs
+
+    def _work(self, job: Callable[[], T]) -> T:
+        """Run *job*, in the worker thread, counting it for /health and timing it for Retry-After."""
+        with self._counts:
+            self.transcribing += 1
+        start = time.monotonic()
+        try:
+            return job()
+        finally:
+            seconds = time.monotonic() - start
+            with self._counts:
+                self.transcribing -= 1
+                average = self.request_seconds
+                self.request_seconds = seconds if average is None else average + RECENT_WEIGHT * (seconds - average)
 
     def check_key(self, authorization: str) -> None:
         if self.api_key is None:
@@ -143,25 +275,69 @@ class _Service:
             out.write(chunk)
             chunk = upload.file.read(CHUNK_BYTES)
 
+    async def handle(
+        self,
+        receive: Receive,
+        task: str,
+        upload: Any,
+        language: Optional[str],
+        prompt: Optional[str],
+        response_format: str,
+        granularities: List[str],
+        stream: bool,
+    ) -> Any:
+        """A transcription request, from the route: validate it, then wait for the worker to transcribe it and render
+        the response. All of that stays off the event loop, which keeps answering other requests."""
+        words = self.check_request(task, response_format, granularities, stream)
+        job = functools.partial(self.respond, upload, task, language, prompt, words, response_format)
+        return await self.run(receive, job)
+
+    def respond(
+        self, upload: Any, task: str, language: Optional[str], prompt: Optional[str], words: bool, response_format: str
+    ) -> Any:
+        """The response to a request, in the worker thread: transcribe the upload, and render the result.
+
+        It is a Response, serialized here, because FastAPI would encode a dict that a route returns on the event loop.
+        """
+        from starlette.responses import JSONResponse, PlainTextResponse  # imported already, with the app
+
+        result = self.transcribe(upload, task, language, prompt, words)
+        body = _response_body(result, response_format, task, words)
+        return JSONResponse(body) if isinstance(body, dict) else PlainTextResponse(body)
+
     def transcribe(
         self, upload: Any, task: str, language: Optional[str], prompt: Optional[str], words: bool
     ) -> TranscriptionResult:
-        """Save the upload to a temporary file and transcribe it; the file is deleted whatever happens."""
+        """Save the upload to a temporary file, decode it and transcribe the samples; the file is deleted whatever
+        happens. The worker thread runs this, one request at a time."""
         fd, name = tempfile.mkstemp(suffix=_upload_suffix(upload.filename))
         path = pathlib.Path(name)
         try:
             with os.fdopen(fd, "wb") as out:
                 self.save_upload(upload, out)
-            with self.lock:
-                return self.transcriber.transcribe(
-                    path, language or None, task, prompt=prompt or None, word_timestamps=True if words else None
-                )
+            samples = self.decode(path)
+            return self.transcriber.transcribe(
+                samples, language or None, task, prompt=prompt or None, word_timestamps=True if words else None
+            )
         except APIError:
             raise
         except Exception as e:  # decoding, model, disk and out-of-memory errors come in many types
             raise _api_error(e, path) from e
         finally:
             path.unlink(missing_ok=True)
+
+    def decode(self, path: pathlib.Path) -> "np.ndarray":
+        """The samples of the upload saved at *path*, decoded once, for the model and for diarization alike.
+
+        ffmpeg reads only common, self-contained formats (``strict``), from the file, which it can seek in (an MP4
+        whose index comes last decodes only so), and stops a little past the length limit.
+        """
+        limit = self.max_audio_seconds
+        max_seconds = None if limit is None else limit + AUDIO_LIMIT_MARGIN
+        samples = load_audio(path, strict=True, max_seconds=max_seconds, timeout=DECODE_TIMEOUT)
+        if limit is not None and len(samples) > limit * SAMPLE_RATE:
+            raise APIError(400, f"The audio is longer than this server's {limit:g} s limit.", param="file")
+        return samples
 
 
 class _BodyTooLarge(Exception):
@@ -199,7 +375,8 @@ class _RequestGuard:
 
     FastAPI parses the form, and Starlette spools the upload to disk, before the routes run. So the API key and
     ``Content-Length`` are checked here, answering 401 or 413 straight away, and a body sent without
-    ``Content-Length`` (chunked) is cut off with a 413 as soon as it passes the limit.
+    ``Content-Length`` (chunked) is cut off with a 413 as soon as it passes the limit. A transcription request that
+    passes takes a place in the queue for the model, held until its response, or gets a 503 if the queue is full.
     """
 
     def __init__(self, app: ASGIApp, service: _Service) -> None:
@@ -210,16 +387,24 @@ class _RequestGuard:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        path = _route_path(scope)
         try:
-            self.service.check_headers(_route_path(scope), dict(scope["headers"]))
+            self.service.check_headers(path, dict(scope["headers"]))
         except APIError as e:
             await _send_error(send, e)
+            return
+        queued = scope["method"] == "POST" and path in TRANSCRIPTION_PATHS
+        if queued and not self.service.admit():
+            await _send_error(send, self.service.busy())
             return
         body = _LimitedBody(receive, send, self.service.max_request_bytes)
         try:
             await self.app(scope, body.receive, body.send)
         except _BodyTooLarge:
             pass  # answered below
+        finally:
+            if queued:
+                self.service.leave()
         if body.too_large:  # the routes read the whole body before they respond, so no response has started
             await _send_error(send, self.service.too_large())
 
@@ -228,8 +413,16 @@ async def _send_error(send: Send, error: APIError) -> None:
     """Send *error* as the response, in OpenAI's format, from outside the FastAPI app."""
     body = json.dumps(error.body, separators=(",", ":")).encode()  # compact, as FastAPI's own responses
     headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
+    headers += [(name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in error.headers.items()]
     await send({"type": "http.response.start", "status": error.status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
+
+
+async def _disconnected(receive: Receive) -> None:
+    """Return when the client disconnects. Once a request's body has been read, receive() returns only then."""
+    message: Message = {}
+    while message.get("type") != "http.disconnect":
+        message = await receive()
 
 
 def _route_path(scope: Scope) -> str:
@@ -323,21 +516,42 @@ def _error_chain(error: BaseException) -> Iterator[BaseException]:
         current = current.__cause__ or current.__context__
 
 
-def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_upload_mb: float = 100.0) -> Any:
+def create_app(
+    transcriber: Transcriber,
+    *,
+    api_key: Optional[str] = None,
+    max_upload_mb: float = 100.0,
+    max_queue: int = DEFAULT_MAX_QUEUE,
+    max_audio_seconds: Optional[float] = DEFAULT_MAX_AUDIO_SECONDS,
+    cors_origins: Sequence[str] = (),
+    docs: Optional[bool] = None,
+) -> Any:
     """Build the FastAPI app around a loaded :class:`Transcriber`; requests take turns on the model.
 
     Args:
         transcriber: The loaded model (and diarization pipeline, if any) to serve.
-        api_key: If set, every request except ``/health`` needs ``Authorization: Bearer <api_key>``, and the API
-            docs (``/docs``, ``/redoc`` and ``/openapi.json``) are turned off.
+        api_key: If set, every request except ``/health`` needs ``Authorization: Bearer <api_key>``.
         max_upload_mb: Larger uploads are refused with HTTP 413, before they are read when they declare their size.
+        max_queue: How many transcription requests may wait while the model transcribes another; more are refused
+            with HTTP 503 and ``Retry-After``, before they are read. 0 refuses every request while the model is busy.
+        max_audio_seconds: Longer audio is refused with HTTP 400, and decoded only a second past this. None for no
+            limit.
+        cors_origins: Web pages from these origins (such as ``http://localhost:3000``, or ``*`` for any) may call the
+            API from the browser.
+        docs: Serve the API docs (``/docs``, ``/redoc`` and ``/openapi.json``). The default (None) serves them
+            only without an API key; with one, they too need the key.
+
+    Raises:
+        ValueError: If *max_queue* is negative, or *max_audio_seconds* isn't a positive number.
     """
+    _check_limits(max_queue, max_audio_seconds)
     from fastapi import FastAPI, File, Form, Request, UploadFile
     from fastapi.exceptions import RequestValidationError
-    from fastapi.responses import JSONResponse, PlainTextResponse
+    from fastapi.responses import JSONResponse
     from starlette.exceptions import HTTPException
 
-    docs = api_key is None  # the docs pages can't send the key, and would show the API to anyone
+    # By default no docs with a key: the docs pages can't send it, and would show the API to anyone.
+    docs = api_key is None if docs is None else docs
     app = FastAPI(
         title="speech-transcription-toolkit",
         version=__version__,
@@ -345,11 +559,12 @@ def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_u
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
     )
-    service = _Service(transcriber, api_key, max_upload_mb)
+    service = _Service(transcriber, api_key, max_upload_mb, max_queue=max_queue, max_audio_seconds=max_audio_seconds)
     app.add_middleware(_RequestGuard, service=service)
+    _allow_origins(app, cors_origins)  # after the guard, so it runs first
 
     def api_error(request: Request, exc: APIError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status, content=exc.body)
+        return JSONResponse(status_code=exc.status, content=exc.body, headers=exc.headers or None)
 
     def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         """FastAPI answers bad fields with 422; OpenAI clients expect a 400 in OpenAI's format."""
@@ -367,22 +582,9 @@ def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_u
     app.add_exception_handler(HTTPException, http_error)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, server_error)
 
-    def handle(
-        task: str,
-        upload: UploadFile,
-        language: Optional[str],
-        prompt: Optional[str],
-        response_format: str,
-        granularities: List[str],
-        stream: bool,
-    ) -> Any:
-        words = service.check_request(task, response_format, granularities, stream)
-        result = service.transcribe(upload, task, language, prompt, words)
-        body = _response_body(result, response_format, task, words)
-        return body if isinstance(body, dict) else PlainTextResponse(body)
-
     @app.post("/v1/audio/transcriptions")
-    def transcriptions(
+    async def transcriptions(
+        request: Request,
         file: UploadFile = File(...),
         model: str = Form("whisper-1"),  # accepted for compatibility: the server runs the model it loaded
         language: Optional[str] = Form(None),
@@ -392,20 +594,23 @@ def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_u
         timestamp_granularities: List[str] = Form([], alias="timestamp_granularities[]"),
         stream: bool = Form(False),
     ) -> Any:
-        return handle("transcribe", file, language, prompt, response_format, timestamp_granularities, stream)
+        return await service.handle(
+            request.receive, "transcribe", file, language, prompt, response_format, timestamp_granularities, stream
+        )
 
     @app.post("/v1/audio/translations")
-    def translations(
+    async def translations(
+        request: Request,
         file: UploadFile = File(...),
         model: str = Form("whisper-1"),
         prompt: Optional[str] = Form(None),
         response_format: str = Form("json"),
         temperature: float = Form(0.0),
     ) -> Any:
-        return handle("translate", file, None, prompt, response_format, [], False)
+        return await service.handle(request.receive, "translate", file, None, prompt, response_format, [], False)
 
     @app.get("/v1/models")
-    def models() -> Dict[str, Any]:
+    async def models() -> Dict[str, Any]:
         owner = f"speech-transcription-toolkit ({transcriber.backend_name})"
         return {
             "object": "list",
@@ -413,10 +618,43 @@ def create_app(transcriber: Transcriber, *, api_key: Optional[str] = None, max_u
         }
 
     @app.get("/health")
-    def health() -> Dict[str, Any]:
-        return {"status": "ok", "backend": transcriber.backend_name, "model": transcriber.model_name}
+    async def health() -> Dict[str, Any]:
+        """The loaded model and the queue, answered at once however busy the model is."""
+        return {
+            "status": "ok",
+            "backend": transcriber.backend_name,
+            "model": transcriber.model_name,
+            **service.status(),
+        }
 
     return app
+
+
+def _check_limits(max_queue: int, max_audio_seconds: Optional[float]) -> None:
+    """Raise ValueError for create_app() limits that make no sense."""
+    if max_queue < 0:
+        raise ValueError(f"max_queue must be 0 or more, got {max_queue!r}")
+    if max_audio_seconds is not None and not 0 < max_audio_seconds < math.inf:
+        raise ValueError(f"max_audio_seconds must be a positive number or None, got {max_audio_seconds!r}")
+
+
+def _allow_origins(app: Any, origins: Sequence[str]) -> None:
+    """Let web pages from *origins* call the API (CORS), if there are any.
+
+    Added after the guard, so it runs before it: a browser's preflight request carries no API key, and the guard's
+    errors need the CORS headers for the page to read them.
+    """
+    if not origins:
+        return
+    from starlette.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(origins),
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],  # OpenAI's JavaScript SDK sends headers of its own (x-stainless-*)
+        expose_headers=["Retry-After"],  # for the 503s
+    )
 
 
 def _validation_error(errors: Sequence[Any]) -> APIError:
@@ -505,8 +743,53 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-upload-mb", type=positive_int, default=100, help="Refuse larger uploads (default: 100 MB)."
     )
+    parser.add_argument(
+        "--max-queue",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_QUEUE,
+        metavar="N",
+        help="How many requests may wait while the model transcribes another; more get HTTP 503 with Retry-After "
+        f"(default: {DEFAULT_MAX_QUEUE}).",
+    )
+    parser.add_argument(
+        "--max-audio-seconds",
+        type=_seconds,
+        default=DEFAULT_MAX_AUDIO_SECONDS,
+        metavar="SECONDS",
+        help="Refuse longer audio with HTTP 400, without decoding the rest "
+        f"(default: {DEFAULT_MAX_AUDIO_SECONDS}, 3 hours; 0 for no limit).",
+    )
+    parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="Let web pages from ORIGIN (e.g. http://localhost:3000, or * for any) call the API; repeat for more.",
+    )
+    parser.add_argument(
+        "--docs",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Serve /docs, /redoc and /openapi.json (default: only without --api-key; with one, they need the key).",
+    )
     parser.set_defaults(quiet=False)  # for cli.load_transcriber
     return parser.parse_args(argv)
+
+
+def _non_negative_int(value: str) -> int:
+    """argparse type for whole numbers from 0."""
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more, got {value}")
+    return number
+
+
+def _seconds(value: str) -> float:
+    """argparse type for a number of seconds: 0 or more, and finite."""
+    number = float(value)
+    if not 0 <= number < math.inf:
+        raise argparse.ArgumentTypeError(f"must be a number of seconds, 0 or more, got {value}")
+    return number
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
@@ -528,9 +811,16 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     except (ImportError, *FILE_ERRORS) as e:
         sys.exit(f"Error: {e}")
 
-    uvicorn.run(
-        create_app(transcriber, api_key=args.api_key, max_upload_mb=args.max_upload_mb), host=args.host, port=args.port
+    app = create_app(
+        transcriber,
+        api_key=args.api_key,
+        max_upload_mb=args.max_upload_mb,
+        max_queue=args.max_queue,
+        max_audio_seconds=args.max_audio_seconds or None,  # 0: no limit
+        cors_origins=args.cors_origin,
+        docs=args.docs,
     )
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -38,6 +38,7 @@ from speech_toolkit.backends import (
 from speech_toolkit.server import create_app
 from speech_toolkit.server import parse_args as server_parse_args
 from tests.conftest import FakeBackend, FakeWordsBackend
+from tests.server_helpers import decoded
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 TRANSLATORS = "whisper, faster-whisper, canary"  # the built-in backends that translate
@@ -420,6 +421,7 @@ class TestParakeetLanguage:
         assert json.loads(out.read_text(encoding="utf-8"))["language"] is None
 
 
+@pytest.mark.usefixtures("decoded")  # the server decodes uploads; here without ffmpeg
 class TestServerTranslations:
     @pytest.fixture
     def uploads(self, tmp_path, monkeypatch):
