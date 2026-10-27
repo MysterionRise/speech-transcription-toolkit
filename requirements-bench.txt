@@ -1,0 +1,14 @@
+# The benchmark harness (benchmarks/: python -m benchmarks.run). The models come from the package and its extras:
+#   pip install -e ".[whisper]" -r requirements-bench.txt
+# Nothing here is a dependency of the package.
+
+# Word error rate: Whisper's text normalizers, then jiwer's word alignment. Pinned, so that every run scores alike;
+# results record the versions, and python -m benchmarks.compare notes a difference.
+jiwer==4.0.0
+whisper-normalizer==0.1.15
+
+# Reads the LibriSpeech Parquet file; the download itself uses huggingface_hub, which faster-whisper installs
+pyarrow>=14
+
+# Peak memory on Windows (Linux and macOS need nothing), and the machine's RAM in the results
+psutil>=5.9
