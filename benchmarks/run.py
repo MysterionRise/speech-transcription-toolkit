@@ -94,7 +94,7 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         "--model",
         dest="specs",
         action=_Model,
-        help="a model of the -b before it (repeatable; default: the " "backend's default model)",
+        help="a model of the -b before it (repeatable; default: the backend's default model)",
     )
     parser.add_argument(
         "--device", choices=("cpu", "cuda"), help="where the models run (default: as the backend picks)"
@@ -427,13 +427,14 @@ def measure_all(
 
 def run(args: argparse.Namespace) -> List[str]:
     """Measure the models of *args*, print the table, write the JSON; returns the failures."""
-    models = model_list(args.specs)  # an unknown backend fails before any download
+    # An unknown backend, or missing scoring packages, fail before anything is downloaded or measured.
+    models = model_list(args.specs)
+    normalizer("en")
+    score("a", "a", "en")
     manifest = load_manifest(args.manifest)
     clips = manifest.select(args.sets, args.limit)
     data_dir = args.data_dir or default_data_dir()
     prepare(manifest, data_dir, clips)
-    normalizer("en")  # the scoring packages are there: fail before measuring anything
-    score("a", "a", "en")
     results, failed = measure_all(args, models, clips, data_dir)
     if not results:
         return failed or ["nothing was measured"]

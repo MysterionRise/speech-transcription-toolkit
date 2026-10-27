@@ -96,25 +96,29 @@ for its synthesized samples, but on LibriSpeech, whose references spell numbers 
 as an error.
 
 **Reproducibility.** Two runs on the same machine give the **same transcripts, so the same WER** (difference 0): the
-decoding is deterministic (greedy or beam search, and seeded sampling when a temperature fallback kicks in). **RTFx**
-agrees **within 5%** on an otherwise idle machine: two runs of faster-whisper `tiny` on a 4-CPU Xeon gave 6.63 and
-6.62. Shared CI runners vary more, from run to run and with the hardware they land on, which is why the workflow
-doesn't gate on speed. Load times vary most (1.2 and 2.4 s in those two runs); read them as a rough guide.
+decoding is deterministic (greedy or beam search, and seeded sampling when a temperature fallback kicks in). In
+practice the WER also held across machines: faster-whisper `tiny` scored exactly the same on a cloud VM and on
+GitHub's runner. **RTFx** agrees **within 5%** on an otherwise idle machine: two runs of faster-whisper `tiny` on a
+4-CPU Xeon gave 6.63 and 6.62. It differs much more between machines (12.7 on GitHub's runner, a newer Xeon), and
+shared runners vary from run to run, which is why the workflow doesn't gate on speed. Load times vary most (1.2 and
+2.4 s in those two runs); read them as a rough guide.
 
 ## The results file
 
 `python -m benchmarks.run` writes one JSON document. Fields may be added; a field that changes meaning or goes bumps
 `schema`, and `compare` refuses documents of another schema.
 
+For example, from [`baseline.json`](baseline.json), shortened:
+
 ```jsonc
 {
   "schema": 1,
-  "created": "2026-10-27T12:34:56+00:00",
+  "created": "2026-10-27T12:57:16+00:00",
   "environment": {
-    "machine": "Linux 6.8.0 (x86_64)", "cpu": "AMD EPYC 7763 64-Core Processor", "cpus": 4, "ram_bytes": 16772579328,
-    "python": "3.12.3", "speech_toolkit": "0.5.0",
-    "packages": {"jiwer": "4.0.0", "faster-whisper": "1.2.1", "...": "..."},  // the versions installed
-    "runner": "GitHub Actions (ubuntu24)", "commit": "..."                     // on GitHub Actions only
+    "machine": "Linux 7.0.0-1017-azure (x86_64)", "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+    "cpus": 4, "ram_bytes": 16758403072, "python": "3.12.15", "speech_toolkit": "0.4.0",
+    "packages": {"jiwer": "4.0.0", "whisper-normalizer": "0.1.15", "faster-whisper": "1.2.1", "...": "..."},
+    "runner": "GitHub Actions (ubuntu26)", "commit": "7ef2f8f..."     // on GitHub Actions only, else null
   },
   "settings": {"device": "cpu", "isolated": true, "sets": ["fleurs", "librispeech"], "limit": null,
                "scoring": "whisper-normalizer 0.1.15, jiwer 4.0.0"},
@@ -122,21 +126,21 @@ doesn't gate on speed. Load times vary most (1.2 and 2.4 s in those two runs); r
     {
       "backend": "faster-whisper", "model": "tiny",
       "device": "cpu", "precision": "int8_float32", "gpu": null,   // where the model actually ran
-      "load_seconds": 1.2,
-      "audio_seconds": 1132.2, "seconds": 171.0, "rtfx": 6.62,      // over all clips
-      "peak_rss_bytes": 347000000, "peak_gpu_bytes": null, "peak_gpu_sampled": false,
+      "load_seconds": 1.861,
+      "audio_seconds": 1132.225, "seconds": 88.983, "rtfx": 12.72,  // over all clips
+      "peak_rss_bytes": 373780480, "peak_gpu_bytes": null, "peak_gpu_sampled": false,
       "sets": {
         "librispeech": {
-          "clips": 100, "fingerprint": "3f2a...",  // the clips and references: results compare only when equal
-          "audio_seconds": 751.6, "seconds": 119.3, "rtfx": 6.3,
-          "words": 2048, "errors": 147, "substitutions": 110, "deletions": 15, "insertions": 22, "wer": 0.071777,
-          "languages": {"en": {"words": 2048, "errors": 147, "...": "...", "wer": 0.071777}}
+          "clips": 100, "fingerprint": "0b0ec606cf74652e",  // the clips and references: compare only when equal
+          "audio_seconds": 752.905, "seconds": 63.015, "rtfx": 11.95,
+          "words": 2069, "errors": 149, "substitutions": 104, "deletions": 16, "insertions": 29, "wer": 0.072015,
+          "languages": {"en": {"words": 2069, "errors": 149, "...": "...", "wer": 0.072015}}
         },
         "fleurs": {"...": "..."}
       },
       "clips": {                    // per clip, to see which transcripts changed
-        "librispeech/1089-134686-0000": {"set": "librispeech", "audio_seconds": 10.435, "seconds": 1.52,
-                                         "words": 28, "errors": 2, "hypothesis": "He hoped there would be..."}
+        "librispeech/1089-134686-0000": {"set": "librispeech", "audio_seconds": 10.435, "seconds": 0.7771,
+                                         "words": 28, "errors": 2, "hypothesis": "He hoped there would be stew..."}
       }
     }
   ]

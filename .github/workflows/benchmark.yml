@@ -120,7 +120,3 @@ jobs:
       with:
         name: benchmark-results
         path: ${{ runner.temp }}/benchmark-results.json
-
-    - name: Show the results file
-      if: ${{ !cancelled() && steps.run.outcome == 'success' }}
-      run: cat "$RUNNER_TEMP/benchmark-results.json"

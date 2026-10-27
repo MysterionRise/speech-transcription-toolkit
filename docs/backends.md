@@ -107,11 +107,18 @@ tolerances, and how to update the baseline.
 
 ### Measured so far
 
-WER per set (lower is better) and RTFx over all clips. Each model ran in a process of its own, with the clips' audio
-decoded beforehand and one warm-up transcription; peak RSS is that process's.
+WER per set (lower is better) and RTFx over all clips (higher is faster), with speech_toolkit 0.4.0. Each model ran in
+a process of its own, with the clips' audio decoded beforehand and one warm-up transcription; peak RSS is that
+process's.
 
 | Machine | Backend | Model | Device | WER LibriSpeech | WER FLEURS (de, es, fr) | RTFx | Peak RSS (MiB) |
 |---|---|---|---|--:|--:|--:|--:|
-| 4-CPU Intel Xeon @ 2.8 GHz, 16 GB (a cloud VM) | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 6.6 | 332 |
+| GitHub's `ubuntu-latest` runner: Intel Xeon Platinum 8370C, 4 CPUs, 16 GB | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 12.7 | 356 |
+| GitHub's `ubuntu-latest` runner, as above | whisper (openai-whisper 20250625, torch 2.14.1) | tiny | CPU, float32 | 0.078 | 0.324 (0.286, 0.191, 0.458) | 18.3 | 727 |
+| A cloud VM: Intel Xeon @ 2.8 GHz, 4 CPUs, 16 GB | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 6.6 | 332 |
+
+The GitHub rows are the workflow's baseline (`benchmarks/baseline.json`). faster-whisper decodes with beam search (5
+beams) and openai-whisper greedily, which is why openai-whisper's `tiny` is the faster of the two on these CPUs, and
+faster-whisper's the more accurate. The same model gets the same WER on both machines; its speed differs.
 
 No GPU numbers yet: run the command above on one and add a row, naming the GPU.

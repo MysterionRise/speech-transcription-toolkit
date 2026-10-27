@@ -1,25 +1,27 @@
 {
   "schema": 1,
-  "created": "2026-10-27T12:40:28+00:00",
+  "created": "2026-10-27T12:57:16+00:00",
   "environment": {
-    "machine": "Linux 6.18.44-fc-v165 (x86_64)",
-    "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "machine": "Linux 7.0.0-1017-azure (x86_64)",
+    "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
     "cpus": 4,
-    "ram_bytes": 16872812544,
-    "python": "3.13.16",
+    "ram_bytes": 16758403072,
+    "python": "3.12.15",
     "speech_toolkit": "0.4.0",
     "packages": {
       "jiwer": "4.0.0",
       "whisper-normalizer": "0.1.15",
       "faster-whisper": "1.2.1",
       "ctranslate2": "4.8.4",
-      "numpy": "2.5.3"
+      "openai-whisper": "20250625",
+      "torch": "2.14.1+cpu",
+      "numpy": "2.5.4"
     },
-    "runner": null,
-    "commit": null
+    "runner": "GitHub Actions (ubuntu26)",
+    "commit": "7ef2f8f3df4c2ada302dea4d26859b540bd090c3"
   },
   "settings": {
-    "device": null,
+    "device": "cpu",
     "isolated": true,
     "sets": [
       "fleurs",
@@ -35,20 +37,20 @@
       "device": "cpu",
       "precision": "int8_float32",
       "gpu": null,
-      "load_seconds": 1.232,
-      "peak_rss_bytes": 348028928,
+      "load_seconds": 1.861,
+      "peak_rss_bytes": 373780480,
       "peak_gpu_bytes": null,
       "peak_gpu_sampled": false,
       "audio_seconds": 1132.225,
-      "seconds": 170.69,
-      "rtfx": 6.63,
+      "seconds": 88.983,
+      "rtfx": 12.72,
       "sets": {
         "librispeech": {
           "clips": 100,
           "fingerprint": "0b0ec606cf74652e",
           "audio_seconds": 752.905,
-          "seconds": 118.823,
-          "rtfx": 6.34,
+          "seconds": 63.015,
+          "rtfx": 11.95,
           "words": 2069,
           "errors": 149,
           "substitutions": 104,
@@ -70,8 +72,8 @@
           "clips": 30,
           "fingerprint": "f2ef95b66f2116a7",
           "audio_seconds": 379.32,
-          "seconds": 51.866,
-          "rtfx": 7.31,
+          "seconds": 25.968,
+          "rtfx": 14.61,
           "words": 786,
           "errors": 223,
           "substitutions": 154,
@@ -110,7 +112,7 @@
         "librispeech/1089-134686-0000": {
           "set": "librispeech",
           "audio_seconds": 10.435,
-          "seconds": 1.5241,
+          "seconds": 0.7771,
           "words": 28,
           "errors": 2,
           "hypothesis": "He hoped there would be stew for dinner, turnips and carrots, and bruised potatoes, and fat mutton pieces to be ladled out in thick, peppered flower-fatten sauce."
@@ -118,7 +120,7 @@
         "librispeech/1089-134686-0026": {
           "set": "librispeech",
           "audio_seconds": 4.01,
-          "seconds": 0.9382,
+          "seconds": 0.524,
           "words": 13,
           "errors": 1,
           "hypothesis": "The rector did not ask for a catacysm to hear the lesson from."
@@ -126,7 +128,7 @@
         "librispeech/1089-134691-0014": {
           "set": "librispeech",
           "audio_seconds": 4.755,
-          "seconds": 0.8851,
+          "seconds": 0.5243,
           "words": 12,
           "errors": 0,
           "hypothesis": "The phrase and the day and the scene harmonized in a chord."
@@ -134,7 +136,7 @@
         "librispeech/1188-133604-0014": {
           "set": "librispeech",
           "audio_seconds": 4.39,
-          "seconds": 0.8154,
+          "seconds": 0.4645,
           "words": 12,
           "errors": 0,
           "hypothesis": "Do not therefore think that the Gothic school is an easy one."
@@ -142,7 +144,7 @@
         "librispeech/1188-133604-0040": {
           "set": "librispeech",
           "audio_seconds": 3.23,
-          "seconds": 0.9372,
+          "seconds": 0.4739,
           "words": 8,
           "errors": 0,
           "hypothesis": "The crampness and the poverty are all intended."
@@ -150,7 +152,7 @@
         "librispeech/121-123859-0002": {
           "set": "librispeech",
           "audio_seconds": 30.04,
-          "seconds": 3.2465,
+          "seconds": 1.6609,
           "words": 64,
           "errors": 13,
           "hypothesis": "But reckoning time, whose million accidents, creep in twixed vows, and changed a crease of kings, ten sacred beauty, blunt the sharpest intense, divert strong minds to the course of altering things, alas, while fearing of time's tyranny, might I not then say, now I love you best, when I was certain or in certainty, crowning the present, doubting of the rest."
@@ -158,7 +160,7 @@
         "librispeech/121-127105-0023": {
           "set": "librispeech",
           "audio_seconds": 10.91,
-          "seconds": 1.3709,
+          "seconds": 0.6932,
           "words": 29,
           "errors": 0,
           "hypothesis": "Let me say here distinctly to have done with it that this narrative, from an exact transcript of my own, made much later, is what I shall presently give."
@@ -166,7 +168,7 @@
         "librispeech/1221-135766-0012": {
           "set": "librispeech",
           "audio_seconds": 16.22,
-          "seconds": 1.6795,
+          "seconds": 0.8738,
           "words": 39,
           "errors": 1,
           "hypothesis": "Brewting over all these matters, the mother felt like one who has evoked a spirit, but by some irregularity in the process of conjuration has failed to win the master word that should control this new and incomprehensible intelligence."
@@ -174,7 +176,7 @@
         "librispeech/1221-135767-0022": {
           "set": "librispeech",
           "audio_seconds": 14.395,
-          "seconds": 1.6401,
+          "seconds": 0.8813,
           "words": 38,
           "errors": 0,
           "hypothesis": "But the proprietor appeared already to have relinquished as hopeless the effort to perpetuate on this side of the Atlantic in a hard soil and amid the close struggle for subsistence the native English taste for ornamental gardening."
@@ -182,7 +184,7 @@
         "librispeech/1284-1180-0023": {
           "set": "librispeech",
           "audio_seconds": 5.61,
-          "seconds": 1.1396,
+          "seconds": 0.6294,
           "words": 23,
           "errors": 3,
           "hypothesis": "You see, I've lived all my life without Nunky, the silent one, and there was no one to tell me anything."
@@ -190,7 +192,7 @@
         "librispeech/1284-1181-0017": {
           "set": "librispeech",
           "audio_seconds": 11.775,
-          "seconds": 1.7305,
+          "seconds": 0.9462,
           "words": 45,
           "errors": 3,
           "hypothesis": "The Wizard of Oz, who used to be a humbug and new, no magic at all, has been taking lessons of Glenda, and I'm told he is getting to be a pretty good wizard, but he is merely the assistant of the great sorcerers."
@@ -198,7 +200,7 @@
         "librispeech/1320-122612-0013": {
           "set": "librispeech",
           "audio_seconds": 6.55,
-          "seconds": 1.0877,
+          "seconds": 0.6106,
           "words": 22,
           "errors": 0,
           "hypothesis": "A circle of a few hundred feet in circumference was drawn, and each of the party took a segment for his portion."
@@ -206,7 +208,7 @@
         "librispeech/1320-122617-0022": {
           "set": "librispeech",
           "audio_seconds": 3.855,
-          "seconds": 0.9333,
+          "seconds": 0.5191,
           "words": 12,
           "errors": 2,
           "hypothesis": "The Delaware's are children of the tortoise and they outstrip the deer."
@@ -214,7 +216,7 @@
         "librispeech/1580-141083-0006": {
           "set": "librispeech",
           "audio_seconds": 10.85,
-          "seconds": 1.496,
+          "seconds": 0.8288,
           "words": 36,
           "errors": 0,
           "hypothesis": "The only duplicate which existed so far as I knew was that which belonged to my servant, Bannister, a man who has looked after my room for 10 years and whose honesty is absolutely above suspicion."
@@ -222,7 +224,7 @@
         "librispeech/1580-141083-0032": {
           "set": "librispeech",
           "audio_seconds": 4.135,
-          "seconds": 0.852,
+          "seconds": 0.4844,
           "words": 11,
           "errors": 1,
           "hypothesis": "Watson, I have always done you and injustice, there are others."
@@ -230,7 +232,7 @@
         "librispeech/1580-141084-0005": {
           "set": "librispeech",
           "audio_seconds": 2.515,
-          "seconds": 0.7984,
+          "seconds": 0.4362,
           "words": 6,
           "errors": 4,
           "hypothesis": "That is a very important set of homes."
@@ -238,7 +240,7 @@
         "librispeech/1580-141084-0031": {
           "set": "librispeech",
           "audio_seconds": 6.47,
-          "seconds": 1.1097,
+          "seconds": 0.6177,
           "words": 22,
           "errors": 0,
           "hypothesis": "We want to know Mr. Gilchrist how you, an honorable man, ever came to commit such an action as that of yesterday."
@@ -246,7 +248,7 @@
         "librispeech/1995-1826-0006": {
           "set": "librispeech",
           "audio_seconds": 2.455,
-          "seconds": 0.7015,
+          "seconds": 0.4139,
           "words": 5,
           "errors": 2,
           "hypothesis": "Been looking up Tomb's County."
@@ -254,7 +256,7 @@
         "librispeech/1995-1836-0005": {
           "set": "librispeech",
           "audio_seconds": 10.9,
-          "seconds": 1.5443,
+          "seconds": 0.7736,
           "words": 30,
           "errors": 0,
           "hypothesis": "Mrs. Gray had met Southerners before, but not intimately, and she always had in mind vividly their cruelty to poor Negroes, a subject she made a point of introducing forthwith."
@@ -262,7 +264,7 @@
         "librispeech/1995-1837-0016": {
           "set": "librispeech",
           "audio_seconds": 7.19,
-          "seconds": 1.1409,
+          "seconds": 0.6446,
           "words": 17,
           "errors": 4,
           "hypothesis": "For one long moment he passed, stupid, a gate with utter amazement, then leaned dizzily against the tree."
@@ -270,7 +272,7 @@
         "librispeech/2094-142345-0013": {
           "set": "librispeech",
           "audio_seconds": 14.25,
-          "seconds": 1.7087,
+          "seconds": 0.8785,
           "words": 40,
           "errors": 4,
           "hypothesis": "Her tongue was not less keen than her eye, and whenever a damn soul came within your shot, seemed to take up an unfinished lecture. As a barrel organ takes up a tune, precisely at the point where it had left off."
@@ -278,7 +280,7 @@
         "librispeech/2094-142345-0039": {
           "set": "librispeech",
           "audio_seconds": 6.28,
-          "seconds": 1.0782,
+          "seconds": 0.5881,
           "words": 22,
           "errors": 1,
           "hypothesis": "I have strong assurance that no evil will happen to you and my uncle and the children for anything I have done."
@@ -286,7 +288,7 @@
         "librispeech/2300-131720-0004": {
           "set": "librispeech",
           "audio_seconds": 19.91,
-          "seconds": 1.7717,
+          "seconds": 0.9481,
           "words": 44,
           "errors": 0,
           "hypothesis": "Owing to his insistence on low pressure, direct current for use in densely populated districts as the only safe and truly universal, profitable way of delivering electrical energy to the consumers, Edison has been frequently spoken of as an opponent of the alternating current."
@@ -294,7 +296,7 @@
         "librispeech/2300-131720-0030": {
           "set": "librispeech",
           "audio_seconds": 9.98,
-          "seconds": 1.0818,
+          "seconds": 0.6152,
           "words": 21,
           "errors": 0,
           "hypothesis": "The principle employed in the Edison electrolytic meter is that which exemplifies the power of electricity to decompose a chemical substance."
@@ -302,7 +304,7 @@
         "librispeech/237-126133-0014": {
           "set": "librispeech",
           "audio_seconds": 6.79,
-          "seconds": 1.0988,
+          "seconds": 0.611,
           "words": 20,
           "errors": 5,
           "hypothesis": "Asked Fraunzi in intense interests slipping down out of polysarms and crowding up close to Jasper's side."
@@ -310,7 +312,7 @@
         "librispeech/237-134493-0015": {
           "set": "librispeech",
           "audio_seconds": 6.55,
-          "seconds": 1.1417,
+          "seconds": 0.5376,
           "words": 16,
           "errors": 2,
           "hypothesis": "There was something individual about the great farm, a most unusual trim-ness and care for detail."
@@ -318,7 +320,7 @@
         "librispeech/237-134500-0022": {
           "set": "librispeech",
           "audio_seconds": 5.165,
-          "seconds": 1.1525,
+          "seconds": 0.5757,
           "words": 21,
           "errors": 0,
           "hypothesis": "When she used to tell me about him, I always wondered whether she wasn't a little in love with him."
@@ -326,7 +328,7 @@
         "librispeech/260-123286-0005": {
           "set": "librispeech",
           "audio_seconds": 4.81,
-          "seconds": 1.0362,
+          "seconds": 0.5149,
           "words": 16,
           "errors": 1,
           "hypothesis": "I am not complaining that the rate is slow, but that the seat is so wide."
@@ -334,7 +336,7 @@
         "librispeech/260-123286-0031": {
           "set": "librispeech",
           "audio_seconds": 5.06,
-          "seconds": 1.3654,
+          "seconds": 0.5057,
           "words": 11,
           "errors": 2,
           "hypothesis": "As for the Ithiasaurus, has he returned to his submarine cabin?"
@@ -342,7 +344,7 @@
         "librispeech/260-123288-0025": {
           "set": "librispeech",
           "audio_seconds": 13.445,
-          "seconds": 1.6727,
+          "seconds": 0.9284,
           "words": 36,
           "errors": 2,
           "hypothesis": "Here it comes, there it glides, now it is up the ragged stump of the mast, that's it lightly leaps on the provision bag, descends with a light bound, and just skims the powder magazine. Horrible!"
@@ -350,7 +352,7 @@
         "librispeech/2830-3979-0002": {
           "set": "librispeech",
           "audio_seconds": 4.315,
-          "seconds": 0.8204,
+          "seconds": 0.4993,
           "words": 9,
           "errors": 0,
           "hypothesis": "Let us begin with that, his commentary on Galatians."
@@ -358,7 +360,7 @@
         "librispeech/2830-3980-0015": {
           "set": "librispeech",
           "audio_seconds": 2.685,
-          "seconds": 0.6711,
+          "seconds": 0.4545,
           "words": 9,
           "errors": 0,
           "hypothesis": "For a person to possess knowledge is not enough."
@@ -366,7 +368,7 @@
         "librispeech/2830-3980-0041": {
           "set": "librispeech",
           "audio_seconds": 4.89,
-          "seconds": 0.8122,
+          "seconds": 0.4946,
           "words": 11,
           "errors": 0,
           "hypothesis": "Grace involves the remission of sins, peace, and a happy conscience."
@@ -374,7 +376,7 @@
         "librispeech/2830-3980-0067": {
           "set": "librispeech",
           "audio_seconds": 8.13,
-          "seconds": 1.0923,
+          "seconds": 0.6605,
           "words": 24,
           "errors": 3,
           "hypothesis": "This sentence also defines our sins as great, so great in fact that the whole world could not make a man's for a single sin."
@@ -382,7 +384,7 @@
         "librispeech/2961-960-0016": {
           "set": "librispeech",
           "audio_seconds": 7.76,
-          "seconds": 0.9787,
+          "seconds": 0.5991,
           "words": 18,
           "errors": 1,
           "hypothesis": "But Plato has not the same mastery over his instrument, which he exhibits in the features or symposium."
@@ -390,7 +392,7 @@
         "librispeech/2961-961-0020": {
           "set": "librispeech",
           "audio_seconds": 6.125,
-          "seconds": 0.9069,
+          "seconds": 0.5454,
           "words": 17,
           "errors": 0,
           "hypothesis": "This is the explanation of the shallows which are found in that part of the Atlantic Ocean."
@@ -398,7 +400,7 @@
         "librispeech/3570-5695-0000": {
           "set": "librispeech",
           "audio_seconds": 4.83,
-          "seconds": 0.9169,
+          "seconds": 0.5112,
           "words": 13,
           "errors": 2,
           "hypothesis": "In a general way, though not wholly and are consistently these two groups coincide."
@@ -406,7 +408,7 @@
         "librispeech/3570-5696-0010": {
           "set": "librispeech",
           "audio_seconds": 7.57,
-          "seconds": 1.1694,
+          "seconds": 0.6805,
           "words": 27,
           "errors": 0,
           "hypothesis": "an article may be useful and wasteful both, and its utility to the consumer may be made up of use and waste in the most varying proportions."
@@ -414,7 +416,7 @@
         "librispeech/3575-170457-0025": {
           "set": "librispeech",
           "audio_seconds": 9.205,
-          "seconds": 1.3421,
+          "seconds": 0.7587,
           "words": 32,
           "errors": 0,
           "hypothesis": "Again, I thank you, this incident I suppose will be renewed no more. If I live to be an old woman, I shall remember it 30 years hence as a bright dream."
@@ -422,7 +424,7 @@
         "librispeech/3575-170457-0051": {
           "set": "librispeech",
           "audio_seconds": 4.915,
-          "seconds": 1.0817,
+          "seconds": 0.5782,
           "words": 19,
           "errors": 1,
           "hypothesis": "At T-time they were sad and silent and the meal went away untouched by any of the three."
@@ -430,7 +432,7 @@
         "librispeech/3729-6852-0021": {
           "set": "librispeech",
           "audio_seconds": 2.96,
-          "seconds": 0.7358,
+          "seconds": 0.4281,
           "words": 7,
           "errors": 0,
           "hypothesis": "I thank him and take my leave."
@@ -438,7 +440,7 @@
         "librispeech/4077-13751-0000": {
           "set": "librispeech",
           "audio_seconds": 9.56,
-          "seconds": 1.5912,
+          "seconds": 0.6881,
           "words": 25,
           "errors": 1,
           "hypothesis": "On the 6th of April, 1830, the Church of Jesus Christ of Latter-day Saints was formerly organized and thus took on a legal existence."
@@ -446,7 +448,7 @@
         "librispeech/4077-13754-0004": {
           "set": "librispeech",
           "audio_seconds": 4.985,
-          "seconds": 0.9189,
+          "seconds": 0.5172,
           "words": 16,
           "errors": 2,
           "hypothesis": "Already in North and the South were talked of, why not set up also a West?"
@@ -454,7 +456,7 @@
         "librispeech/4446-2271-0013": {
           "set": "librispeech",
           "audio_seconds": 4.4,
-          "seconds": 0.8027,
+          "seconds": 0.5102,
           "words": 16,
           "errors": 4,
           "hypothesis": "You know, I thought the dance was a bit conscious tonight, for the first time."
@@ -462,7 +464,7 @@
         "librispeech/4446-2273-0014": {
           "set": "librispeech",
           "audio_seconds": 2.39,
-          "seconds": 0.6896,
+          "seconds": 0.4432,
           "words": 8,
           "errors": 1,
           "hypothesis": "There are a few changes in the old quarter."
@@ -470,7 +472,7 @@
         "librispeech/4446-2275-0004": {
           "set": "librispeech",
           "audio_seconds": 2.11,
-          "seconds": 0.632,
+          "seconds": 0.3872,
           "words": 5,
           "errors": 0,
           "hypothesis": "Alexander did not sit down."
@@ -478,7 +480,7 @@
         "librispeech/4446-2275-0030": {
           "set": "librispeech",
           "audio_seconds": 2.665,
-          "seconds": 0.8299,
+          "seconds": 0.4859,
           "words": 8,
           "errors": 0,
           "hypothesis": "Yes, Hilda, I know that he said simply."
@@ -486,7 +488,7 @@
         "librispeech/4507-16021-0010": {
           "set": "librispeech",
           "audio_seconds": 15.165,
-          "seconds": 1.3689,
+          "seconds": 0.7297,
           "words": 30,
           "errors": 3,
           "hypothesis": "We have always thought that it was sometimes a courageous act, and at least a simple and useful deed, where the of the sympathetic attention which duty accepted in fulfilled merits."
@@ -494,7 +496,7 @@
         "librispeech/4507-16021-0036": {
           "set": "librispeech",
           "audio_seconds": 5.435,
-          "seconds": 0.7541,
+          "seconds": 0.4669,
           "words": 9,
           "errors": 4,
           "hypothesis": "That's form one of these, and IT is the other."
@@ -502,7 +504,7 @@
         "librispeech/4970-29093-0002": {
           "set": "librispeech",
           "audio_seconds": 10.73,
-          "seconds": 1.3068,
+          "seconds": 0.7088,
           "words": 31,
           "errors": 0,
           "hypothesis": "He has no traditions to bind him or guide him, and his impulse is to break away from the occupation his father has followed, and make a new way for himself."
@@ -510,7 +512,7 @@
         "librispeech/4970-29095-0005": {
           "set": "librispeech",
           "audio_seconds": 4.65,
-          "seconds": 0.7876,
+          "seconds": 0.4722,
           "words": 10,
           "errors": 4,
           "hypothesis": "That way is greatly try me Ruth and all that relations."
@@ -518,7 +520,7 @@
         "librispeech/4970-29095-0031": {
           "set": "librispeech",
           "audio_seconds": 15.05,
-          "seconds": 1.6405,
+          "seconds": 0.837,
           "words": 37,
           "errors": 2,
           "hypothesis": "He doesn't say exactly what it is, said Ruth a little dubiously, but it's something about land and railroads and the nose father that fortunes are made nobody knows exactly how in a new country."
@@ -526,7 +528,7 @@
         "librispeech/4992-23283-0018": {
           "set": "librispeech",
           "audio_seconds": 6.575,
-          "seconds": 1.1419,
+          "seconds": 0.6059,
           "words": 20,
           "errors": 0,
           "hypothesis": "To relieve her from both, he laid his hand with force upon his heart and said, Do you believe me?"
@@ -534,7 +536,7 @@
         "librispeech/4992-41806-0000": {
           "set": "librispeech",
           "audio_seconds": 14.36,
-          "seconds": 1.7877,
+          "seconds": 0.8939,
           "words": 46,
           "errors": 2,
           "hypothesis": "Natty Harmon tried the kitchen pump secretly several times during the evening, for the water had to run uphill all the way from the well to the kitchen sink, and he believed this to be a continual miracle that might give out at any moment."
@@ -542,7 +544,7 @@
         "librispeech/5105-28233-0008": {
           "set": "librispeech",
           "audio_seconds": 10.73,
-          "seconds": 1.5142,
+          "seconds": 0.7879,
           "words": 32,
           "errors": 1,
           "hypothesis": "When a private in the 8th Cavalry, he had been on the point of quitting the army at 28 years of age, but unexpectedly he had been appointed orderly to Captain Servedak."
@@ -550,7 +552,7 @@
         "librispeech/5105-28240-0024": {
           "set": "librispeech",
           "audio_seconds": 8.2,
-          "seconds": 1.1983,
+          "seconds": 0.5888,
           "words": 20,
           "errors": 1,
           "hypothesis": "doubts now arose and some discussion followed, whether or not it was desirable for Ben Zuf to accompany his master."
@@ -558,7 +560,7 @@
         "librispeech/5142-33396-0005": {
           "set": "librispeech",
           "audio_seconds": 2.225,
-          "seconds": 0.6982,
+          "seconds": 0.4609,
           "words": 10,
           "errors": 0,
           "hypothesis": "But I stayed that spring and built me a boat."
@@ -566,7 +568,7 @@
         "librispeech/5142-33396-0031": {
           "set": "librispeech",
           "audio_seconds": 7.845,
-          "seconds": 1.2271,
+          "seconds": 0.6528,
           "words": 29,
           "errors": 1,
           "hypothesis": "They set up a crane over the fire and hung the pot upon it and we sat and watched it boil while we joked and last the supper began"
@@ -574,7 +576,7 @@
         "librispeech/5142-33396-0057": {
           "set": "librispeech",
           "audio_seconds": 3.075,
-          "seconds": 0.8589,
+          "seconds": 0.4889,
           "words": 12,
           "errors": 0,
           "hypothesis": "We sunk his ship and men, but him we brought to you."
@@ -582,7 +584,7 @@
         "librispeech/5142-36377-0014": {
           "set": "librispeech",
           "audio_seconds": 25.415,
-          "seconds": 3.2513,
+          "seconds": 1.5879,
           "words": 84,
           "errors": 5,
           "hypothesis": "A pretty girl, and so far as I could judge by appearances, a good girl too. Describing her generally, I may say that she had a small head, well-carried, and well-setter under shoulders, bright gray eyes that looked at you honestly and meant what they looked. A trim, slight little figure, too slight for our English notions of beauty, a strong American accent, and a rare thing in America, a pleasantly tone voice which made the accent agreeable to English years."
@@ -590,7 +592,7 @@
         "librispeech/5639-40744-0008": {
           "set": "librispeech",
           "audio_seconds": 2.215,
-          "seconds": 0.6926,
+          "seconds": 0.4267,
           "words": 7,
           "errors": 0,
           "hypothesis": "Who touches me? Am I in bed?"
@@ -598,7 +600,7 @@
         "librispeech/5639-40744-0034": {
           "set": "librispeech",
           "audio_seconds": 13.055,
-          "seconds": 1.6109,
+          "seconds": 0.8484,
           "words": 36,
           "errors": 2,
           "hypothesis": "All rose to do her reverence, as if something from heaven had miraculously appeared before them. But gazing on her and trans with admiration, not one of them was able to address a single word to her."
@@ -606,7 +608,7 @@
         "librispeech/5683-32866-0000": {
           "set": "librispeech",
           "audio_seconds": 2.645,
-          "seconds": 0.722,
+          "seconds": 0.426,
           "words": 7,
           "errors": 2,
           "hypothesis": "Miss Lake declined the carriage tonight."
@@ -614,7 +616,7 @@
         "librispeech/5683-32866-0026": {
           "set": "librispeech",
           "audio_seconds": 2.34,
-          "seconds": 0.7476,
+          "seconds": 0.4598,
           "words": 5,
           "errors": 1,
           "hypothesis": "I boldly lighted my chrute."
@@ -622,7 +624,7 @@
         "librispeech/5683-32879-0021": {
           "set": "librispeech",
           "audio_seconds": 4.09,
-          "seconds": 0.7701,
+          "seconds": 0.4685,
           "words": 7,
           "errors": 1,
           "hypothesis": "Dorcus, in her strange way, was moved."
@@ -630,7 +632,7 @@
         "librispeech/61-70968-0022": {
           "set": "librispeech",
           "audio_seconds": 4.67,
-          "seconds": 0.833,
+          "seconds": 0.5811,
           "words": 13,
           "errors": 5,
           "hypothesis": "Just find for you to talk old man, answer the lean soul and apprentice."
@@ -638,7 +640,7 @@
         "librispeech/61-70968-0048": {
           "set": "librispeech",
           "audio_seconds": 3.02,
-          "seconds": 0.7369,
+          "seconds": 0.4323,
           "words": 9,
           "errors": 0,
           "hypothesis": "and Henry might return to England at any moment."
@@ -646,7 +648,7 @@
         "librispeech/61-70970-0011": {
           "set": "librispeech",
           "audio_seconds": 6.075,
-          "seconds": 0.9265,
+          "seconds": 0.5547,
           "words": 15,
           "errors": 2,
           "hypothesis": "As any in England I would say, said came well proudly, that is in his day."
@@ -654,7 +656,7 @@
         "librispeech/61-70970-0037": {
           "set": "librispeech",
           "audio_seconds": 5.98,
-          "seconds": 1.1382,
+          "seconds": 0.5947,
           "words": 17,
           "errors": 5,
           "hypothesis": "His tones rang pleasantly on war intense ears, and forth with the good fellowship was heralded between them."
@@ -662,7 +664,7 @@
         "librispeech/672-122797-0022": {
           "set": "librispeech",
           "audio_seconds": 19.005,
-          "seconds": 2.429,
+          "seconds": 1.31,
           "words": 50,
           "errors": 2,
           "hypothesis": "the axe struck deep into the very pith. The tree fell to the earth with a sigh. He felt a pang. It was like a swoon. He could not think of happiness, but he was sorrowful it being separated from his home from the place where he had sprung up."
@@ -670,7 +672,7 @@
         "librispeech/672-122797-0049": {
           "set": "librispeech",
           "audio_seconds": 2.02,
-          "seconds": 0.6725,
+          "seconds": 0.3935,
           "words": 2,
           "errors": 0,
           "hypothesis": "Squeak, squeak!"
@@ -678,7 +680,7 @@
         "librispeech/6829-68769-0000": {
           "set": "librispeech",
           "audio_seconds": 11.695,
-          "seconds": 1.5524,
+          "seconds": 0.7768,
           "words": 37,
           "errors": 2,
           "hypothesis": "Kenneth and Beth refrain from telling the other girls or uncle John of Old Will Rogers visit, but they got Mr. Watson in the library and questioned him closely about the penalty for forging a check."
@@ -686,7 +688,7 @@
         "librispeech/6829-68769-0026": {
           "set": "librispeech",
           "audio_seconds": 4.64,
-          "seconds": 0.9442,
+          "seconds": 0.5495,
           "words": 15,
           "errors": 2,
           "hypothesis": "He spoke simply, but paced up and down the neurocell in front of them."
@@ -694,7 +696,7 @@
         "librispeech/6829-68769-0052": {
           "set": "librispeech",
           "audio_seconds": 4.6,
-          "seconds": 0.8435,
+          "seconds": 0.5291,
           "words": 17,
           "errors": 0,
           "hypothesis": "He might have had that forged check for the face of it if he'd been sharp."
@@ -702,7 +704,7 @@
         "librispeech/6829-68771-0024": {
           "set": "librispeech",
           "audio_seconds": 6.245,
-          "seconds": 1.1197,
+          "seconds": 0.5951,
           "words": 20,
           "errors": 0,
           "hypothesis": "For the first time, the maid seemed a little confused, and her gaze wandered from the face of her visitor."
@@ -710,7 +712,7 @@
         "librispeech/6930-75918-0014": {
           "set": "librispeech",
           "audio_seconds": 16.84,
-          "seconds": 1.8846,
+          "seconds": 0.945,
           "words": 43,
           "errors": 1,
           "hypothesis": "But, continued Rao, not interrupted by this movement of his friend, Heaven be praised the French who are pronounced to be thoughtless and indiscreet, reckless even, are capable of bringing a calm and sound judgment to bear on matters of such high importance."
@@ -718,7 +720,7 @@
         "librispeech/6930-76324-0019": {
           "set": "librispeech",
           "audio_seconds": 2.575,
-          "seconds": 0.6943,
+          "seconds": 0.4405,
           "words": 8,
           "errors": 0,
           "hypothesis": "Now let's dust the furniture and pictures."
@@ -726,7 +728,7 @@
         "librispeech/6930-81414-0016": {
           "set": "librispeech",
           "audio_seconds": 2.16,
-          "seconds": 0.835,
+          "seconds": 0.4242,
           "words": 6,
           "errors": 1,
           "hypothesis": "But that is Kaffer's knife."
@@ -734,7 +736,7 @@
         "librispeech/7021-79740-0004": {
           "set": "librispeech",
           "audio_seconds": 6.465,
-          "seconds": 1.1931,
+          "seconds": 0.6069,
           "words": 17,
           "errors": 6,
           "hypothesis": "You have come, and Della, and Della was the name of Jane Stahl, to make Rosalie a visit."
@@ -742,7 +744,7 @@
         "librispeech/7021-85628-0009": {
           "set": "librispeech",
           "audio_seconds": 8.54,
-          "seconds": 1.0936,
+          "seconds": 0.5876,
           "words": 21,
           "errors": 0,
           "hypothesis": "At the farther end of the largest hall, a table was set with golden cups and golden plates in long rows."
@@ -750,7 +752,7 @@
         "librispeech/7127-75946-0008": {
           "set": "librispeech",
           "audio_seconds": 4.46,
-          "seconds": 0.953,
+          "seconds": 0.4775,
           "words": 10,
           "errors": 0,
           "hypothesis": "Does your majesty then no longer believe the disloyal attempt?"
@@ -758,7 +760,7 @@
         "librispeech/7127-75947-0004": {
           "set": "librispeech",
           "audio_seconds": 1.905,
-          "seconds": 0.6142,
+          "seconds": 0.356,
           "words": 2,
           "errors": 0,
           "hypothesis": "Explain yourself"
@@ -766,7 +768,7 @@
         "librispeech/7127-75947-0030": {
           "set": "librispeech",
           "audio_seconds": 2.76,
-          "seconds": 0.8033,
+          "seconds": 0.4224,
           "words": 8,
           "errors": 0,
           "hypothesis": "She was here just now, said the count."
@@ -774,7 +776,7 @@
         "librispeech/7176-88083-0015": {
           "set": "librispeech",
           "audio_seconds": 2.335,
-          "seconds": 1.1611,
+          "seconds": 0.4282,
           "words": 8,
           "errors": 0,
           "hypothesis": "almost instantly he was forced to the top."
@@ -782,7 +784,7 @@
         "librispeech/7176-92135-0013": {
           "set": "librispeech",
           "audio_seconds": 3.15,
-          "seconds": 0.949,
+          "seconds": 0.4631,
           "words": 8,
           "errors": 1,
           "hypothesis": "We modern, however, see the absurdity of it."
@@ -790,7 +792,7 @@
         "librispeech/7176-92135-0040": {
           "set": "librispeech",
           "audio_seconds": 10.345,
-          "seconds": 1.8081,
+          "seconds": 0.8273,
           "words": 31,
           "errors": 4,
           "hypothesis": "Hostess replaces Lump and inclines empty t-pot over tray for a moment, then hands in my cup painted brown inside, thus deceiving the gentleman with the telescope in the upper circle."
@@ -798,7 +800,7 @@
         "librispeech/7729-102255-0020": {
           "set": "librispeech",
           "audio_seconds": 10.975,
-          "seconds": 1.5685,
+          "seconds": 0.7014,
           "words": 25,
           "errors": 3,
           "hypothesis": "The incident was not violent, nor even dramatic, no posse was summoned, no further effort made, and reader fearing personal violence soon fled into skies."
@@ -806,7 +808,7 @@
         "librispeech/7729-102255-0046": {
           "set": "librispeech",
           "audio_seconds": 19.945,
-          "seconds": 2.9173,
+          "seconds": 1.0753,
           "words": 56,
           "errors": 5,
           "hypothesis": "In the early morning of the next day, May 29, a company of dragons with one empty saddle came down from the fort. And while the pro-slavery men still slept, the prisoner and his escort were on their way across the prairies to the Compton in the charge of officers of the United States Army."
@@ -814,7 +816,7 @@
         "librispeech/8224-274384-0007": {
           "set": "librispeech",
           "audio_seconds": 6.23,
-          "seconds": 1.1093,
+          "seconds": 0.527,
           "words": 12,
           "errors": 1,
           "hypothesis": "Have mercy, Lord, on me, I pray, for men with me devour.\""
@@ -822,7 +824,7 @@
         "librispeech/8230-279154-0019": {
           "set": "librispeech",
           "audio_seconds": 18.145,
-          "seconds": 3.1192,
+          "seconds": 1.2806,
           "words": 44,
           "errors": 0,
           "hypothesis": "It would seem that only rather recent events can be placed at all accurately by means of feelings giving their temporal relation to the present, but it is clear that such feelings must play an essential part in the process of dating remembered events."
@@ -830,7 +832,7 @@
         "librispeech/8455-210777-0002": {
           "set": "librispeech",
           "audio_seconds": 6.24,
-          "seconds": 1.4045,
+          "seconds": 0.6055,
           "words": 19,
           "errors": 2,
           "hypothesis": "On arriving at home at my own residence, I found that Arshalan was filled with a brilliant company."
@@ -838,7 +840,7 @@
         "librispeech/8455-210777-0028": {
           "set": "librispeech",
           "audio_seconds": 7.735,
-          "seconds": 1.03,
+          "seconds": 0.5824,
           "words": 18,
           "errors": 0,
           "hypothesis": "Jack would become Eva's happy husband, and would remain amidst the hurried duties of the eager world."
@@ -846,7 +848,7 @@
         "librispeech/8455-210777-0054": {
           "set": "librispeech",
           "audio_seconds": 2.52,
-          "seconds": 0.6597,
+          "seconds": 0.3859,
           "words": 5,
           "errors": 0,
           "hypothesis": "The letter ran as follows."
@@ -854,7 +856,7 @@
         "librispeech/8463-287645-0009": {
           "set": "librispeech",
           "audio_seconds": 3.71,
-          "seconds": 0.8895,
+          "seconds": 0.5099,
           "words": 12,
           "errors": 0,
           "hypothesis": "I never knew of, but one man who could ever please him."
@@ -862,7 +864,7 @@
         "librispeech/8463-294828-0000": {
           "set": "librispeech",
           "audio_seconds": 3.615,
-          "seconds": 0.6937,
+          "seconds": 0.433,
           "words": 5,
           "errors": 0,
           "hypothesis": "Chapter 3 As Master Wishes"
@@ -870,7 +872,7 @@
         "librispeech/8463-294828-0027": {
           "set": "librispeech",
           "audio_seconds": 5.98,
-          "seconds": 0.8936,
+          "seconds": 0.5257,
           "words": 16,
           "errors": 0,
           "hypothesis": "I left instructions for shipping my containers of stuffed animals and dried plants to Paris France."
@@ -878,7 +880,7 @@
         "librispeech/8555-284447-0014": {
           "set": "librispeech",
           "audio_seconds": 8.47,
-          "seconds": 1.3101,
+          "seconds": 0.6706,
           "words": 28,
           "errors": 2,
           "hypothesis": "The idea of patching cat and bill to a goat was vastly amusing to him, and the more he thought of it, the more he roared with laughter."
@@ -886,7 +888,7 @@
         "librispeech/8555-284449-0015": {
           "set": "librispeech",
           "audio_seconds": 5.12,
-          "seconds": 0.9932,
+          "seconds": 0.537,
           "words": 14,
           "errors": 5,
           "hypothesis": "I'll not be wicked anymore, side the old boo-through, I'll reform."
@@ -894,7 +896,7 @@
         "librispeech/908-157963-0004": {
           "set": "librispeech",
           "audio_seconds": 13.99,
-          "seconds": 1.4867,
+          "seconds": 0.7688,
           "words": 33,
           "errors": 3,
           "hypothesis": "Thel is like a watery bow and like a parting cloud, like a reflection in a glass, like shadows in the water, like dreams of infants, like a smile upon an infant's face."
@@ -902,7 +904,7 @@
         "librispeech/908-157963-0030": {
           "set": "librispeech",
           "audio_seconds": 4.52,
-          "seconds": 0.8137,
+          "seconds": 0.483,
           "words": 10,
           "errors": 0,
           "hypothesis": "Why an ear, a whirlpool, fierce to draw creations in?"
@@ -910,7 +912,7 @@
         "fleurs/de/10004059102127011984": {
           "set": "fleurs",
           "audio_seconds": 17.94,
-          "seconds": 2.0596,
+          "seconds": 1.1186,
           "words": 18,
           "errors": 9,
           "hypothesis": "Für die besten Aussichtern auf Hong Kong sollten sie die Insel verlassen und zu"
@@ -918,7 +920,7 @@
         "fleurs/de/10009182821551087671": {
           "set": "fleurs",
           "audio_seconds": 11.16,
-          "seconds": 1.1663,
+          "seconds": 0.6538,
           "words": 21,
           "errors": 5,
           "hypothesis": "Er griff auch alles an, was ins Wasser kam. Selbst ein großer Dinosaurier wieder T-Rex war im Nichtgewachsen."
@@ -926,7 +928,7 @@
         "fleurs/de/10014044777125235464": {
           "set": "fleurs",
           "audio_seconds": 12.42,
-          "seconds": 1.7798,
+          "seconds": 0.8416,
           "words": 23,
           "errors": 5,
           "hypothesis": "Wenn Sie den Film das Vermächtnis der Tempelrütter gesehen haben, denken Sie vielleicht das auf der Rückseite der Unabhängig Weitzerklärung eine Schatzkarte gezeichnet wurde."
@@ -934,7 +936,7 @@
         "fleurs/de/10030056357041867775": {
           "set": "fleurs",
           "audio_seconds": 10.68,
-          "seconds": 1.9642,
+          "seconds": 0.8772,
           "words": 31,
           "errors": 6,
           "hypothesis": "Es leben noch viele Männer und Frauen, die ihre Zeit, die ihr überlebt haben und viele weitere mit Angehörigen die dort ermordet wurden oder sich zu Tod arbeiten, juden und nicht juden gleichermaßen."
@@ -942,7 +944,7 @@
         "fleurs/de/10058186628567796965": {
           "set": "fleurs",
           "audio_seconds": 9.9,
-          "seconds": 2.8757,
+          "seconds": 1.0616,
           "words": 21,
           "errors": 6,
           "hypothesis": "Die Höhle befindet sich auf der Spitze eines der Bergen örtlich von Mecker und ist zum Reste Welt völlig isoliert."
@@ -950,7 +952,7 @@
         "fleurs/de/10058299886985225661": {
           "set": "fleurs",
           "audio_seconds": 8.4,
-          "seconds": 1.4113,
+          "seconds": 0.6931,
           "words": 16,
           "errors": 8,
           "hypothesis": "Dieses Settlement war nötig, um Sandbänkonschrände zu bilden, die als Lebensröme verwildt ihre Dinden."
@@ -958,7 +960,7 @@
         "fleurs/de/10095057775426831514": {
           "set": "fleurs",
           "audio_seconds": 12.96,
-          "seconds": 2.1149,
+          "seconds": 1.1044,
           "words": 34,
           "errors": 7,
           "hypothesis": "Blocks können auch dazu beitragen, die Schreibfertigkeiten von Schülern zu verbessern. Zu haben Schülern am Anfang ihrer Blockerfahrung auf dein schlampige Grammatik und Reitschreibung, aber das ändert sich normalerweise, wenn es ein Publikum gibt."
@@ -966,7 +968,7 @@
         "fleurs/de/10159541282515887574": {
           "set": "fleurs",
           "audio_seconds": 19.68,
-          "seconds": 1.9134,
+          "seconds": 1.0831,
           "words": 18,
           "errors": 7,
           "hypothesis": "Nachdem der Daumen 1960 erbaut worden war, kamen die Jahreszeitlichen Überflutungen, die die Seidimente in Flussverteilen zum Stilstand."
@@ -974,7 +976,7 @@
         "fleurs/de/10166547362714956625": {
           "set": "fleurs",
           "audio_seconds": 11.04,
-          "seconds": 1.3888,
+          "seconds": 0.7439,
           "words": 19,
           "errors": 7,
           "hypothesis": "Insbesondere wird behauptet, dass man erkennen kann, ob jemand lügt, in dem man minimal Veränderungen des Gesichts auszugrichtig dautet."
@@ -982,7 +984,7 @@
         "fleurs/de/10171859810965764480": {
           "set": "fleurs",
           "audio_seconds": 43.38,
-          "seconds": 3.1092,
+          "seconds": 1.495,
           "words": 44,
           "errors": 7,
           "hypothesis": "Die angemessenen Nützung von Blocks kann Schülerinnen und Schüler befähigen, analytischer und kritischer zu werden durch die aktive Reaktion auf Internet-Materialien können die Schülerinnen und Schüler ihre Positionen im Kontext der Texte anderer definieren und ihre eigenen Perspektive zu bestimmten Themen, darlegen, Urrawetz, 2002."
@@ -990,7 +992,7 @@
         "fleurs/es/1001146817223348054": {
           "set": "fleurs",
           "audio_seconds": 12.84,
-          "seconds": 1.5562,
+          "seconds": 0.791,
           "words": 29,
           "errors": 7,
           "hypothesis": "Se recomienda en faticamente a los viajeros que se informen sobre cualquier rijo del clima extremo en el área que visitan, dado que ellos pueda afectar sus planes de viajer."
@@ -998,7 +1000,7 @@
         "fleurs/es/10050510856477907332": {
           "set": "fleurs",
           "audio_seconds": 21.36,
-          "seconds": 3.1989,
+          "seconds": 1.6339,
           "words": 51,
           "errors": 10,
           "hypothesis": "El uso de cuadro de los blocs pueden poderáralos alumnos para que sean más analíticos y críticos, a través de la respuesta activa a los contenidos de internet, pueden definir sus posturas en el contexto de los escritos de otros, además de establecer sus perspectivos sobre temas específicos, ahora vect 2002."
@@ -1006,7 +1008,7 @@
         "fleurs/es/1008205615316519958": {
           "set": "fleurs",
           "audio_seconds": 9.72,
-          "seconds": 1.2168,
+          "seconds": 0.6647,
           "words": 22,
           "errors": 0,
           "hypothesis": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
@@ -1014,7 +1016,7 @@
         "fleurs/es/10084850086754329587": {
           "set": "fleurs",
           "audio_seconds": 8.58,
-          "seconds": 1.0126,
+          "seconds": 0.5614,
           "words": 15,
           "errors": 1,
           "hypothesis": "Esto parece tener sentido, ya que en la tierra no se percibe su movimiento, ¿sierta?"
@@ -1022,7 +1024,7 @@
         "fleurs/es/10107325335956726764": {
           "set": "fleurs",
           "audio_seconds": 10.62,
-          "seconds": 1.1181,
+          "seconds": 0.613,
           "words": 14,
           "errors": 1,
           "hypothesis": "Carpaneo participó en dos carreras individuales del campeonato aparte de la competencia del miércoles."
@@ -1030,7 +1032,7 @@
         "fleurs/es/1013662909103347734": {
           "set": "fleurs",
           "audio_seconds": 9.78,
-          "seconds": 1.3221,
+          "seconds": 0.7536,
           "words": 23,
           "errors": 6,
           "hypothesis": "Hoy en día, las personas se escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera para otros imágenes acá puntas."
@@ -1038,7 +1040,7 @@
         "fleurs/es/10149016836336603986": {
           "set": "fleurs",
           "audio_seconds": 5.64,
-          "seconds": 0.9396,
+          "seconds": 0.5057,
           "words": 9,
           "errors": 1,
           "hypothesis": "Los luchadores compañeros de Luna también les rindieron homenaje."
@@ -1046,7 +1048,7 @@
         "fleurs/es/10150624747569080019": {
           "set": "fleurs",
           "audio_seconds": 10.26,
-          "seconds": 1.3075,
+          "seconds": 0.697,
           "words": 24,
           "errors": 2,
           "hypothesis": "Dugal, que está casado y tiene dos hijos adultos, no causó una buena impresión a miler que fue a quien le relató la historia."
@@ -1054,7 +1056,7 @@
         "fleurs/es/10155332265364188477": {
           "set": "fleurs",
           "audio_seconds": 10.68,
-          "seconds": 1.5579,
+          "seconds": 0.7077,
           "words": 18,
           "errors": 4,
           "hypothesis": "Entre los fenómenos climáticos regionales y gestacionales extrememos encontramos los ventarrones, las tormentas de nieve y el o polvo."
@@ -1062,7 +1064,7 @@
         "fleurs/es/10192388533260519980": {
           "set": "fleurs",
           "audio_seconds": 12.12,
-          "seconds": 1.527,
+          "seconds": 0.7274,
           "words": 30,
           "errors": 4,
           "hypothesis": "Se puede definir a una civilización como una cultura específica de que forma parte un extensa grupo de personas que vive y trabaja en conjunto, es decir, una sociedad."
@@ -1070,7 +1072,7 @@
         "fleurs/fr/10043298898524273336": {
           "set": "fleurs",
           "audio_seconds": 10.2,
-          "seconds": 1.3352,
+          "seconds": 0.6353,
           "words": 20,
           "errors": 4,
           "hypothesis": "L'accident a eu lieu en terrain montagneux et il semblerait que cela était causé par un incendimalveillant."
@@ -1078,7 +1080,7 @@
         "fleurs/fr/10097171356371990207": {
           "set": "fleurs",
           "audio_seconds": 23.4,
-          "seconds": 3.7333,
+          "seconds": 1.5463,
           "words": 63,
           "errors": 15,
           "hypothesis": "Nous sommes d'accord avec la déclération de l'Usoc, comité au l'impique des États-Unis, selon laquelle les intérêts de nos attlettes et de nos clums ainsi que de leur sport pour tête-tête en nous servir. Cela peut être fait en allant de l'avant et en procédant plutôt à des changements significatifs au sein de notre organisation, qu'à la révocation de la créitation."
@@ -1086,7 +1088,7 @@
         "fleurs/fr/10138021779681596478": {
           "set": "fleurs",
           "audio_seconds": 8.28,
-          "seconds": 1.385,
+          "seconds": 0.7319,
           "words": 26,
           "errors": 14,
           "hypothesis": "Il ajoutait qu'on ne devrait se pendant par leur demander d'assumer des obligations qui n'est pas sur un style de développement, de responsabilité et leur capacité."
@@ -1094,7 +1096,7 @@
         "fleurs/fr/10143749263702132703": {
           "set": "fleurs",
           "audio_seconds": 10.2,
-          "seconds": 1.6365,
+          "seconds": 0.8198,
           "words": 26,
           "errors": 23,
           "hypothesis": "Vus j'essment du team, on ne semble pas où j'essment un peu déliens. Mais plutôt, il n'y a rien dans l'immenseur et des cris et des grandes mots."
@@ -1102,7 +1104,7 @@
         "fleurs/fr/10166091086920486572": {
           "set": "fleurs",
           "audio_seconds": 8.34,
-          "seconds": 1.3306,
+          "seconds": 0.6839,
           "words": 26,
           "errors": 8,
           "hypothesis": "Le même mois, un autre avion de lignes a fait une sortie de piste à mâchade et hurtait un mur, tu ans ainsi 17 personnes."
@@ -1110,7 +1112,7 @@
         "fleurs/fr/10174413140250646001": {
           "set": "fleurs",
           "audio_seconds": 7.2,
-          "seconds": 1.138,
+          "seconds": 0.6257,
           "words": 18,
           "errors": 5,
           "hypothesis": "Jean-carlo fitient là, a perdu le contrôle de sa voiture, y a terminé la course peu après le démarrage."
@@ -1118,7 +1120,7 @@
         "fleurs/fr/10221277978969763776": {
           "set": "fleurs",
           "audio_seconds": 8.4,
-          "seconds": 1.382,
+          "seconds": 0.7465,
           "words": 28,
           "errors": 11,
           "hypothesis": "Malgré l'une est avantage de dès le paut trop pendant le deuxième set, il a fallu passer par un time break, une fois que le score a à 16."
@@ -1126,7 +1128,7 @@
         "fleurs/fr/10334413597118469552": {
           "set": "fleurs",
           "audio_seconds": 11.64,
-          "seconds": 1.3693,
+          "seconds": 0.7958,
           "words": 25,
           "errors": 8,
           "hypothesis": "Malheureusement, il est difficile d'étudier le flux de circulation, qu'à les comportements des conducteurs ne peut être prédit avec 100% de certitudes."
@@ -1134,7 +1136,7 @@
         "fleurs/fr/10385751433252343757": {
           "set": "fleurs",
           "audio_seconds": 7.68,
-          "seconds": 1.3569,
+          "seconds": 0.7275,
           "words": 26,
           "errors": 6,
           "hypothesis": "Les deux composés réagissent la avec l'autre pour former des cristaux qui peut bloquer la fonction rénale en déclarer des chercheurs de l'hivercité."
@@ -1142,10 +1144,1130 @@
         "fleurs/fr/10399459061919571703": {
           "set": "fleurs",
           "audio_seconds": 14.82,
-          "seconds": 2.6594,
+          "seconds": 1.3281,
           "words": 48,
           "errors": 26,
           "hypothesis": "Par exemple, des étudiants en de l'école baînée, en cas en ligne d'une heure, on se doit à chaque année un site où elle peut concentrer à leur visite de la capitale de l'État. De chaque année, le site est renuné à jour, mais des enseignes versions sont consulés à leur même pour serre bien d'album."
+        }
+      }
+    },
+    {
+      "backend": "whisper",
+      "model": "tiny",
+      "device": "cpu",
+      "precision": "float32",
+      "gpu": null,
+      "load_seconds": 2.069,
+      "peak_rss_bytes": 761847808,
+      "peak_gpu_bytes": null,
+      "peak_gpu_sampled": false,
+      "audio_seconds": 1132.225,
+      "seconds": 61.755,
+      "rtfx": 18.33,
+      "sets": {
+        "librispeech": {
+          "clips": 100,
+          "fingerprint": "0b0ec606cf74652e",
+          "audio_seconds": 752.905,
+          "seconds": 41.278,
+          "rtfx": 18.24,
+          "words": 2069,
+          "errors": 161,
+          "substitutions": 115,
+          "deletions": 19,
+          "insertions": 27,
+          "wer": 0.077815,
+          "languages": {
+            "en": {
+              "words": 2069,
+              "errors": 161,
+              "substitutions": 115,
+              "deletions": 19,
+              "insertions": 27,
+              "wer": 0.077815
+            }
+          }
+        },
+        "fleurs": {
+          "clips": 30,
+          "fingerprint": "f2ef95b66f2116a7",
+          "audio_seconds": 379.32,
+          "seconds": 20.478,
+          "rtfx": 18.52,
+          "words": 786,
+          "errors": 255,
+          "substitutions": 170,
+          "deletions": 43,
+          "insertions": 42,
+          "wer": 0.324427,
+          "languages": {
+            "de": {
+              "words": 245,
+              "errors": 70,
+              "substitutions": 52,
+              "deletions": 13,
+              "insertions": 5,
+              "wer": 0.285714
+            },
+            "es": {
+              "words": 235,
+              "errors": 45,
+              "substitutions": 33,
+              "deletions": 2,
+              "insertions": 10,
+              "wer": 0.191489
+            },
+            "fr": {
+              "words": 306,
+              "errors": 140,
+              "substitutions": 85,
+              "deletions": 28,
+              "insertions": 27,
+              "wer": 0.457516
+            }
+          }
+        }
+      },
+      "clips": {
+        "librispeech/1089-134686-0000": {
+          "set": "librispeech",
+          "audio_seconds": 10.435,
+          "seconds": 0.5377,
+          "words": 28,
+          "errors": 2,
+          "hypothesis": " He hoped there would be stew for dinner, turnips and carrots and bruised potatoes and fat mutton pieces to be ladled out in thick, peppered flower-fatten sauce."
+        },
+        "librispeech/1089-134686-0026": {
+          "set": "librispeech",
+          "audio_seconds": 4.01,
+          "seconds": 0.367,
+          "words": 13,
+          "errors": 1,
+          "hypothesis": " The rector did not ask for a catacysm to hear the lesson from."
+        },
+        "librispeech/1089-134691-0014": {
+          "set": "librispeech",
+          "audio_seconds": 4.755,
+          "seconds": 0.3431,
+          "words": 12,
+          "errors": 0,
+          "hypothesis": " The phrase and the day and the scene harmonized in a chord."
+        },
+        "librispeech/1188-133604-0014": {
+          "set": "librispeech",
+          "audio_seconds": 4.39,
+          "seconds": 0.3215,
+          "words": 12,
+          "errors": 2,
+          "hypothesis": " Do not therefore think that the Gothic schools an easy one."
+        },
+        "librispeech/1188-133604-0040": {
+          "set": "librispeech",
+          "audio_seconds": 3.23,
+          "seconds": 0.3148,
+          "words": 8,
+          "errors": 0,
+          "hypothesis": " The crampness and the poverty are all intended."
+        },
+        "librispeech/121-123859-0002": {
+          "set": "librispeech",
+          "audio_seconds": 30.04,
+          "seconds": 1.2397,
+          "words": 64,
+          "errors": 15,
+          "hypothesis": " But reckoning time, whose million accidents, creep in twixed vows, in changed a crease of kings, tan sacred beauty, blunt the sharpest intense, divert strong minds to the course of altering things, a last, while fearing of time's tyranny, might I not then say, now I love you best, when I was certain or in certainty, crowning the present, doubting of the rest."
+        },
+        "librispeech/121-127105-0023": {
+          "set": "librispeech",
+          "audio_seconds": 10.91,
+          "seconds": 0.4758,
+          "words": 29,
+          "errors": 0,
+          "hypothesis": " Let me say here distinctly to have done with it that this narrative from an exact transcript of my own made much later is what I shall presently give."
+        },
+        "librispeech/1221-135766-0012": {
+          "set": "librispeech",
+          "audio_seconds": 16.22,
+          "seconds": 0.6019,
+          "words": 39,
+          "errors": 1,
+          "hypothesis": " Brewting over all these matters, the mother felt like one who has evoked a spirit, but by some irregularity in the process of conjuration has failed to win the master word that should control this new and incomprehensible intelligence."
+        },
+        "librispeech/1221-135767-0022": {
+          "set": "librispeech",
+          "audio_seconds": 14.395,
+          "seconds": 0.6025,
+          "words": 38,
+          "errors": 2,
+          "hypothesis": " But the proprietor appeared already to have re-linkished as hopeless the effort to perpetuate on this side of the Atlantic in a hard soil and amid the close struggle for subsistence, the native English taste for ornamental gardening."
+        },
+        "librispeech/1284-1180-0023": {
+          "set": "librispeech",
+          "audio_seconds": 5.61,
+          "seconds": 0.41,
+          "words": 23,
+          "errors": 2,
+          "hypothesis": " You see, I've lived all my life without Nunkie, the silent one, and there was no one to tell me anything."
+        },
+        "librispeech/1284-1181-0017": {
+          "set": "librispeech",
+          "audio_seconds": 11.775,
+          "seconds": 0.6218,
+          "words": 45,
+          "errors": 3,
+          "hypothesis": " The Wizard of Oz, who used to be a humbug and new no magic at all, has been taking lessons of Glenda, and I'm told he is getting to be a pretty good wizard, but he is merely the assistant of the great sorcerers."
+        },
+        "librispeech/1320-122612-0013": {
+          "set": "librispeech",
+          "audio_seconds": 6.55,
+          "seconds": 0.3972,
+          "words": 22,
+          "errors": 0,
+          "hypothesis": " A circle of a few hundred feet in circumference was drawn, and each of the party took a segment for his portion."
+        },
+        "librispeech/1320-122617-0022": {
+          "set": "librispeech",
+          "audio_seconds": 3.855,
+          "seconds": 0.3276,
+          "words": 12,
+          "errors": 2,
+          "hypothesis": " The Delaware's are children of the tortoise and they outstrip the deer."
+        },
+        "librispeech/1580-141083-0006": {
+          "set": "librispeech",
+          "audio_seconds": 10.85,
+          "seconds": 0.5282,
+          "words": 36,
+          "errors": 0,
+          "hypothesis": " The only duplicate which existed so far as I knew was that which belonged to my servant, Bannister, a man who has looked after my room for 10 years and whose honesty is absolutely above suspicion."
+        },
+        "librispeech/1580-141083-0032": {
+          "set": "librispeech",
+          "audio_seconds": 4.135,
+          "seconds": 0.308,
+          "words": 11,
+          "errors": 1,
+          "hypothesis": " Watson, I have always done you and injustice. There are others."
+        },
+        "librispeech/1580-141084-0005": {
+          "set": "librispeech",
+          "audio_seconds": 2.515,
+          "seconds": 0.257,
+          "words": 6,
+          "errors": 2,
+          "hypothesis": " That is very important in homes."
+        },
+        "librispeech/1580-141084-0031": {
+          "set": "librispeech",
+          "audio_seconds": 6.47,
+          "seconds": 0.4493,
+          "words": 22,
+          "errors": 0,
+          "hypothesis": " We want to know Mr. Gilchrist how you, an honorable man, ever came to commit such an action as that of yesterday."
+        },
+        "librispeech/1995-1826-0006": {
+          "set": "librispeech",
+          "audio_seconds": 2.455,
+          "seconds": 0.2688,
+          "words": 5,
+          "errors": 3,
+          "hypothesis": " Been looking up to him's county."
+        },
+        "librispeech/1995-1836-0005": {
+          "set": "librispeech",
+          "audio_seconds": 10.9,
+          "seconds": 0.6683,
+          "words": 30,
+          "errors": 0,
+          "hypothesis": " Mrs. Gray had met Southerners before, but not intimately, and she always had in mind vividly their cruelty to poor Negroes, a subject she made a point of introducing forthwith."
+        },
+        "librispeech/1995-1837-0016": {
+          "set": "librispeech",
+          "audio_seconds": 7.19,
+          "seconds": 0.3987,
+          "words": 17,
+          "errors": 5,
+          "hypothesis": " For one long moment he passed, stupid, a gate with utter amazement, then leaned dizzy against the tree."
+        },
+        "librispeech/2094-142345-0013": {
+          "set": "librispeech",
+          "audio_seconds": 14.25,
+          "seconds": 0.6018,
+          "words": 40,
+          "errors": 4,
+          "hypothesis": " Her tongue was not less keen than her eye, and whenever a damn soul came within your shot, seemed to take up an unfinished lecture. As a barrel organ takes up a tune precisely at the point where it had left off."
+        },
+        "librispeech/2094-142345-0039": {
+          "set": "librispeech",
+          "audio_seconds": 6.28,
+          "seconds": 0.3934,
+          "words": 22,
+          "errors": 2,
+          "hypothesis": " I've strongest assurance that no evil will happen to you and my uncle and the children for anything I've done."
+        },
+        "librispeech/2300-131720-0004": {
+          "set": "librispeech",
+          "audio_seconds": 19.91,
+          "seconds": 0.6312,
+          "words": 44,
+          "errors": 0,
+          "hypothesis": " Owing to his insistence on low pressure, direct current for use in densely populated districts as the only safe and truly universal, profitable way of delivering electrical energy to the consumers, Edison has been frequently spoken of as an opponent of the alternating current."
+        },
+        "librispeech/2300-131720-0030": {
+          "set": "librispeech",
+          "audio_seconds": 9.98,
+          "seconds": 0.4209,
+          "words": 21,
+          "errors": 0,
+          "hypothesis": " The principle employed in the Edison Electrolytic Meter is that which exemplifies the power of electricity to decompose a chemical substance."
+        },
+        "librispeech/237-126133-0014": {
+          "set": "librispeech",
+          "audio_seconds": 6.79,
+          "seconds": 0.4023,
+          "words": 20,
+          "errors": 5,
+          "hypothesis": " Asked Fronzi in intense interests slipping down out of polysarms and crowding up close to Jasper's side."
+        },
+        "librispeech/237-134493-0015": {
+          "set": "librispeech",
+          "audio_seconds": 6.55,
+          "seconds": 0.3484,
+          "words": 16,
+          "errors": 0,
+          "hypothesis": " There was something individual about the great farm, a most unusual trimness and care for detail."
+        },
+        "librispeech/237-134500-0022": {
+          "set": "librispeech",
+          "audio_seconds": 5.165,
+          "seconds": 0.3818,
+          "words": 21,
+          "errors": 0,
+          "hypothesis": " When she used to tell me about him, I always wondered whether she wasn't a little in love with him."
+        },
+        "librispeech/260-123286-0005": {
+          "set": "librispeech",
+          "audio_seconds": 4.81,
+          "seconds": 0.3447,
+          "words": 16,
+          "errors": 1,
+          "hypothesis": " I am not complaining that the rate is slow, but that the seat is so wide."
+        },
+        "librispeech/260-123286-0031": {
+          "set": "librispeech",
+          "audio_seconds": 5.06,
+          "seconds": 0.3483,
+          "words": 11,
+          "errors": 2,
+          "hypothesis": " As for the Ithiasaurus, has he returned to his submarine cabin?"
+        },
+        "librispeech/260-123288-0025": {
+          "set": "librispeech",
+          "audio_seconds": 13.445,
+          "seconds": 0.6101,
+          "words": 36,
+          "errors": 3,
+          "hypothesis": " Here it comes, there it glides. Now it is up the ragged stump of the mast that's lightly leaps on the provision bag. Decends with a light bound and just skims the powder magazine. Horrible!"
+        },
+        "librispeech/2830-3979-0002": {
+          "set": "librispeech",
+          "audio_seconds": 4.315,
+          "seconds": 0.305,
+          "words": 9,
+          "errors": 0,
+          "hypothesis": " Let us begin with that, his commentary on Galatians."
+        },
+        "librispeech/2830-3980-0015": {
+          "set": "librispeech",
+          "audio_seconds": 2.685,
+          "seconds": 0.2828,
+          "words": 9,
+          "errors": 0,
+          "hypothesis": " For a person to possess knowledge is not enough."
+        },
+        "librispeech/2830-3980-0041": {
+          "set": "librispeech",
+          "audio_seconds": 4.89,
+          "seconds": 0.3325,
+          "words": 11,
+          "errors": 0,
+          "hypothesis": " Grace involves the remission of sins, peace, and a happy conscience."
+        },
+        "librispeech/2830-3980-0067": {
+          "set": "librispeech",
+          "audio_seconds": 8.13,
+          "seconds": 0.4428,
+          "words": 24,
+          "errors": 3,
+          "hypothesis": " This sentence also defines our sins as great, so great in fact that the whole world could not make a man's for a single sin."
+        },
+        "librispeech/2961-960-0016": {
+          "set": "librispeech",
+          "audio_seconds": 7.76,
+          "seconds": 0.3763,
+          "words": 18,
+          "errors": 1,
+          "hypothesis": " But Plato has not the same mastery over his instrument, which he exhibits in the features or symposium."
+        },
+        "librispeech/2961-961-0020": {
+          "set": "librispeech",
+          "audio_seconds": 6.125,
+          "seconds": 0.3465,
+          "words": 17,
+          "errors": 0,
+          "hypothesis": " This is the explanation of the shallows which are found in that part of the Atlantic Ocean."
+        },
+        "librispeech/3570-5695-0000": {
+          "set": "librispeech",
+          "audio_seconds": 4.83,
+          "seconds": 0.3517,
+          "words": 13,
+          "errors": 2,
+          "hypothesis": " In a general way, though not wholly and are consistently these two groups coincide."
+        },
+        "librispeech/3570-5696-0010": {
+          "set": "librispeech",
+          "audio_seconds": 7.57,
+          "seconds": 0.4505,
+          "words": 27,
+          "errors": 0,
+          "hypothesis": " an article may be useful and wasteful both, and its utility to the consumer may be made up of use and waste in the most varying proportions."
+        },
+        "librispeech/3575-170457-0025": {
+          "set": "librispeech",
+          "audio_seconds": 9.205,
+          "seconds": 0.5394,
+          "words": 32,
+          "errors": 2,
+          "hypothesis": " Again, I thank you. This incident I suppose will be renewed no more. If I live to be an old women I shall remember at 30 years' hence as a bright dream."
+        },
+        "librispeech/3575-170457-0051": {
+          "set": "librispeech",
+          "audio_seconds": 4.915,
+          "seconds": 0.3822,
+          "words": 19,
+          "errors": 1,
+          "hypothesis": " At T-time they were sad and silent and the meal went away untouched by any of the three."
+        },
+        "librispeech/3729-6852-0021": {
+          "set": "librispeech",
+          "audio_seconds": 2.96,
+          "seconds": 0.2664,
+          "words": 7,
+          "errors": 0,
+          "hypothesis": " I thank him and take my leave."
+        },
+        "librispeech/4077-13751-0000": {
+          "set": "librispeech",
+          "audio_seconds": 9.56,
+          "seconds": 0.4737,
+          "words": 25,
+          "errors": 1,
+          "hypothesis": " On the 6th of April, 1830, the Church of Jesus Christ of Latter-day Saints was formerly organized and thus took on a legal existence."
+        },
+        "librispeech/4077-13754-0004": {
+          "set": "librispeech",
+          "audio_seconds": 4.985,
+          "seconds": 0.3587,
+          "words": 16,
+          "errors": 4,
+          "hypothesis": " Already in north and south we're talked of. Why not set up also a west?"
+        },
+        "librispeech/4446-2271-0013": {
+          "set": "librispeech",
+          "audio_seconds": 4.4,
+          "seconds": 0.3353,
+          "words": 16,
+          "errors": 3,
+          "hypothesis": " You know, I thought the dance a bit conscious tonight, for the first time."
+        },
+        "librispeech/4446-2273-0014": {
+          "set": "librispeech",
+          "audio_seconds": 2.39,
+          "seconds": 0.2791,
+          "words": 8,
+          "errors": 1,
+          "hypothesis": " There are a few changes in the old quarter."
+        },
+        "librispeech/4446-2275-0004": {
+          "set": "librispeech",
+          "audio_seconds": 2.11,
+          "seconds": 0.249,
+          "words": 5,
+          "errors": 0,
+          "hypothesis": " Alexander did not sit down."
+        },
+        "librispeech/4446-2275-0030": {
+          "set": "librispeech",
+          "audio_seconds": 2.665,
+          "seconds": 0.2942,
+          "words": 8,
+          "errors": 0,
+          "hypothesis": " Yes, Hilda, I know that he said simply."
+        },
+        "librispeech/4507-16021-0010": {
+          "set": "librispeech",
+          "audio_seconds": 15.165,
+          "seconds": 0.4753,
+          "words": 30,
+          "errors": 3,
+          "hypothesis": " We have always thought that it was sometimes a courageous act, and at least a simple and useful deed, where the of the sympathetic attention which duty accepted in fulfilled merits."
+        },
+        "librispeech/4507-16021-0036": {
+          "set": "librispeech",
+          "audio_seconds": 5.435,
+          "seconds": 0.2983,
+          "words": 9,
+          "errors": 2,
+          "hypothesis": " that's form one of these and ideas the other."
+        },
+        "librispeech/4970-29093-0002": {
+          "set": "librispeech",
+          "audio_seconds": 10.73,
+          "seconds": 0.4795,
+          "words": 31,
+          "errors": 0,
+          "hypothesis": " He has no traditions to bind him or guide him, and his impulse is to break away from the occupation his father has followed, and make a new way for himself."
+        },
+        "librispeech/4970-29095-0005": {
+          "set": "librispeech",
+          "audio_seconds": 4.65,
+          "seconds": 0.285,
+          "words": 10,
+          "errors": 3,
+          "hypothesis": " That was greatly try me Ruth and all that relations."
+        },
+        "librispeech/4970-29095-0031": {
+          "set": "librispeech",
+          "audio_seconds": 15.05,
+          "seconds": 0.5639,
+          "words": 37,
+          "errors": 2,
+          "hypothesis": " He doesn't say exactly what it is, said Ruth a little dubiously, but it's something about land and railroads and the nose father that fortunes are made nobody knows exactly how in a new country."
+        },
+        "librispeech/4992-23283-0018": {
+          "set": "librispeech",
+          "audio_seconds": 6.575,
+          "seconds": 0.4042,
+          "words": 20,
+          "errors": 0,
+          "hypothesis": " To relieve her from both, he laid his hand with force upon his heart and said, Do you believe me?"
+        },
+        "librispeech/4992-41806-0000": {
+          "set": "librispeech",
+          "audio_seconds": 14.36,
+          "seconds": 0.6199,
+          "words": 46,
+          "errors": 3,
+          "hypothesis": " Nadi Harmon tried the kitchen pump secretly several times during the evening, for the water had to run uphill all the way from the well to the kitchen sink, and he believed this to be a continual miracle that might give out at any moment."
+        },
+        "librispeech/5105-28233-0008": {
+          "set": "librispeech",
+          "audio_seconds": 10.73,
+          "seconds": 0.5162,
+          "words": 32,
+          "errors": 1,
+          "hypothesis": " When a private in the eighth cavalry, he had been on the point of quitting the army at 28 years of age, but unexpectedly he had been appointed orderly to Captain Servedak."
+        },
+        "librispeech/5105-28240-0024": {
+          "set": "librispeech",
+          "audio_seconds": 8.2,
+          "seconds": 0.3954,
+          "words": 20,
+          "errors": 1,
+          "hypothesis": " doubts now arose and some discussion followed, whether or not it was desirable for Ben Zuf to accompany his master."
+        },
+        "librispeech/5142-33396-0005": {
+          "set": "librispeech",
+          "audio_seconds": 2.225,
+          "seconds": 0.2935,
+          "words": 10,
+          "errors": 0,
+          "hypothesis": " But I stayed that spring and built me a boat."
+        },
+        "librispeech/5142-33396-0031": {
+          "set": "librispeech",
+          "audio_seconds": 7.845,
+          "seconds": 0.479,
+          "words": 29,
+          "errors": 2,
+          "hypothesis": " They set up a crane over the fire and hung the pot upon it, and we sat and watched a boil while we joked. And last the supper began."
+        },
+        "librispeech/5142-33396-0057": {
+          "set": "librispeech",
+          "audio_seconds": 3.075,
+          "seconds": 0.3116,
+          "words": 12,
+          "errors": 0,
+          "hypothesis": " We sunk his ship and men, but him we brought to you."
+        },
+        "librispeech/5142-36377-0014": {
+          "set": "librispeech",
+          "audio_seconds": 25.415,
+          "seconds": 1.076,
+          "words": 84,
+          "errors": 6,
+          "hypothesis": " A pretty girl, and so far as I could judge by appearances, a good girl too. Describing her generally, I may say that she had a small head well-carried and well-setter under shoulders. Bright gray eyes that looked at you honestly and meant what they looked. A trim, slight little figure. Two slight for our English notions of beauty, a strong American accent, and a rare thing in America, a pleasantly tone voice which made the accent agreeable to English years."
+        },
+        "librispeech/5639-40744-0008": {
+          "set": "librispeech",
+          "audio_seconds": 2.215,
+          "seconds": 0.261,
+          "words": 7,
+          "errors": 0,
+          "hypothesis": " Who touches me am I in bed?"
+        },
+        "librispeech/5639-40744-0034": {
+          "set": "librispeech",
+          "audio_seconds": 13.055,
+          "seconds": 0.5426,
+          "words": 36,
+          "errors": 2,
+          "hypothesis": " All rose to do her reverence as if something from heaven had miraculously appeared before them. But gazing on her and trans with admiration, not one of them was able to address a single word to her."
+        },
+        "librispeech/5683-32866-0000": {
+          "set": "librispeech",
+          "audio_seconds": 2.645,
+          "seconds": 0.2559,
+          "words": 7,
+          "errors": 2,
+          "hypothesis": " Miss Lake declined the carriage tonight."
+        },
+        "librispeech/5683-32866-0026": {
+          "set": "librispeech",
+          "audio_seconds": 2.34,
+          "seconds": 0.2861,
+          "words": 5,
+          "errors": 1,
+          "hypothesis": " I boldly lighted my churroot."
+        },
+        "librispeech/5683-32879-0021": {
+          "set": "librispeech",
+          "audio_seconds": 4.09,
+          "seconds": 0.2762,
+          "words": 7,
+          "errors": 1,
+          "hypothesis": " Dorcus in her strange way was moved."
+        },
+        "librispeech/61-70968-0022": {
+          "set": "librispeech",
+          "audio_seconds": 4.67,
+          "seconds": 0.3392,
+          "words": 13,
+          "errors": 6,
+          "hypothesis": " Just find for you to talk old man and through the lean cell and apprentice."
+        },
+        "librispeech/61-70968-0048": {
+          "set": "librispeech",
+          "audio_seconds": 3.02,
+          "seconds": 0.286,
+          "words": 9,
+          "errors": 0,
+          "hypothesis": " and Henry might return to England at any moment."
+        },
+        "librispeech/61-70970-0011": {
+          "set": "librispeech",
+          "audio_seconds": 6.075,
+          "seconds": 0.3528,
+          "words": 15,
+          "errors": 2,
+          "hypothesis": " As any in England I would say, said came well proudly, that is in his day."
+        },
+        "librispeech/61-70970-0037": {
+          "set": "librispeech",
+          "audio_seconds": 5.98,
+          "seconds": 0.3986,
+          "words": 17,
+          "errors": 5,
+          "hypothesis": " His tones rang pleasantly on war intense ears, and forth with the good fellowship was heralded between them."
+        },
+        "librispeech/672-122797-0022": {
+          "set": "librispeech",
+          "audio_seconds": 19.005,
+          "seconds": 0.746,
+          "words": 50,
+          "errors": 0,
+          "hypothesis": " The axe struck deep into the very pith. The tree fell to the earth with a sigh. He felt a pang. It was like a swoon. He could not think of happiness. For he was sorrowful at being separated from his home from the place where he had sprung up."
+        },
+        "librispeech/672-122797-0049": {
+          "set": "librispeech",
+          "audio_seconds": 2.02,
+          "seconds": 0.2485,
+          "words": 2,
+          "errors": 0,
+          "hypothesis": " Squeak, squeak!"
+        },
+        "librispeech/6829-68769-0000": {
+          "set": "librispeech",
+          "audio_seconds": 11.695,
+          "seconds": 0.5343,
+          "words": 37,
+          "errors": 4,
+          "hypothesis": " Can if and Beth refrain from telling the other girls or uncle John of old Will Rogers visit? But they got Mr. Watson in the library and questioned him closely about the penalty for forging a check."
+        },
+        "librispeech/6829-68769-0026": {
+          "set": "librispeech",
+          "audio_seconds": 4.64,
+          "seconds": 0.3311,
+          "words": 15,
+          "errors": 2,
+          "hypothesis": " He spoke simply, but paced up and down the neurocell in front of them."
+        },
+        "librispeech/6829-68769-0052": {
+          "set": "librispeech",
+          "audio_seconds": 4.6,
+          "seconds": 0.3343,
+          "words": 17,
+          "errors": 0,
+          "hypothesis": " He might have had that forged check for the face of it if he'd been sharp."
+        },
+        "librispeech/6829-68771-0024": {
+          "set": "librispeech",
+          "audio_seconds": 6.245,
+          "seconds": 0.3787,
+          "words": 20,
+          "errors": 0,
+          "hypothesis": " For the first time, the maid seemed a little confused and her gaze wandered from the face of her visitor."
+        },
+        "librispeech/6930-75918-0014": {
+          "set": "librispeech",
+          "audio_seconds": 16.84,
+          "seconds": 0.6401,
+          "words": 43,
+          "errors": 2,
+          "hypothesis": " But, continued Rauh, not interrupted by this movement of his friend, Heaven be praised the French who are pronounced to be thoughtless and indiscrete reckless even, are capable of bringing a calm and sound judgment to bear on matters of such high importance."
+        },
+        "librispeech/6930-76324-0019": {
+          "set": "librispeech",
+          "audio_seconds": 2.575,
+          "seconds": 0.2732,
+          "words": 8,
+          "errors": 0,
+          "hypothesis": " Now let's dust the furniture and pictures."
+        },
+        "librispeech/6930-81414-0016": {
+          "set": "librispeech",
+          "audio_seconds": 2.16,
+          "seconds": 0.2763,
+          "words": 6,
+          "errors": 1,
+          "hypothesis": " But that is Kaffer's knife."
+        },
+        "librispeech/7021-79740-0004": {
+          "set": "librispeech",
+          "audio_seconds": 6.465,
+          "seconds": 0.3838,
+          "words": 17,
+          "errors": 6,
+          "hypothesis": " You have come and Della and Della was the name of Jane Stahl to make Rosalie a visit."
+        },
+        "librispeech/7021-85628-0009": {
+          "set": "librispeech",
+          "audio_seconds": 8.54,
+          "seconds": 0.3853,
+          "words": 21,
+          "errors": 0,
+          "hypothesis": " At the farther end of the largest hall, a table was set with golden cups and golden plates in long rows."
+        },
+        "librispeech/7127-75946-0008": {
+          "set": "librispeech",
+          "audio_seconds": 4.46,
+          "seconds": 0.3119,
+          "words": 10,
+          "errors": 0,
+          "hypothesis": " Does your majesty then no longer believe the disloyal attempt?"
+        },
+        "librispeech/7127-75947-0004": {
+          "set": "librispeech",
+          "audio_seconds": 1.905,
+          "seconds": 0.2264,
+          "words": 2,
+          "errors": 0,
+          "hypothesis": " Explain yourself."
+        },
+        "librispeech/7127-75947-0030": {
+          "set": "librispeech",
+          "audio_seconds": 2.76,
+          "seconds": 0.2802,
+          "words": 8,
+          "errors": 0,
+          "hypothesis": " She was here just now, said the count."
+        },
+        "librispeech/7176-88083-0015": {
+          "set": "librispeech",
+          "audio_seconds": 2.335,
+          "seconds": 0.2749,
+          "words": 8,
+          "errors": 0,
+          "hypothesis": " almost instantly he was forced to the top."
+        },
+        "librispeech/7176-92135-0013": {
+          "set": "librispeech",
+          "audio_seconds": 3.15,
+          "seconds": 0.2922,
+          "words": 8,
+          "errors": 1,
+          "hypothesis": " We modernse however, see the absurdity of it."
+        },
+        "librispeech/7176-92135-0040": {
+          "set": "librispeech",
+          "audio_seconds": 10.345,
+          "seconds": 0.507,
+          "words": 31,
+          "errors": 5,
+          "hypothesis": " Hostess replaces Lump and inclines empty t-pot over tray for a moment, then handsome cup painted brown inside, thus deceiving the gentleman with the telescope in the upper circle."
+        },
+        "librispeech/7729-102255-0020": {
+          "set": "librispeech",
+          "audio_seconds": 10.975,
+          "seconds": 0.4601,
+          "words": 25,
+          "errors": 3,
+          "hypothesis": " The incident was not violent, nor even dramatic, no Posse was summoned, no further effort made, and reader fearing personal violence soon fled into skies."
+        },
+        "librispeech/7729-102255-0046": {
+          "set": "librispeech",
+          "audio_seconds": 19.945,
+          "seconds": 0.7498,
+          "words": 56,
+          "errors": 2,
+          "hypothesis": " In the early morning of the next day, May 29, a company of dragoons with one empty saddle came down from the fort. And while the pro-slavery men still slept, the prisoner and his escort were on their way across the prairies to Lecompton in the charge of officers of the United States Army."
+        },
+        "librispeech/8224-274384-0007": {
+          "set": "librispeech",
+          "audio_seconds": 6.23,
+          "seconds": 0.3272,
+          "words": 12,
+          "errors": 1,
+          "hypothesis": " Have mercy Lord on me, I pray, for men with me devour."
+        },
+        "librispeech/8230-279154-0019": {
+          "set": "librispeech",
+          "audio_seconds": 18.145,
+          "seconds": 0.6039,
+          "words": 44,
+          "errors": 0,
+          "hypothesis": " It would seem that only rather recent events can be placed at all accurately by means of feelings giving their temporal relation to the present. But it is clear that such feelings must play an essential part in the process of dating remembered events."
+        },
+        "librispeech/8455-210777-0002": {
+          "set": "librispeech",
+          "audio_seconds": 6.24,
+          "seconds": 0.3924,
+          "words": 19,
+          "errors": 2,
+          "hypothesis": " On arriving at home at my own residence, I found that Arshalan was filled with a brilliant company."
+        },
+        "librispeech/8455-210777-0028": {
+          "set": "librispeech",
+          "audio_seconds": 7.735,
+          "seconds": 0.3775,
+          "words": 18,
+          "errors": 2,
+          "hypothesis": " Jack would become Eva's happy husband and would remain a mist the hurried duties of the eager world."
+        },
+        "librispeech/8455-210777-0054": {
+          "set": "librispeech",
+          "audio_seconds": 2.52,
+          "seconds": 0.2477,
+          "words": 5,
+          "errors": 0,
+          "hypothesis": " The letter ran as follows."
+        },
+        "librispeech/8463-287645-0009": {
+          "set": "librispeech",
+          "audio_seconds": 3.71,
+          "seconds": 0.303,
+          "words": 12,
+          "errors": 0,
+          "hypothesis": " I never knew of, but one man who could ever please him."
+        },
+        "librispeech/8463-294828-0000": {
+          "set": "librispeech",
+          "audio_seconds": 3.615,
+          "seconds": 0.2635,
+          "words": 5,
+          "errors": 0,
+          "hypothesis": " Chapter 3. As Master Wishes."
+        },
+        "librispeech/8463-294828-0027": {
+          "set": "librispeech",
+          "audio_seconds": 5.98,
+          "seconds": 0.3329,
+          "words": 16,
+          "errors": 0,
+          "hypothesis": " I left instructions for shipping my containers of stuffed animals and dried plants to Paris France."
+        },
+        "librispeech/8555-284447-0014": {
+          "set": "librispeech",
+          "audio_seconds": 8.47,
+          "seconds": 0.4515,
+          "words": 28,
+          "errors": 2,
+          "hypothesis": " The idea of patching cat and bill to a goat was vastly amusing to him, and the more he thought of it, the more he roared with laughter."
+        },
+        "librispeech/8555-284449-0015": {
+          "set": "librispeech",
+          "audio_seconds": 5.12,
+          "seconds": 0.3523,
+          "words": 14,
+          "errors": 5,
+          "hypothesis": " I'll not be wicked anymore, side the old boo-through. I'll reform."
+        },
+        "librispeech/908-157963-0004": {
+          "set": "librispeech",
+          "audio_seconds": 13.99,
+          "seconds": 0.5119,
+          "words": 33,
+          "errors": 3,
+          "hypothesis": " Thel is like a watery bow and like a parting cloud, like a reflection in a glass, like shadows in the water, like dreams of infants, like a smile upon an infant's face."
+        },
+        "librispeech/908-157963-0030": {
+          "set": "librispeech",
+          "audio_seconds": 4.52,
+          "seconds": 0.2959,
+          "words": 10,
+          "errors": 2,
+          "hypothesis": " Why in ear a whirlpool fears to draw creations in?"
+        },
+        "fleurs/de/10004059102127011984": {
+          "set": "fleurs",
+          "audio_seconds": 17.94,
+          "seconds": 0.4767,
+          "words": 18,
+          "errors": 5,
+          "hypothesis": " Für die besten Aussichtern auf Hong Kong sollten sie die Insel verlassen und zum Gegenüberlehenden Ufer von Kovloom fahren."
+        },
+        "fleurs/de/10009182821551087671": {
+          "set": "fleurs",
+          "audio_seconds": 11.16,
+          "seconds": 0.4374,
+          "words": 21,
+          "errors": 7,
+          "hypothesis": " Ergriff auch alles an, was ins Wasser kam. Selbst ein großer Dinosaurier wieder T-Rex war im Nichtgewachsen."
+        },
+        "fleurs/de/10014044777125235464": {
+          "set": "fleurs",
+          "audio_seconds": 12.42,
+          "seconds": 0.5671,
+          "words": 23,
+          "errors": 5,
+          "hypothesis": " Wenn Sie den Film das Vermechtnis der Tempelritter gesehen haben, denken Sie vielleicht das auf der Rückseite der Unabhängig Weitzerklärung eine Schatzkarte gezeichnet wurde."
+        },
+        "fleurs/de/10030056357041867775": {
+          "set": "fleurs",
+          "audio_seconds": 10.68,
+          "seconds": 0.6112,
+          "words": 31,
+          "errors": 7,
+          "hypothesis": " Es leben noch viele Männer und Frauen, die ihre Zeit, die ihr überlebt haben und viele weitere mit Anhgehörigen die dort ermordet wurden oder sich zu toten arbeiten, juden und nicht juden gleichermaßen."
+        },
+        "fleurs/de/10058186628567796965": {
+          "set": "fleurs",
+          "audio_seconds": 9.9,
+          "seconds": 0.4574,
+          "words": 21,
+          "errors": 6,
+          "hypothesis": " Die Höhle befindet sich auf der Spitze eines der Bergen örtlich von Mecker und ist zum Reste welt völlig isoliert."
+        },
+        "fleurs/de/10058299886985225661": {
+          "set": "fleurs",
+          "audio_seconds": 8.4,
+          "seconds": 0.6757,
+          "words": 16,
+          "errors": 8,
+          "hypothesis": " Dieses Settlement war nötig, um Sandbänkonschrände zu bilden, die als Lebensröme verwildert hier"
+        },
+        "fleurs/de/10095057775426831514": {
+          "set": "fleurs",
+          "audio_seconds": 12.96,
+          "seconds": 0.7146,
+          "words": 34,
+          "errors": 10,
+          "hypothesis": " Blocks können auch dazu beitragen, die Schreibfertigkeiten von Schülern zu verbessern. Zu haben Schülern am Anfang ihrer Blog Erfahrung auf dein schlampe gekromatigen Reitschreibung, aber das ändert sich normalerweise, wenn es ein Publikum gibt."
+        },
+        "fleurs/de/10159541282515887574": {
+          "set": "fleurs",
+          "audio_seconds": 19.68,
+          "seconds": 0.7083,
+          "words": 18,
+          "errors": 8,
+          "hypothesis": " Nachdem der Damen 1960er Baut worden war, kamen die Jahreszeitlichen Überflutungen, die Sie sehdimente in Flussverteilen zum Stilstand."
+        },
+        "fleurs/de/10166547362714956625": {
+          "set": "fleurs",
+          "audio_seconds": 11.04,
+          "seconds": 0.5002,
+          "words": 19,
+          "errors": 6,
+          "hypothesis": " Insbesondere wird behauptet, dass man erkennen kann, ob jemand lügt, in dem man minimale Veränderungen des Gesichts auszugrichtig geäldert."
+        },
+        "fleurs/de/10171859810965764480": {
+          "set": "fleurs",
+          "audio_seconds": 43.38,
+          "seconds": 1.2616,
+          "words": 44,
+          "errors": 8,
+          "hypothesis": " Die angemessenen Nützung von Blocks kann Schülerinnen und Schüler befähigen, analytischer und kritischer zu werden durch die aktive Reaktion auf Internetmaterialien können die Schülerinnen ihre Positionen im Kontext der Texte anderer definieren und ihre eigenen Perspektiven zu bestimmten Themen"
+        },
+        "fleurs/es/1001146817223348054": {
+          "set": "fleurs",
+          "audio_seconds": 12.84,
+          "seconds": 0.5744,
+          "words": 29,
+          "errors": 7,
+          "hypothesis": " Se recomienda en faticamente a los viajeros que se informen sobre cualquier rijo del clima extremo en el área que visitan, dado que ellos pueda afectar sus planes de viajer."
+        },
+        "fleurs/es/10050510856477907332": {
+          "set": "fleurs",
+          "audio_seconds": 21.36,
+          "seconds": 1.0426,
+          "words": 51,
+          "errors": 10,
+          "hypothesis": " El uso de cuadro de los blocs pueden poder aralos alumnos para que sean más analíticos y críticos, a través de la respuesta activa a los contenidos de internet, pueden definir sus posturas en el contexto de los escritos de otros, además de establecer sus perspectivos sobre temas específicos. Ahora vecte 2002."
+        },
+        "fleurs/es/1008205615316519958": {
+          "set": "fleurs",
+          "audio_seconds": 9.72,
+          "seconds": 0.4427,
+          "words": 22,
+          "errors": 0,
+          "hypothesis": " Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
+        },
+        "fleurs/es/10084850086754329587": {
+          "set": "fleurs",
+          "audio_seconds": 8.58,
+          "seconds": 0.3815,
+          "words": 15,
+          "errors": 1,
+          "hypothesis": " Esto parece tener sentido, ya que en la tierra no se percibe su movimiento, ¿sierto?"
+        },
+        "fleurs/es/10107325335956726764": {
+          "set": "fleurs",
+          "audio_seconds": 10.62,
+          "seconds": 0.4184,
+          "words": 14,
+          "errors": 3,
+          "hypothesis": " Carpanéo participó en dos carreras individuales del campeonato a parte de la competencia del miércoles."
+        },
+        "fleurs/es/1013662909103347734": {
+          "set": "fleurs",
+          "audio_seconds": 9.78,
+          "seconds": 0.4926,
+          "words": 23,
+          "errors": 9,
+          "hypothesis": " hoy en día las personas se escriben mensajes en las pantallas de sus computas horas no tienen la necesidad de siquiera para los temas al sonso capuntas"
+        },
+        "fleurs/es/10149016836336603986": {
+          "set": "fleurs",
+          "audio_seconds": 5.64,
+          "seconds": 0.344,
+          "words": 9,
+          "errors": 2,
+          "hypothesis": " Los luchadores compañeros de Luna también le rindieron a menágeno."
+        },
+        "fleurs/es/10150624747569080019": {
+          "set": "fleurs",
+          "audio_seconds": 10.26,
+          "seconds": 0.4786,
+          "words": 24,
+          "errors": 6,
+          "hypothesis": " Dugal, que está casado y tiene dos hijos adultos, no causó una buena impresión a miler que fue aquí en la relato la historia."
+        },
+        "fleurs/es/10155332265364188477": {
+          "set": "fleurs",
+          "audio_seconds": 10.68,
+          "seconds": 0.5122,
+          "words": 18,
+          "errors": 3,
+          "hypothesis": " Entre los fenómenos climáticos regionales y estacionales extrememos encontramos los ventarrones, las tormentas de nieve y el o polvo."
+        },
+        "fleurs/es/10192388533260519980": {
+          "set": "fleurs",
+          "audio_seconds": 12.12,
+          "seconds": 0.5016,
+          "words": 30,
+          "errors": 4,
+          "hypothesis": " Se puede definir a una civilización como una cultura específica de que forma parte un extensa grupo de personas que vive y trabaja en conjunto, es decir, una sociedad."
+        },
+        "fleurs/fr/10043298898524273336": {
+          "set": "fleurs",
+          "audio_seconds": 10.2,
+          "seconds": 0.4666,
+          "words": 20,
+          "errors": 6,
+          "hypothesis": " L'accident a eu lieu intérêt à montagneux et il semblerait que cela était causé par un incendimalveillant."
+        },
+        "fleurs/fr/10097171356371990207": {
+          "set": "fleurs",
+          "audio_seconds": 23.4,
+          "seconds": 1.0456,
+          "words": 63,
+          "errors": 16,
+          "hypothesis": " Nous sommes d'accord avec la déclaration de Luzok, comité au lampique des États-Unis. Sulu laquelle les intérêts de nos ATLETs est de nos clums ainsi que de leur sport pour ta tête en ne servir. Cela peut être fait en adent de l'avant et en procédant plutôt à des changements significatifs au sein de notre organisation, qu'à la révocation d'accreditation."
+        },
+        "fleurs/fr/10138021779681596478": {
+          "set": "fleurs",
+          "audio_seconds": 8.28,
+          "seconds": 0.5355,
+          "words": 26,
+          "errors": 17,
+          "hypothesis": " Il ajoutait qu'on ne devrait se prendre un balleur de monnaie d'assumer des obligations qui n'est pas sur un style de développement, de responsabilité et leur capacité."
+        },
+        "fleurs/fr/10143749263702132703": {
+          "set": "fleurs",
+          "audio_seconds": 10.2,
+          "seconds": 3.3651,
+          "words": 26,
+          "errors": 26,
+          "hypothesis": " J Bootl metals et l'inclusion, on en"
+        },
+        "fleurs/fr/10166091086920486572": {
+          "set": "fleurs",
+          "audio_seconds": 8.34,
+          "seconds": 0.4881,
+          "words": 26,
+          "errors": 10,
+          "hypothesis": " Le même mois, un autre agent de ligne a fait une sortie de pistre à ma chade et aurter un mur, tu ans ainsi 17 personnes."
+        },
+        "fleurs/fr/10174413140250646001": {
+          "set": "fleurs",
+          "audio_seconds": 7.2,
+          "seconds": 0.4423,
+          "words": 18,
+          "errors": 4,
+          "hypothesis": " Jean-Carlo, Fittier là, a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage."
+        },
+        "fleurs/fr/10221277978969763776": {
+          "set": "fleurs",
+          "audio_seconds": 8.4,
+          "seconds": 0.4817,
+          "words": 28,
+          "errors": 9,
+          "hypothesis": " La grille est avantage de députre ou pendant le deuxième set, il a fallu passer par un type break une fois que le score a à 36."
+        },
+        "fleurs/fr/10334413597118469552": {
+          "set": "fleurs",
+          "audio_seconds": 11.64,
+          "seconds": 0.5147,
+          "words": 25,
+          "errors": 9,
+          "hypothesis": " Malheureusement, il est difficile d'étudier le flux de circulation, qui a les comportements des conducteurs ne peut être prédis avec 100% de certitudes."
+        },
+        "fleurs/fr/10385751433252343757": {
+          "set": "fleurs",
+          "audio_seconds": 7.68,
+          "seconds": 0.5555,
+          "words": 26,
+          "errors": 11,
+          "hypothesis": " Les deux composés réagissent là avec le de profond et des cristaux qui peuvent l'ocquer la fonction rénale en déclarer des chercheurs de l'hivercité."
+        },
+        "fleurs/fr/10399459061919571703": {
+          "set": "fleurs",
+          "audio_seconds": 14.82,
+          "seconds": 0.9835,
+          "words": 48,
+          "errors": 32,
+          "hypothesis": " Par exemple, des étudiants en de l'école baînée, en cas en ligne d'une heure, on doit à fachac tenir un site ou à peu près qu'on se fait à leur visite, de la capitale de l'État. Chaque année, le site Erony a jour, une des enseignes versions sont consulés à leur ligne pour serre bien d'Album."
         }
       }
     }
