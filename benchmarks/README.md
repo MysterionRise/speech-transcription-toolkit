@@ -96,12 +96,24 @@ for its synthesized samples, but on LibriSpeech, whose references spell numbers 
 as an error.
 
 **Reproducibility.** Two runs on the same machine give the **same transcripts, so the same WER** (difference 0): the
-decoding is deterministic (greedy or beam search, and seeded sampling when a temperature fallback kicks in). In
-practice the WER also held across machines: faster-whisper `tiny` scored exactly the same on a cloud VM and on
-GitHub's runner. **RTFx** agrees **within 5%** on an otherwise idle machine: two runs of faster-whisper `tiny` on a
-4-CPU Xeon gave 6.63 and 6.62. It differs much more between machines (12.7 on GitHub's runner, a newer Xeon), and
-shared runners vary from run to run, which is why the workflow doesn't gate on speed. Load times vary most (1.2 and
-2.4 s in those two runs); read them as a rough guide.
+decoding is deterministic (greedy or beam search, and seeded sampling when a temperature fallback kicks in). **RTFx**
+agrees **within 5%** on an otherwise idle machine: two runs of faster-whisper `tiny` on a 4-CPU Xeon gave 6.63 and
+6.62. Load times vary most (1.2 and 2.4 s in those two runs); read them as a rough guide.
+
+Between machines, speed differs a lot and the WER a little. GitHub's `ubuntu-latest` runners are Intel or AMD
+machines, and two runs of the workflow landed on one of each:
+
+| | Intel Xeon Platinum 8370C | AMD EPYC 7763 |
+|---|--:|--:|
+| openai-whisper `tiny` (float32): WER LibriSpeech, FLEURS | 0.0778, 0.3244 | 0.0778, 0.3244 |
+| openai-whisper `tiny`: RTFx | 18.3 | 11.4 |
+| faster-whisper `tiny` (int8): WER LibriSpeech, FLEURS | 0.0720, 0.2837 | 0.0710, 0.3015 |
+| faster-whisper `tiny`: RTFx | 12.7 | 12.8 |
+
+CTranslate2's int8 kernels compute a little differently on the two CPUs, and the tiny model's transcripts of hard
+clips (French above all) are fragile, so faster-whisper's FLEURS WER moved by 1.8 points; on a cloud VM with another
+Intel Xeon it matched the Intel runner exactly. That is why FLEURS gets a wider tolerance than LibriSpeech (below), and
+why the workflow doesn't gate on speed.
 
 ## The results file
 
@@ -152,12 +164,15 @@ For example, from [`baseline.json`](baseline.json), shortened:
 ```bash
 python -m benchmarks.compare benchmarks/baseline.json benchmarks/results/20261027-123456.json
 python -m benchmarks.compare before.json after.json --max-rtfx-drop 0.10   # also gate on speed, on your own machine
+python -m benchmarks.compare before.json after.json --max-wer-increase 0.005 --max-wer-increase fleurs=0.01
 ```
 
 It prints a Markdown table of each model's WER and RTFx on each set, before and after, and exits with 1 when:
 
-- a set's WER rose by more than `--max-wer-increase`: an absolute difference, by default **0.01 (one percentage
-  point)**, about 21 words of LibriSpeech's 2069 and 8 of FLEURS's 786. The clips whose errors rose most are listed;
+- a set's WER rose by more than its tolerance, an absolute difference: **0.01 (one percentage point) for
+  LibriSpeech**, about 21 of its 2069 words, and **0.03 for FLEURS**, about 24 of its 786 words, which move more from
+  one CPU to another (see Reproducibility). `--max-wer-increase WER` changes the default, and `--max-wer-increase
+  SET=WER` one set's. The clips whose errors rose most are listed;
 - with `--max-rtfx-drop FRACTION`, a model's RTFx fell by more than that fraction (off by default);
 - the two can't be compared: a model (backend, model and device) measured on one side only, a set measured on other
   clips or references (another fingerprint), or another `schema`.
@@ -173,10 +188,11 @@ workflow. On the runner's CPU it:
 1. runs `tests/test_benchmarks.py` with the benchmark's packages installed;
 2. restores the evaluation set and the models from the cache, and downloads and checks what's missing;
 3. runs `python -m benchmarks.run --device cpu -b faster-whisper -m tiny -b whisper -m tiny`;
-4. compares the results with [`baseline.json`](baseline.json): a WER more than one percentage point above it fails
-   the run. Speed and memory are only reported.
+4. compares the results with [`baseline.json`](baseline.json): a WER more than its tolerance above it (one
+   percentage point for LibriSpeech, three for FLEURS) fails the run. Speed and memory are only reported.
 
-The tables go to the run's summary, and the results file to its `benchmark-results` artifact. The model libraries
+The tables go to the run's summary, and the results file to its `benchmark-results` artifact. A failed weekly run
+opens an issue, "The weekly benchmark fails", or comments on it while it is open. The model libraries
 are the newest releases `pyproject.toml` allows, so the weekly run catches upstream changes; jiwer and
 whisper-normalizer are pinned in `requirements-bench.txt`.
 

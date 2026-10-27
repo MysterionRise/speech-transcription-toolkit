@@ -104,6 +104,32 @@ class TestCompare:
 
         assert comparison.failed
 
+    def test_fleurs_has_a_tolerance_of_its_own(self):
+        assert compare.SET_MAX_WER_INCREASE == {"fleurs": 0.03}
+        within, beyond = document(model_entry(fleurs_wer=0.325)), document(model_entry(fleurs_wer=0.335))
+
+        comparison = compare.compare(document(), within)
+
+        assert not comparison.failed
+        assert "0.0100 (1 percentage point); for fleurs, 0.0300 (3 percentage points);" in compare.markdown(comparison)
+        assert compare.compare(document(), beyond).failed
+        assert compare.compare(document(), within, set_max_wer_increase={"fleurs": 0.01}).failed
+        # The default doesn't change a set's own tolerance.
+        assert not compare.compare(document(), within, max_wer_increase=0.001).failed
+
+    def test_main_takes_a_default_and_per_set_tolerances(self, tmp_path, capsys):
+        before, after = tmp_path / "before.json", tmp_path / "after.json"
+        before.write_text(json.dumps(document()), encoding="utf-8")
+        after.write_text(json.dumps(document(model_entry(wer=0.085, fleurs_wer=0.32))), encoding="utf-8")
+
+        compare.main([str(before), str(after)])
+        with pytest.raises(SystemExit):
+            compare.main([str(before), str(after), "--max-wer-increase", "fleurs=0.01"])
+        with pytest.raises(SystemExit):
+            compare.main([str(before), str(after), "--max-wer-increase", "0.001"])
+        compare.main([str(before), str(after), "--max-wer-increase", "0.001", "--max-wer-increase", "librispeech=0.01"])
+        assert "for librispeech, 0.0100" in capsys.readouterr().out
+
     def test_an_improvement_passes_with_a_note_to_update_the_baseline(self):
         comparison = compare.compare(document(), document(model_entry(wer=0.05)))
 
@@ -220,7 +246,15 @@ class TestCompare:
         with pytest.raises(SystemExit, match="can't read"):
             compare.main([str(tmp_path / "missing.json"), str(bad)])
 
-    @pytest.mark.parametrize("option", [["--max-wer-increase", "-0.1"], ["--max-rtfx-drop", "1.5"]])
+    @pytest.mark.parametrize(
+        "option",
+        [
+            ["--max-wer-increase", "-0.1"],
+            ["--max-wer-increase", "fleurs=-0.1"],
+            ["--max-wer-increase", "fleurs=a lot"],
+            ["--max-rtfx-drop", "1.5"],
+        ],
+    )
     def test_main_rejects_tolerances_out_of_range(self, option, tmp_path):
         with pytest.raises(SystemExit):
             compare.main(["a.json", "b.json", *option])

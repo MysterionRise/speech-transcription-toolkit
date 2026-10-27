@@ -2,11 +2,14 @@
 
     python -m benchmarks.compare benchmarks/baseline.json benchmarks/results/20261027-120000.json
     python -m benchmarks.compare before.json after.json --max-wer-increase 0.005 --max-rtfx-drop 0.15
+    python -m benchmarks.compare before.json after.json --max-wer-increase fleurs=0.01
 
 Prints a Markdown table to stdout: per model and set, the word error rate (WER) and speed (RTFx) of both runs. The exit
 status is 1 when:
 
-- a set's WER rose by more than ``--max-wer-increase`` (an absolute difference; default 0.01, one percentage point);
+- a set's WER rose by more than its tolerance, an absolute difference: 0.01 (one percentage point) by default, 0.03
+  for FLEURS (SET_MAX_WER_INCREASE says why). ``--max-wer-increase WER`` sets the default, ``--max-wer-increase
+  SET=WER`` one set's;
 - with ``--max-rtfx-drop``, a model's RTFx fell by more than that fraction. Off by default: on shared CI runners speed
   varies too much to gate on, so it is only reported;
 - the two can't be compared: another results format, a set measured on other clips or references (its fingerprint
@@ -29,6 +32,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from benchmarks import SCHEMA
 
 DEFAULT_MAX_WER_INCREASE = 0.01
+# Sets whose WER moves more on its own get more room. FLEURS has 786 words in three languages, on which the tiny
+# models' transcripts are fragile: faster-whisper's int8 kernels compute a little differently on Intel and AMD CPUs, and
+# that alone moved its FLEURS WER by 1.8 points between two GitHub runners (its LibriSpeech WER by 0.1).
+SET_MAX_WER_INCREASE: Dict[str, float] = {"fleurs": 0.03}
 CHANGED_CLIPS = 5  # clips listed per regressed set
 _EPSILON = 1e-9  # WERs are rounded to 6 digits: a change of exactly the tolerance passes
 
@@ -52,8 +59,9 @@ class Line:
 
 @dataclasses.dataclass
 class Comparison:
-    max_wer_increase: float
+    max_wer_increase: float  # for the sets that aren't in set_max_wer_increase
     max_rtfx_drop: Optional[float]
+    set_max_wer_increase: Dict[str, float] = dataclasses.field(default_factory=dict)
     lines: List[Line] = dataclasses.field(default_factory=list)
     regressions: List[str] = dataclasses.field(default_factory=list)  # beyond the tolerance
     problems: List[str] = dataclasses.field(default_factory=list)  # results that can't be compared
@@ -62,6 +70,10 @@ class Comparison:
     @property
     def failed(self) -> bool:
         return bool(self.regressions or self.problems)
+
+    def tolerance(self, name: str) -> float:
+        """How much set *name*'s WER may rise."""
+        return self.set_max_wer_increase.get(name, self.max_wer_increase)
 
 
 def _key(entry: Dict[str, Any]) -> Key:
@@ -77,9 +89,15 @@ def compare(
     results: Dict[str, Any],
     max_wer_increase: float = DEFAULT_MAX_WER_INCREASE,
     max_rtfx_drop: Optional[float] = None,
+    set_max_wer_increase: Optional[Dict[str, float]] = None,
 ) -> Comparison:
-    """Compare *results* with *baseline*, both as python -m benchmarks.run writes them."""
-    comparison = Comparison(max_wer_increase, max_rtfx_drop)
+    """Compare *results* with *baseline*, both as python -m benchmarks.run writes them.
+
+    A set's WER may rise by *max_wer_increase*, or by its own tolerance: SET_MAX_WER_INCREASE, updated with
+    *set_max_wer_increase*.
+    """
+    tolerances = {**SET_MAX_WER_INCREASE, **(set_max_wer_increase or {})}
+    comparison = Comparison(max_wer_increase, max_rtfx_drop, tolerances)
     for name, document in (("baseline", baseline), ("results", results)):
         if document.get("schema") != SCHEMA:
             comparison.problems.append(
@@ -135,7 +153,7 @@ def _compare_set(comparison: Comparison, key: Key, name: str, old: Dict[str, Any
     line = Line(*key, name, old_set["wer"], new_set["wer"], old_set.get("rtfx"), new_set.get("rtfx"))
     comparison.lines.append(line)
     change = new_set["wer"] - old_set["wer"]
-    tolerance = comparison.max_wer_increase
+    tolerance = comparison.tolerance(name)
     if change > tolerance + _EPSILON:
         line.verdict = "regressed"
         comparison.regressions.append(
@@ -174,8 +192,10 @@ def _compare_machines(comparison: Comparison, baseline: Dict[str, Any], results:
     ]
     if machines[0] != machines[1]:
         comparison.notes.append(
-            "the two ran on different machines, so their speeds don't compare: "
+            "the two ran on different machines, "
             + " and ".join(f"{machine[1]} ({machine[2]} CPUs)" for machine in machines)
+            + ": their speeds don't compare, and a model in int8 (faster-whisper on a CPU) may transcribe a few words "
+            "differently on each"
         )
 
 
@@ -195,6 +215,19 @@ def _ratio(before: Optional[float], after: Optional[float]) -> str:
     return f"{after / before - 1:+.0%}"
 
 
+def _points(wer: float) -> str:
+    return f"{wer:.4f} ({wer * 100:g} percentage point{'s' * (wer != 0.01)})"
+
+
+def _tolerances(comparison: Comparison) -> str:
+    """The tolerances in words: "a set's WER may rise by at most 0.0100 (1 percentage point); for fleurs, ..."."""
+    sets = sorted({line.set for line in comparison.lines} & set(comparison.set_max_wer_increase))
+    wer = [f"a set's WER may rise by at most {_points(comparison.max_wer_increase)}"]
+    wer += [f"for {name}, {_points(comparison.tolerance(name))}" for name in sets]
+    drop = comparison.max_rtfx_drop
+    return "; ".join([*wer, "RTFx is only reported" if drop is None else f"RTFx may fall by at most {drop:.0%}"])
+
+
 def markdown(comparison: Comparison) -> str:
     """The comparison as Markdown: the table, the tolerance, then what failed and the notes."""
     lines = ["## Benchmark comparison", ""]
@@ -209,14 +242,7 @@ def markdown(comparison: Comparison) -> str:
             cells += [_ratio(line.rtfx_before, line.rtfx), line.verdict]
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
-    tolerance = comparison.max_wer_increase
-    speed = (
-        "RTFx is only reported"
-        if comparison.max_rtfx_drop is None
-        else f"RTFx may fall by at most {comparison.max_rtfx_drop:.0%}"
-    )
-    points = f"{tolerance * 100:g} percentage point{'s' * (tolerance != 0.01)}"
-    lines.append(f"Tolerance: a set's WER may rise by at most {tolerance:.4f} ({points}); {speed}.")
+    lines.append(f"Tolerance: {_tolerances(comparison)}.")
     for title, items in (
         ("Regressions", comparison.regressions),
         ("Can't compare", comparison.problems),
@@ -252,10 +278,13 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("results", type=pathlib.Path, help="the new results")
     parser.add_argument(
         "--max-wer-increase",
-        type=float,
-        default=DEFAULT_MAX_WER_INCREASE,
-        metavar="WER",
-        help="how much a set's WER may rise, as an absolute difference (default: %(default)s, one percentage point)",
+        action="append",
+        default=[],
+        metavar="[SET=]WER",
+        help="how much a set's WER may rise, as an absolute difference: WER for every set without a tolerance of its "
+        f"own (default: {DEFAULT_MAX_WER_INCREASE}, one percentage point), SET=WER for one set (default: "
+        + ", ".join(f"{name}={wer}" for name, wer in SET_MAX_WER_INCREASE.items())
+        + "). Repeatable",
     )
     parser.add_argument(
         "--max-rtfx-drop",
@@ -264,14 +293,28 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         help="also fail when a model's RTFx falls by more than this fraction, e.g. 0.15 (default: only report speed)",
     )
     args = parser.parse_args(argv)
-    if args.max_wer_increase < 0 or (args.max_rtfx_drop is not None and not 0 <= args.max_rtfx_drop < 1):
-        parser.error("--max-wer-increase must be at least 0, and --max-rtfx-drop between 0 and 1")
+    args.default_tolerance, args.set_tolerances = DEFAULT_MAX_WER_INCREASE, {}
+    for value in args.max_wer_increase:
+        name, _, number = value.rpartition("=")
+        try:
+            tolerance = float(number)
+        except ValueError:
+            parser.error(f"--max-wer-increase takes WER or SET=WER, such as 0.01 or fleurs=0.03, not {value!r}")
+        if tolerance < 0:
+            parser.error("--max-wer-increase must be at least 0")
+        if name:
+            args.set_tolerances[name] = tolerance
+        else:
+            args.default_tolerance = tolerance
+    if args.max_rtfx_drop is not None and not 0 <= args.max_rtfx_drop < 1:
+        parser.error("--max-rtfx-drop must be at least 0 and less than 1")
     return args
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = parse_args(argv)
-    comparison = compare(_read(args.baseline), _read(args.results), args.max_wer_increase, args.max_rtfx_drop)
+    baseline, results = _read(args.baseline), _read(args.results)
+    comparison = compare(baseline, results, args.default_tolerance, args.max_rtfx_drop, args.set_tolerances)
     sys.stdout.write(markdown(comparison))
     if comparison.failed:
         sys.exit(1)
