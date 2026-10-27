@@ -41,6 +41,11 @@ concurrency:
 
 permissions: {}  # each job asks for what it needs
 
+# bash -eo pipefail, so a failing command in a pipeline (such as docker run ... | tee) fails the step.
+defaults:
+  run:
+    shell: bash
+
 env:
   IMAGE: ghcr.io/mysterionrise/speech-transcription-toolkit
   SAMPLE: speech.flac  # in tests/data; samples.json has its text

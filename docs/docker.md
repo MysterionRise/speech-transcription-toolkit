@@ -3,10 +3,10 @@
 Two images run `transcribe-server` and `transcribe` without a Python setup. Both have the faster-whisper backend, the
 server and ffmpeg, but no PyTorch:
 
-| Image | Runs on |
-|---|---|
-| `ghcr.io/mysterionrise/speech-transcription-toolkit:latest` | The CPU |
-| `ghcr.io/mysterionrise/speech-transcription-toolkit:cuda` | NVIDIA GPUs, or the CPU: the CPU image plus cuBLAS (see [GPU](#gpu)) |
+| Image | Runs on | Size, unpacked |
+|---|---|---|
+| `ghcr.io/mysterionrise/speech-transcription-toolkit:latest` | The CPU | about 1 GB |
+| `ghcr.io/mysterionrise/speech-transcription-toolkit:cuda` | NVIDIA GPUs, or the CPU: the CPU image plus cuBLAS (see [GPU](#gpu)) | about 2 GB |
 
 [Image tags](#image-tags) lists every tag. The images are published from v0.5.0.
 
