@@ -7,6 +7,7 @@
 - [Speaker labels](diarization.md): who said what, with pyannote.audio.
 - [Output formats](formats.md): txt, srt, vtt and json.
 - [OpenAI-compatible server](server.md): `transcribe-server`.
+- [Docker](docker.md): CPU and CUDA images for the server and the command line.
 - [Troubleshooting](troubleshooting.md)
 - [Development](development.md): setup, checks and project layout.
 - [Manual testing](manual-testing.md): the GPU and long-audio test tiers, and the QA pass before each release.

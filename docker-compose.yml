@@ -1,0 +1,44 @@
+# transcribe-server, the OpenAI-compatible API, at http://127.0.0.1:8000/v1. docs/docker.md explains the options.
+#
+#   docker compose up -d
+#   docker compose logs -f transcribe   # the first start downloads the model
+#
+# Security: the port is published on 127.0.0.1, so only this machine can reach it. Before publishing it on every
+# address ("8000:8000"), put an API key in a .env file next to this one (.gitignore keeps it out of git):
+#
+#   TRANSCRIBE_API_KEY=<a long random string, e.g. from: openssl rand -hex 32>
+#
+# Clients then send "Authorization: Bearer <key>" (the OpenAI SDK's api_key). For no key, leave the line out rather
+# than empty. Without a key, the server warns that it is exposed: inside the container it listens on every address.
+#
+# NVIDIA GPU (needs the NVIDIA Container Toolkit): use the :cuda image and the cuda target, uncomment "deploy", and
+# drop "-m small" to use the default model, turbo.
+
+services:
+  transcribe:
+    image: ghcr.io/mysterionrise/speech-transcription-toolkit:latest  # GPU: ...:cuda
+    # Builds the image from this checkout when it can't be pulled; "docker compose up --build" rebuilds it.
+    build:
+      context: .
+      target: cpu  # GPU: cuda
+    # -m small: faster than the default model, turbo, on a CPU. docs/backends.md lists the models.
+    command: ["transcribe-server", "--host", "0.0.0.0", "-m", "small"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - models:/models
+    restart: unless-stopped
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  # The downloaded models. They survive "docker compose down", but not "docker compose down -v".
+  models:
