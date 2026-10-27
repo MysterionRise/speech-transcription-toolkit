@@ -17,9 +17,39 @@ if TYPE_CHECKING:  # pragma: no cover
 
 SAMPLE_RATE = 16000  # what every backend and pyannote expect
 
-# Audio/video formats picked up when a folder is given (anything ffmpeg decodes also works as a file).
+# Audio/video formats picked up when a folder is given (anything ffmpeg decodes also works as a file). Not ".ts"
+# (MPEG transport streams), which would pick up TypeScript sources.
 MEDIA_EXTENSIONS = frozenset(
-    {".aac", ".flac", ".m4a", ".mkv", ".mov", ".mp3", ".mp4", ".oga", ".ogg", ".opus", ".wav", ".webm", ".wma"}
+    {
+        # audio
+        ".aac",
+        ".aif",
+        ".aiff",
+        ".amr",
+        ".caf",
+        ".flac",
+        ".m4a",
+        ".m4b",
+        ".mka",
+        ".mp3",
+        ".oga",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".wma",
+        # video
+        ".3gp",
+        ".avi",
+        ".m2ts",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".mts",
+        ".webm",
+    }
 )
 
 # What load_audio() decodes: a path, the file's content, or a binary file object.
@@ -69,18 +99,27 @@ def collect_files(
 
     Folders are searched recursively for files whose extension (in any case) is in
     *extensions*; ``relative_path`` is the file's path inside that folder, so callers
-    can mirror the folder tree in an output directory. Other paths are returned as-is,
-    with their file name as ``relative_path``.
+    can mirror the folder tree in an output directory. Hidden files and folders inside it,
+    whose names start with a dot, are left out: among them the ``._talk.mp3`` files macOS
+    writes on other disks to hold a file's metadata, which aren't audio. Other paths are
+    returned as-is, with their file name as ``relative_path``.
     """
     found: Dict[pathlib.Path, pathlib.Path] = {}
     for path in paths:
         if path.is_dir():
             for file in sorted(path.rglob("*")):
-                if file.is_file() and file.suffix.lower() in extensions:
-                    found.setdefault(file, file.relative_to(path))
+                relative = file.relative_to(path)
+                if _hidden(relative) or file.suffix.lower() not in extensions or not file.is_file():
+                    continue
+                found.setdefault(file, relative)
         else:
             found.setdefault(path, pathlib.Path(path.name))
     return list(found.items())
+
+
+def _hidden(relative: pathlib.Path) -> bool:
+    """Whether *relative*, a path inside a searched folder, is hidden: it or a folder on the way starts with a dot."""
+    return any(part.startswith(".") for part in relative.parts)
 
 
 def load_audio(

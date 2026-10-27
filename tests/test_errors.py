@@ -293,9 +293,10 @@ class TestCliFileErrors:
             (tmp_path / name).touch()
         failing(a=KeyboardInterrupt())
 
-        with pytest.raises(KeyboardInterrupt):
+        with pytest.raises(SystemExit) as exc_info:
             cli.main([str(tmp_path), "-b", "failing", "-q"])
 
+        assert exc_info.value.code == 130  # as for any program stopped by Ctrl-C
         assert not (tmp_path / "b.txt").exists()
 
     def test_single_file_with_an_unexpected_error(self, failing, tmp_path, capsys):
