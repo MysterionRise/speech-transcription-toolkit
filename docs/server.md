@@ -20,7 +20,12 @@ print(client.audio.transcriptions.create(model="whisper-1", file=open("talk.mp3"
   keep working.
 - Requests are transcribed one at a time, in the order they arrive; see [Load](#load).
 - The server decodes each upload once, with ffmpeg, and gives the model the samples, so every backend reads the same
-  formats.
+  formats: the common, self-contained audio and video formats, such as WAV, FLAC, MP3, AAC, M4A, MP4, MOV, Ogg, Opus,
+  WebM, MKV, WMA, AIFF, AMR and AVI. Convert other files first, for example with
+  `ffmpeg -i input -ac 1 -ar 16000 output.wav`.
+- The log goes to stderr: uvicorn's lines, and the server's own from `INFO` up, such as undecodable uploads, dropped
+  requests, and errors with their tracebacks. If your program has set up the `speech_toolkit` logger already, the
+  server uses that instead.
 - `python -m speech_toolkit.server` starts it too.
 
 ## Endpoints

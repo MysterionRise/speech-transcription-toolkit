@@ -19,6 +19,7 @@ taking the requests in turn from a bounded queue: when the queue is full, more r
 import argparse
 import asyncio
 import codecs
+import contextlib
 import functools
 import ipaddress
 import json
@@ -85,8 +86,11 @@ MIN_RETRY_AFTER, MAX_RETRY_AFTER = 1, 60
 RECENT_WEIGHT = 0.3
 # The status logged for a request whose client left while it waited: nginx's "client closed request".
 CLIENT_CLOSED = 499
+# How main() shows the package's log on stderr, next to uvicorn's own lines.
+LOG_FORMAT = "%(levelname)s: %(name)s: %(message)s"
 
-logger = logging.getLogger(__name__)
+# By name, not __name__: under "python -m speech_toolkit.server" this module is __main__, outside the package's logger.
+logger = logging.getLogger("speech_toolkit.server")
 
 # ASGI types, as Starlette defines them (Starlette is imported only when the app is built).
 Message = MutableMapping[str, Any]
@@ -806,21 +810,47 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             f"Warning: listening on {args.host} without --api-key; anyone who can reach this port can use it.",
             file=sys.stderr,
         )
-    try:
-        transcriber = load_transcriber(args)
-    except (ImportError, *FILE_ERRORS) as e:
-        sys.exit(f"Error: {e}")
+    with _log_to_stderr():
+        try:
+            transcriber = load_transcriber(args)
+        except (ImportError, *FILE_ERRORS) as e:
+            sys.exit(f"Error: {e}")
 
-    app = create_app(
-        transcriber,
-        api_key=args.api_key,
-        max_upload_mb=args.max_upload_mb,
-        max_queue=args.max_queue,
-        max_audio_seconds=args.max_audio_seconds or None,  # 0: no limit
-        cors_origins=args.cors_origin,
-        docs=args.docs,
-    )
-    uvicorn.run(app, host=args.host, port=args.port)
+        app = create_app(
+            transcriber,
+            api_key=args.api_key,
+            max_upload_mb=args.max_upload_mb,
+            max_queue=args.max_queue,
+            max_audio_seconds=args.max_audio_seconds or None,  # 0: no limit
+            cors_origins=args.cors_origin,
+            docs=args.docs,
+        )
+        uvicorn.run(app, host=args.host, port=args.port)
+
+
+@contextlib.contextmanager
+def _log_to_stderr() -> Iterator[None]:
+    """While the server runs, show the speech_toolkit log on stderr, from INFO: undecodable uploads, dropped requests,
+    and errors with their tracebacks.
+
+    Uvicorn sets up only its own loggers, and the package's logger may have just a NullHandler, which keeps Python
+    from printing anything. A logger that already has another handler is left as it is, and so is the root logger.
+    """
+    package = logging.getLogger("speech_toolkit")
+    if any(not isinstance(handler, logging.NullHandler) for handler in package.handlers):
+        yield
+        return
+    handler = logging.StreamHandler()  # sys.stderr
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    level = package.level
+    package.addHandler(handler)
+    if level == logging.NOTSET:  # else the root logger's level applies: WARNING, unless set otherwise
+        package.setLevel(logging.INFO)
+    try:
+        yield
+    finally:
+        package.removeHandler(handler)
+        package.setLevel(level)
 
 
 if __name__ == "__main__":  # pragma: no cover
