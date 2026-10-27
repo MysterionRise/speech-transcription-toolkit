@@ -7,7 +7,7 @@ Hub on first use (set HF_TOKEN if the download asks for authentication).
 
 from __future__ import annotations
 
-import sys
+import logging
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -20,11 +20,13 @@ from ..errors import (
     UnsupportedOptionError,
 )
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from .base import TranscriptionBackend, TranscriptionResult
+from .base import TranscriptionBackend, TranscriptionResult, report_progress
 from .nvidia_backend import _cut_off_warning, _rows_at_limit
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Voxtral's transcription mode returns text without timestamps, so audio is split into
 # chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
@@ -128,7 +130,8 @@ class VoxtralBackend(TranscriptionBackend):
             audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz).
             language: Language code or None for auto-detection.
             task: Only 'transcribe' is supported.
-            verbose: Print progress to stderr.
+            verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. The segments of each batch of chunks are
+                also passed to report_progress(), whatever *verbose* is.
 
         Returns:
             TranscriptionResult with one segment per ~30 s chunk of audio. A chunk whose text reaches MAX_NEW_TOKENS
@@ -149,6 +152,7 @@ class VoxtralBackend(TranscriptionBackend):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        duration = len(audio) / SAMPLE_RATE
         chunks = split_audio(audio, CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
@@ -159,8 +163,10 @@ class VoxtralBackend(TranscriptionBackend):
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
             cut_off += [segments[first + row] for row in at_limit]
-            if verbose:
-                print(f"Voxtral: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
+            for segment in segments[first:]:
+                report_progress(segment["end"], duration, segment)
+            level = logging.INFO if verbose else logging.DEBUG
+            logger.log(level, "Voxtral: transcribed %d/%d chunks", len(segments), len(chunks))
         if cut_off:
             warnings.warn(_cut_off_warning(audio_path, "Voxtral", MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
 
@@ -168,7 +174,7 @@ class VoxtralBackend(TranscriptionBackend):
             text=" ".join(seg["text"] for seg in segments if seg["text"]),
             segments=segments,
             language=language,  # Voxtral doesn't report the detected language
-            duration=len(audio) / SAMPLE_RATE,
+            duration=duration,
         )
 
     def _transcribe_batch(self, chunks: Sequence[Any], language: Optional[str]) -> Tuple[List[str], List[int]]:

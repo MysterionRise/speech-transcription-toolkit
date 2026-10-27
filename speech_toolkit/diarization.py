@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import bisect
 import itertools
+import logging
 import operator
 import os
 import pathlib
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from .backends.base import report_stage
 from .errors import BackendUnavailableError, DiarizationError, UnsupportedOptionError
 from .media import SAMPLE_RATE, load_audio
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
 
+logger = logging.getLogger(__name__)
+
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
+# How to get the gated model, for the errors that say it couldn't be loaded.
+ACCESS_HINT = f"Accept its terms at https://hf.co/{DIARIZATION_MODEL} and set HF_TOKEN (or pass --hf-token)."
 
 # Audio shorter than this gets no speaker turns, and pyannote isn't run on it: there is nothing to tell apart, and
 # pyannote can fail on near-empty audio. Its segments are labelled "unknown".
@@ -40,7 +47,8 @@ def load_diarization_pipeline(device: Optional[str] = None) -> Any:
 
     Raises:
         BackendUnavailableError: If pyannote.audio is not installed.
-        DiarizationError: If the gated model can't be downloaded (terms not accepted, or no token).
+        DiarizationError: If the gated model can't be downloaded (terms not accepted, no token, no network) or loaded;
+            the original error is its ``__cause__``.
     """
     # pyannote.audio 4 sends usage metrics to pyannote.ai by default; stay offline unless the user opted in.
     os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
@@ -53,13 +61,16 @@ def load_diarization_pipeline(device: Optional[str] = None) -> Any:
             'Install with: pip install "speech-transcription-toolkit[diarize]"'
         ) from e
 
-    pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=os.getenv("HF_TOKEN"))
+    logger.debug("Loading the speaker-diarization pipeline %s", DIARIZATION_MODEL)
+    try:
+        pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=os.getenv("HF_TOKEN"))
+    except Exception as e:  # network, authentication and file errors come in many types
+        raise DiarizationError(f"could not load '{DIARIZATION_MODEL}': {e}. {ACCESS_HINT}") from e
     if pipeline is None:  # pyannote returns None when the gated model can't be downloaded
-        raise DiarizationError(
-            f"could not download '{DIARIZATION_MODEL}'. Accept its terms at https://hf.co/{DIARIZATION_MODEL} "
-            "and set HF_TOKEN (or pass --hf-token)."
-        )
-    pipeline.to(torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu")))
+        raise DiarizationError(f"could not download '{DIARIZATION_MODEL}'. {ACCESS_HINT}")
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    pipeline.to(torch.device(device))
+    logger.debug("Speaker diarization runs on %s", device)
     return pipeline
 
 
@@ -111,13 +122,20 @@ def diarize_audio(
 
     *audio_path* is a file, decoded with :func:`~speech_toolkit.media.load_audio`, or its samples already decoded: a
     1-D float32 NumPy array at 16 kHz, so a caller that also transcribes them decodes the file once.
+
+    Within Transcriber.transcribe(), it reports the ``"diarize"`` stage to its progress callback: when it starts, and
+    when it ends.
     """
     import torch
 
     # Decode with ffmpeg here so pyannote needs no audio I/O backend of its own, whatever the format.
     audio = load_audio(audio_path) if isinstance(audio_path, (str, os.PathLike)) else audio_path
+    seconds = len(audio) / SAMPLE_RATE
+    report_stage("diarize", 0.0, seconds)
     if len(audio) < MIN_DIARIZATION_SECONDS * SAMPLE_RATE:  # too short to tell speakers apart
+        report_stage("diarize", seconds, seconds)
         return []
+    started = time.perf_counter()
     waveform = torch.from_numpy(audio).unsqueeze(0)
     output = pipeline(
         {"waveform": waveform, "sample_rate": SAMPLE_RATE},
@@ -127,7 +145,16 @@ def diarize_audio(
     )
     # pyannote 4 returns both variants; the "exclusive" one has no overlapping turns, which suits transcripts.
     annotation = getattr(output, "exclusive_speaker_diarization", output)
-    return [(turn.start, turn.end, speaker) for turn, _, speaker in annotation.itertracks(yield_label=True)]
+    turns = [(turn.start, turn.end, speaker) for turn, _, speaker in annotation.itertracks(yield_label=True)]
+    logger.debug(
+        "Found %d turns of %d speakers in %.1f s of audio in %.1f s",
+        len(turns),
+        len({speaker for _, _, speaker in turns}),
+        seconds,
+        time.perf_counter() - started,
+    )
+    report_stage("diarize", seconds, seconds)
+    return turns
 
 
 def merge_diarization(

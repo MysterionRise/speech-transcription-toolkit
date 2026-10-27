@@ -13,7 +13,8 @@ Heavy libraries (torch, transformers, ...) are imported only when a model is loa
 so importing this package and listing backends/models stays fast.
 
 Each backend class declares what it can do in ``capabilities`` (see ``CAPABILITIES``), and
-``backends_with()`` names the backends that declare one, e.g. the ones that translate.
+``backends_with()`` names the backends that declare one, e.g. the ones that translate. A backend reports its
+progress with ``report_progress()``.
 
 Usage:
     from speech_toolkit.backends import get_backend, list_backends
@@ -32,7 +33,15 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
-from .base import CAPABILITIES, AudioInput, TranscriptionBackend, TranscriptionResult
+from .base import (
+    CAPABILITIES,
+    AudioInput,
+    ProgressCallback,
+    ProgressEvent,
+    TranscriptionBackend,
+    TranscriptionResult,
+    report_progress,
+)
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
@@ -140,4 +149,7 @@ __all__ = [
     "CAPABILITIES",
     "DEFAULT_BACKEND",
     "AudioInput",
+    "ProgressEvent",
+    "ProgressCallback",
+    "report_progress",
 ]

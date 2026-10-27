@@ -12,8 +12,8 @@ transcribe audio.mp3 -b whisper                # another backend: OpenAI's Whisp
 transcribe --list-backends                     # backends, their models and capabilities
 ```
 
-Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress). `python -m speech_toolkit`
-runs the same command.
+Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress, see
+[Messages](#messages)). `python -m speech_toolkit` runs the same command.
 
 **Better results:**
 - `--prompt "Kubernetes, Grafana"` helps spell names and jargon.
@@ -48,7 +48,9 @@ How batch mode works:
 | `-t`, `--task` | `transcribe` (default), or `translate` to English (whisper, faster-whisper, canary). With another backend, `translate` is an error, reported before the model loads. |
 | `--device` | `cpu` or `cuda` (default: the GPU when available). |
 | `--hf-token TOKEN` | Hugging Face token for model downloads. Defaults to the `HF_TOKEN` or `HUGGINGFACE_TOKEN` environment variable, which is safer than passing it on the command line. |
-| `-q`, `--quiet` | Hide progress output. |
+| `-q`, `--quiet` | Hide progress: the loading and `→ file` lines, progress bars (Hugging Face downloads and transformers' too) and info messages. Warnings and errors still show. |
+| `-v`, `--verbose` | Also show debug messages: what is decoded, transcribed and labelled, and how long it took. Can't be combined with `-q`. |
+| `--log-level LEVEL` | Show messages from this level up: `debug`, `info`, `warning` or `error` (default: `info`; `warning` with `-q`, `debug` with `-v`). |
 | `-o`, `--output FILE` | Write the transcript to this file instead of stdout; its extension picks the format. |
 | `-f`, `--format` | `txt`, `srt`, `vtt` or `json` (default: from the `--output` extension, else txt). See [Output formats](formats.md). |
 | `--outdir DIR` | Write one file per input into this folder. |
@@ -63,6 +65,22 @@ How batch mode works:
 | `--list-backends` | List the backends with their models and capabilities, and whether their packages are installed, then exit. |
 | `--list-models` | List the models of `--backend`, then exit. |
 | `--version` | Print the version. |
+
+### Messages
+
+Everything but the transcript goes to stderr:
+
+| Message | Shown |
+|---|---|
+| `Loading faster-whisper model 'turbo'...`, `→ talk.srt` | Unless `-q`. |
+| Progress bars: faster-whisper's and whisper's while transcribing, Hugging Face's while downloading a model, transformers' `Loading weights` | Unless `-q`. faster-whisper hides its download bars itself. |
+| Progress messages, such as `Parakeet: transcribed 1/3 chunks` | At `info` level: by default, not with `-q`. |
+| `Debug: …` lines | At `debug` level: with `-v` or `--log-level debug`. |
+| `Warning: …` and `Error: …` lines | Always, unless `--log-level error` hides the warnings that are logged. |
+
+`-q` also sets `HF_HUB_DISABLE_PROGRESS_BARS=1` and `TRANSFORMERS_VERBOSITY=error` for the run, so transformers
+shows only its errors. `--log-level` applies to speech_toolkit's own messages; other libraries' log messages aren't
+shown. To log from Python instead, see [Logging](python-api.md#logging).
 
 ## ogg2wav
 

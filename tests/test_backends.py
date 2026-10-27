@@ -4,6 +4,7 @@ Heavy libraries (whisper, torch, transformers, faster_whisper) are replaced with
 ``sys.modules``: the backends import them lazily, so these tests run without them installed.
 """
 
+import logging
 import pathlib
 import sys
 from types import SimpleNamespace
@@ -663,7 +664,7 @@ class TestVoxtralBackend:
         with pytest.raises(FileNotFoundError):
             backend.transcribe(tmp_path / "nonexistent.mp3")
 
-    def test_transcribe_chunks_become_segments(self, voxtral_modules, audio_file, capsys):
+    def test_transcribe_chunks_become_segments(self, voxtral_modules, audio_file, caplog):
         """70 s of audio -> chunks of up to 30 s, transcribed in batches, one timestamped segment each."""
         rate = 16000
         voxtral_modules.load_audio.return_value = np.zeros(70 * rate, dtype=np.float32)
@@ -673,6 +674,7 @@ class TestVoxtralBackend:
 
         backend = VoxtralBackend()
         backend.load_model("voxtral-mini")
+        caplog.set_level(logging.INFO, logger="speech_toolkit")
         with patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
             result = backend.transcribe(audio_file, language="en")
 
@@ -689,7 +691,7 @@ class TestVoxtralBackend:
         assert [s["end"] for s in result.segments] == pytest.approx([25.05, 50.1, 70.0])
         assert result.text == "one two"
         assert result.language == "en"
-        assert "3/3 chunks" in capsys.readouterr().err
+        assert "Voxtral: transcribed 3/3 chunks" in caplog.messages
 
     def test_transcribe_empty_audio(self, voxtral_modules, audio_file):
         """Test that empty audio produces an empty result without calling the model."""

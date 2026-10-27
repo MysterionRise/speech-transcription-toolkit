@@ -7,12 +7,18 @@
     result.save("talk.srt")
 
 Heavy libraries (torch, whisper, transformers, pyannote) are imported only when a model loads.
+
+The library doesn't print. It logs to the ``speech_toolkit`` logger, which has a ``NullHandler``, so its messages show
+only once you configure logging (``logging.basicConfig(level=logging.INFO)``); ``Transcriber.transcribe()`` reports
+progress to a ``progress=`` callback, and with ``verbose=True`` whisper and faster-whisper show their progress bar.
 """
 
 from __future__ import annotations
 
+import logging
+
 from .api import Transcriber, transcribe
-from .backends import TranscriptionBackend, TranscriptionResult, list_backends, register_backend
+from .backends import ProgressEvent, TranscriptionBackend, TranscriptionResult, list_backends, register_backend
 from .errors import (
     AudioDecodeError,
     BackendNotFoundError,
@@ -26,6 +32,9 @@ from .errors import (
 )
 from .types import Segment, Word
 
+# A library leaves showing its messages to the application: without this, Python would print warnings and errors.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
 __version__ = "0.4.0"
 
 __all__ = [
@@ -33,6 +42,7 @@ __all__ = [
     "transcribe",
     "TranscriptionBackend",
     "TranscriptionResult",
+    "ProgressEvent",
     "Segment",
     "Word",
     "list_backends",

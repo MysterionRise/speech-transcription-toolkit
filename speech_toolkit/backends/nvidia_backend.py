@@ -8,8 +8,8 @@ first use.
 
 from __future__ import annotations
 
+import logging
 import re
-import sys
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -22,10 +22,12 @@ from ..errors import (
     UnsupportedOptionError,
 )
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from .base import TranscriptionBackend, TranscriptionResult
+from .base import TranscriptionBackend, TranscriptionResult, recording_name, report_progress
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
+
+logger = logging.getLogger(__name__)
 
 INSTALL_HINT = 'Install with: pip install "speech-transcription-toolkit[nvidia]"'
 # Parakeet word timings are grouped into segments that end at a sentence, a pause or this length.
@@ -132,7 +134,8 @@ class ParakeetBackend(_TransformersBackend):
             language: Ignored, with a warning: the model detects the language itself. The result's
                 language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
-            verbose: Print progress to stderr.
+            verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. How far it got is also passed to
+                report_progress() after each chunk, whatever *verbose* is.
             word_timestamps: Keep each segment's per-word timings ("words").
 
         Raises:
@@ -151,12 +154,15 @@ class ParakeetBackend(_TransformersBackend):
             )
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        duration = len(audio) / SAMPLE_RATE
         chunks = split_audio(audio, self.CHUNK_SECONDS)
         words: List[Dict[str, Any]] = []
         for number, (offset, samples) in enumerate(chunks, start=1):
             words += self._transcribe_chunk(samples, offset)
-            if verbose:
-                print(f"Parakeet: transcribed {number}/{len(chunks)} chunks", file=sys.stderr)
+            # A segment can go on into the next chunk, so segments are made, and reported, once every chunk is done.
+            report_progress(offset + len(samples) / SAMPLE_RATE, duration)
+            level = logging.INFO if verbose else logging.DEBUG
+            logger.log(level, "Parakeet: transcribed %d/%d chunks", number, len(chunks))
 
         segments = _segments_from_words(words)
         if not word_timestamps:
@@ -166,7 +172,7 @@ class ParakeetBackend(_TransformersBackend):
             text="".join(segment["text"] for segment in segments).strip(),
             segments=segments,
             language=None,  # Parakeet doesn't report the language it detected
-            duration=len(audio) / SAMPLE_RATE,
+            duration=duration,
         )
 
     def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
@@ -209,7 +215,8 @@ class CanaryBackend(_TransformersBackend):
             audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz).
             language: Language code of the speech; Canary can't detect it, so None means English.
             task: 'transcribe', or 'translate' to English.
-            verbose: Print progress to stderr.
+            verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. The segments of each batch of chunks
+                are also passed to report_progress(), whatever *verbose* is.
 
         Returns:
             TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches MAX_NEW_TOKENS
@@ -223,6 +230,7 @@ class CanaryBackend(_TransformersBackend):
             )
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+        duration = len(audio) / SAMPLE_RATE
         chunks = split_audio(audio, self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
@@ -232,8 +240,10 @@ class CanaryBackend(_TransformersBackend):
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
             cut_off += [segments[first + row] for row in at_limit]
-            if verbose:
-                print(f"Canary: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
+            for segment in segments[first:]:
+                report_progress(segment["end"], duration, segment)
+            level = logging.INFO if verbose else logging.DEBUG
+            logger.log(level, "Canary: transcribed %d/%d chunks", len(segments), len(chunks))
         if cut_off:
             warnings.warn(_cut_off_warning(audio_path, "Canary", self.MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
 
@@ -241,7 +251,7 @@ class CanaryBackend(_TransformersBackend):
             text=" ".join(segment["text"] for segment in segments if segment["text"]),
             segments=segments,
             language="en" if task == "translate" else (language or "en"),
-            duration=len(audio) / SAMPLE_RATE,
+            duration=duration,
         )
 
     def _transcribe_batch(self, chunks: Sequence[Any], language: str, task: str) -> Tuple[List[str], List[int]]:
@@ -345,12 +355,15 @@ def _rows_at_limit(generated: Any, generation_config: Any, limit: int) -> List[i
 def _cut_off_warning(
     audio_path: Union[Path, "np.ndarray"], backend: str, limit: int, segments: List[Dict[str, Any]]
 ) -> str:
-    """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens."""
+    """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens.
+
+    It names the recording: the file given to Transcriber.transcribe(), also when the backend got its samples, or "audio"
+    for in-memory input (see recording_name()).
+    """
     first = f"from {_clock(segments[0]['start'])} to {_clock(segments[0]['end'])}"
     chunks = f"the chunk {first}" if len(segments) == 1 else f"{len(segments)} chunks, the first {first}"
     # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
-    # Samples (the "waveform" capability) have no name.
-    source = audio_path if isinstance(audio_path, Path) else "audio"
+    source = recording_name(audio_path)
     return f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off."
 
 

@@ -7,7 +7,10 @@
         transcriber.transcribe(path, num_speakers=2).save(f"{path}.srt")
 
 Besides a path, ``transcribe()`` takes the file's content as ``bytes``, a binary file object, or the samples as a
-NumPy array. Each recording is decoded at most once, also with speaker labels.
+NumPy array. Each recording is decoded at most once, also with speaker labels. ``progress=`` gets a
+:class:`~speech_toolkit.ProgressEvent` as the work advances, with each segment as it is transcribed.
+
+Nothing is printed: messages go to the ``speech_toolkit`` logger, which shows them only once you configure logging.
 
 Errors are raised, never turned into ``sys.exit``. They are :class:`~speech_toolkit.SpeechToolkitError`
 subclasses that are also the built-in error for their kind: ``ValueError`` for bad arguments, ``ImportError``
@@ -18,28 +21,34 @@ for a missing optional package, ``RuntimeError`` for audio or model problems. A 
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import pathlib
 import shutil
 import tempfile
+import time
 import warnings
 import wave
-from typing import IO, TYPE_CHECKING, AbstractSet, Any, Dict, Iterator, Optional, Union, cast
+from typing import IO, TYPE_CHECKING, AbstractSet, Any, Callable, Dict, Iterator, Optional, Union, cast
 
 from .backends import (
     DEFAULT_BACKEND,
     AudioInput,
+    ProgressCallback,
     TranscriptionBackend,
     TranscriptionResult,
     backends_with,
     get_backend_class,
 )
+from .backends.base import _Call, _transcription_call, report_stage
 from .diarization import check_speaker_hints, diarize_audio, load_diarization_pipeline, merge_diarization
 from .errors import SpeechToolkitWarning, UnsupportedOptionError
 from .media import SAMPLE_RATE, load_audio
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
+
+logger = logging.getLogger(__name__)
 
 TASKS = ("transcribe", "translate")
 # Whisper's turbo weights weren't trained for translation: they return the original language.
@@ -131,6 +140,7 @@ class Transcriber:
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
         verbose: bool = False,
+        progress: Optional[ProgressCallback] = None,
     ) -> TranscriptionResult:
         """Transcribe one audio or video recording.
 
@@ -155,7 +165,14 @@ class Transcriber:
                 them on when diarizing, so speaker labels can change mid-segment.
             num_speakers, min_speakers, max_speakers: Speaker-count hints for diarization. Hints that can't be honoured,
                 such as ``min_speakers`` above ``max_speakers``, raise :class:`~speech_toolkit.UnsupportedOptionError`.
-            verbose: Show the backend's progress output on stderr.
+            verbose: Show the backend's progress: whisper's and faster-whisper's progress bar on stderr, and the
+                progress messages of the other built-in backends, logged at INFO rather than DEBUG by the
+                ``speech_toolkit`` logger (they show once you configure logging, as the ``transcribe`` command does).
+                Before 0.5.0 those backends printed them.
+            progress: Called with a :class:`~speech_toolkit.ProgressEvent` as each stage advances: ``"decode"`` (when
+                the audio is decoded here), ``"transcribe"`` with each new segment, and ``"diarize"``. Within a stage,
+                ``done`` never decreases. It runs in the calling thread, and an exception it raises propagates from
+                here, which is how to cancel a transcription.
 
         Options the backend doesn't support are skipped with a warning.
 
@@ -176,40 +193,52 @@ class Transcriber:
             word_timestamps = self.diarize and self.supports("word_timestamps")
 
         options = self._backend_options(prompt=prompt, vad=vad, word_timestamps=word_timestamps)
-        source = self._source(audio)
-        with self._backend_input(source) as backend_audio:
-            # Passed positionally, so a custom backend may name its first parameter as it likes. An array reaches
-            # only backends with the "waveform" capability.
-            result = self.backend.transcribe(
-                cast(pathlib.Path, backend_audio), language=language, task=task, verbose=verbose, **options
-            )
-        if result.duration is None and not isinstance(source, pathlib.Path):  # a backend's own duration is kept
-            result.duration = len(source) / SAMPLE_RATE
-        if self._pipeline is not None:
-            turns = diarize_audio(
-                source,
-                self._pipeline,
-                num_speakers=num_speakers,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-            )
-            result.speaker_segments = merge_diarization({"segments": result.segments}, turns)
+        name = _name(audio)
+        # The backend and diarization report progress, and name the recording, through this call's context.
+        with _transcription_call(name, progress) as call:
+            source = self._source(audio)
+            total = None if isinstance(source, pathlib.Path) else len(source) / SAMPLE_RATE
+            logger.debug("Transcribing %s with %s '%s'", name or "audio", self.backend_name, self.model_name)
+            started = time.perf_counter()
+            call.report("transcribe", 0.0, total)
+            with self._backend_input(source) as backend_audio:
+                # Passed positionally, so a custom backend may name its first parameter as it likes. An array reaches
+                # only backends with the "waveform" capability.
+                result = self.backend.transcribe(
+                    cast(pathlib.Path, backend_audio), language=language, task=task, verbose=verbose, **options
+                )
+            if result.duration is None and total is not None:  # a backend's own duration is kept
+                result.duration = total
+            logger.debug("Transcribed in %.1f s: %d segments", time.perf_counter() - started, len(result.segments))
+            _end_transcribe_stage(call, result)
+            if self._pipeline is not None:
+                turns = diarize_audio(
+                    source,
+                    self._pipeline,
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                )
+                result.speaker_segments = merge_diarization({"segments": result.segments}, turns)
         return result
 
     def _source(self, audio: AudioInput) -> _Source:
         """What to transcribe and diarize: the file given, or the samples, decoded here once when they're needed.
 
         They are needed for in-memory input, and for diarization when the backend takes samples: both then get the
-        same array. Otherwise the backend reads the file itself, and so does diarization.
+        same array. Otherwise the backend reads the file itself, and so does diarization. Decoding is reported as the
+        "decode" stage.
         """
         if not isinstance(audio, (str, os.PathLike)):
-            return _decode(audio)
+            if isinstance(audio, (bytes, bytearray, memoryview)) or callable(getattr(audio, "read", None)):
+                return _decoding(lambda: _decode(audio))
+            return _decode(audio)  # the samples themselves
         path = pathlib.Path(audio)
         if not (self.diarize and self.supports("waveform")):
             return path
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {path}")
-        return load_audio(path)
+        return _decoding(lambda: load_audio(path))
 
     @contextlib.contextmanager
     def _backend_input(self, source: _Source) -> Iterator[_Source]:
@@ -255,6 +284,7 @@ def transcribe(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
     verbose: bool = False,
+    progress: Optional[ProgressCallback] = None,
 ) -> TranscriptionResult:
     """Load a model and transcribe one file. To transcribe several files, create a :class:`Transcriber` once.
 
@@ -277,7 +307,36 @@ def transcribe(
         min_speakers=min_speakers,
         max_speakers=max_speakers,
         verbose=verbose,
+        progress=progress,
     )
+
+
+def _name(audio: AudioInput) -> Optional[str]:
+    """What messages call *audio*: a path as given, or a file object's file name; None for other in-memory input."""
+    if isinstance(audio, (str, os.PathLike)):
+        return str(audio)
+    name = getattr(audio, "name", None)  # open("talk.ogg", "rb").name, sys.stdin.buffer.name ("<stdin>")
+    return name if isinstance(name, str) else None
+
+
+def _decoding(decode: Callable[[], "np.ndarray"]) -> "np.ndarray":
+    """The samples *decode* returns, its run reported as the "decode" stage and logged with how long it took."""
+    report_stage("decode", 0.0)
+    started = time.perf_counter()
+    samples = decode()
+    seconds = len(samples) / SAMPLE_RATE
+    logger.debug("Decoded %.1f s of audio in %.1f s", seconds, time.perf_counter() - started)
+    report_stage("decode", seconds, seconds)
+    return samples
+
+
+def _end_transcribe_stage(call: _Call, result: TranscriptionResult) -> None:
+    """Report the segments the backend didn't report itself, in order, then the end of the "transcribe" stage: done
+    and total are the audio's duration, or, if that isn't known, as far as the segments go."""
+    for segment in result.segments[call.segments :]:
+        call.report("transcribe", segment.get("end") or 0.0, segment=segment)
+    end = result.duration if result.duration is not None else call.done
+    call.report("transcribe", end, end)
 
 
 def _check_audio(audio: object) -> None:

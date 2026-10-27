@@ -6,14 +6,17 @@ enabling pluggable support for different speech-to-text models (Whisper, Voxtral
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import numbers
 import os
 import sys
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Mapping, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Tuple, Union, cast
 
 from ..formats import format_for_path, render, write_text
 from ..media import AudioSource
@@ -28,6 +31,113 @@ CAPABILITIES = ("translate", "language_detection", "prompt", "vad", "word_timest
 # What speech_toolkit.Transcriber.transcribe() takes: a path, the file's content (bytes), a binary file object, or the
 # waveform itself, a 1-D float32 NumPy array of mono samples at 16 kHz.
 AudioInput = Union[AudioSource, "np.ndarray"]
+
+# The stages of Transcriber.transcribe() that ProgressEvent reports, in the order they run.
+STAGES = ("decode", "transcribe", "diarize")
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    """How far :meth:`speech_toolkit.Transcriber.transcribe` has got: what its *progress* callback receives.
+
+    Attributes:
+        stage: ``"decode"``, ``"transcribe"`` or ``"diarize"``, in that order. ``"decode"`` is reported when the
+            Transcriber decodes the audio itself (in-memory input, or a path with speaker labels and a backend that
+            takes samples), ``"diarize"`` only with speaker labels.
+        done: Seconds of the audio this stage has processed. Within a stage it never decreases and never exceeds
+            *total*, and the stage's last event has ``done == total``.
+        total: The audio's length in seconds, or None until it is known.
+        segment: In the ``"transcribe"`` stage, a new segment of the transcript, the dict ``result.segments`` will
+            hold; otherwise None. Every segment is reported once, in order. faster-whisper reports each one as soon
+            as it is decoded, Canary and Voxtral after each batch of chunks, and other backends at the end of the
+            stage.
+    """
+
+    stage: str
+    done: float
+    total: Optional[float] = None
+    segment: Optional[Mapping[str, Any]] = None
+
+
+# What Transcriber.transcribe(progress=...) takes. An exception it raises propagates, which cancels the transcription.
+ProgressCallback = Callable[[ProgressEvent], None]
+
+
+class _Call:
+    """One Transcriber.transcribe() call: the recording's name for messages, and the progress reported so far, which
+    it passes on to the caller's callback kept monotonic."""
+
+    def __init__(self, name: Optional[str], callback: Optional[ProgressCallback]) -> None:
+        self.name = name
+        self.callback = callback
+        self.stage: Optional[str] = None
+        self.done = 0.0
+        self.total: Optional[float] = None
+        self.segments = 0  # how many segments the "transcribe" stage has reported
+
+    def report(
+        self, stage: str, done: float, total: Optional[float] = None, segment: Optional[Mapping[str, Any]] = None
+    ) -> None:
+        """Pass an event on: *done* no lower than before in the stage, and no higher than its *total* once known."""
+        if stage != self.stage:
+            self.stage, self.done, self.total = stage, 0.0, None
+        if total is not None:
+            self.total = max(float(total), self.done)
+        self.done = max(self.done, float(done) if self.total is None else min(float(done), self.total))
+        if segment is not None:
+            self.segments += 1
+        if self.callback is not None:
+            self.callback(ProgressEvent(stage, self.done, self.total, segment))
+
+
+_CALL: ContextVar[Optional[_Call]] = ContextVar("speech_toolkit_call", default=None)
+
+
+@contextlib.contextmanager
+def _transcription_call(name: Optional[str], callback: Optional[ProgressCallback]) -> Iterator[_Call]:
+    """Make report_progress() and recording_name() serve this Transcriber.transcribe() call for the ``with`` block."""
+    call = _Call(name, callback)
+    token = _CALL.set(call)
+    try:
+        yield call
+    finally:
+        _CALL.reset(token)
+
+
+def report_progress(done: float, total: Optional[float] = None, segment: Optional[Mapping[str, Any]] = None) -> None:
+    """Report how far a backend's ``transcribe()`` has got, to the *progress* callback of Transcriber.transcribe().
+
+    Args:
+        done: Seconds of the audio transcribed so far, such as the end of the newest segment.
+        total: The audio's length in seconds, if known.
+        segment: A new segment, the dict the result's ``segments`` will hold. Report segments in order, each once;
+            Transcriber reports the ones a backend didn't when ``transcribe()`` returns.
+
+    It does nothing outside Transcriber.transcribe(), as when a backend is used on its own. An exception the callback
+    raises comes out of this call: let it propagate, as it is how the caller cancels the transcription.
+    """
+    call = _CALL.get()
+    if call is not None:
+        call.report("transcribe", done, total, segment)
+
+
+def report_stage(stage: str, done: float, total: Optional[float] = None) -> None:
+    """Report progress in another stage of Transcriber.transcribe(), such as ``"diarize"`` (see report_progress)."""
+    call = _CALL.get()
+    if call is not None:
+        call.report(stage, done, total)
+
+
+def recording_name(audio: Union[Path, "np.ndarray"]) -> str:
+    """How messages name the recording a backend's ``transcribe()`` got as *audio*.
+
+    In Transcriber.transcribe(), the name of its input, which a backend that gets samples or a temporary file can't
+    tell: the path given, or a file object's file name, else ``"audio"``. On its own, a path is named as it is.
+    """
+    call = _CALL.get()
+    if call is not None:
+        return call.name or "audio"
+    return str(audio) if isinstance(audio, (str, os.PathLike)) else "audio"
 
 
 class TranscriptionResult:
@@ -278,6 +388,10 @@ class TranscriptionBackend(ABC):
 
     :class:`speech_toolkit.Transcriber` passes a backend only the options it declares.
 
+    **Progress and messages:** ``transcribe()`` can call :func:`report_progress` as it goes, to reach the *progress*
+    callback of :meth:`speech_toolkit.Transcriber.transcribe`. Backends never print: they log to
+    ``logging.getLogger(__name__)``, under the ``speech_toolkit`` logger.
+
     ``requires`` holds the top-level import names of the packages the backend needs, such as
     ``("faster_whisper",)``; ``transcribe --list-backends`` checks them without importing anything.
     """
@@ -335,7 +449,8 @@ class TranscriptionBackend(ABC):
             language: Language code (e.g., 'en', 'es'). None for auto-detect.
             task: 'transcribe', or 'translate' to English (Transcriber asks for it only with the
                 "translate" capability).
-            verbose: Whether to show progress output.
+            verbose: Whether the caller wants to see progress: the built-in backends then log their progress
+                messages at INFO rather than DEBUG, and whisper and faster-whisper show their progress bar on stderr.
 
         Returns:
             TranscriptionResult with text, segments, and metadata.

@@ -27,7 +27,8 @@ content, a file object or the samples, see [Audio input](#audio-input). Keyword 
 | `vad` | Skip silence first. |
 | `word_timestamps` | Add per-word timings. Defaults to on when diarizing, so the speaker can change mid-segment. |
 | `num_speakers`, `min_speakers`, `max_speakers` | Speaker-count hints; need `diarize=True`. |
-| `verbose` | Show the backend's progress on stderr. |
+| `progress` | A function called with a `ProgressEvent` as the work advances, with each segment; see [Progress](#progress). |
+| `verbose` | Show the backend's progress: whisper's and faster-whisper's progress bar on stderr, and the other backends' progress messages, logged at INFO instead of DEBUG (see [Logging](#logging)). |
 
 Options the backend doesn't support are skipped with a warning. A translation the backend can't do raises
 `UnsupportedOptionError` before any audio is decoded; the one-shot `transcribe()` raises it before loading the model.
@@ -39,6 +40,36 @@ Options the backend doesn't support are skipped with a warning. A translation th
 transcribe several files, create a `Transcriber` once instead.
 
 The Hugging Face token, from `hf_token`, `HF_TOKEN` or `HUGGINGFACE_TOKEN`, is exported as `HF_TOKEN` for model downloads.
+
+### Progress
+
+`progress=` takes a function that `transcribe()` calls with a `ProgressEvent` each time the work advances:
+
+```python
+from speech_toolkit import ProgressEvent, Transcriber
+
+def show(event: ProgressEvent) -> None:
+    if event.segment is not None:
+        print(f"[{event.segment['start']:.1f}s] {event.segment['text']}")
+    elif event.total:
+        print(f"{event.stage}: {event.done / event.total:.0%}")
+
+Transcriber(backend="faster-whisper").transcribe("talk.mp3", progress=show)
+```
+
+| Field | Meaning |
+|---|---|
+| `stage` | `"decode"`, `"transcribe"` or `"diarize"`, in that order. `"decode"` is reported only when `transcribe()` decodes the audio itself: for in-memory input, or for a path with `diarize=True` and a backend that takes samples. `"diarize"` comes only with `diarize=True`. |
+| `done` | Seconds of the audio the stage has processed. Within a stage it never decreases and never goes past `total`, and the stage's last event has `done == total`. |
+| `total` | The audio's length in seconds, or `None` until it is known, as when a backend reads a path itself. |
+| `segment` | In the `"transcribe"` stage, a new segment, the same dict `result.segments` will hold; otherwise `None`. |
+
+- **Every segment is reported once, in order,** before the `"transcribe"` stage ends. faster-whisper reports each
+  one as soon as it is decoded, Canary and Voxtral after each batch of 30-second chunks, and whisper and Parakeet
+  when they finish.
+- **Cancelling:** the function runs in the thread that called `transcribe()`, and an exception it raises comes out
+  of `transcribe()`. Raise one to stop: faster-whisper stops decoding, and temporary files are deleted.
+- **Don't change** the segment dicts; copy them if you need to.
 
 ### Audio input
 
@@ -150,7 +181,7 @@ built-in error the library raised before, so `except ValueError` and the like ke
 | `BackendUnavailableError` | `ImportError` | An optional package is missing, for the backend or for diarization; the message names the extra to install. |
 | `ModelLoadError` | `RuntimeError` | The model can't be downloaded or loaded. |
 | `AudioDecodeError` | `RuntimeError` | The audio can't be decoded. |
-| `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded: accept its terms and set a token, see [Speaker labels](diarization.md). |
+| `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded or loaded, for example without access to it or without a network: accept its terms and set a token, see [Speaker labels](diarization.md). The original error is its `__cause__`. |
 
 A missing input file raises the built-in `FileNotFoundError`, and the `whisper` backend passes on openai-whisper's own
 download and loading errors. Audio of a type `transcribe()` can't take raises the built-in `TypeError`, and an array
@@ -178,6 +209,31 @@ from speech_toolkit import SpeechToolkitWarning
 
 warnings.filterwarnings("ignore", category=SpeechToolkitWarning)
 ```
+
+## Logging
+
+The library never prints. Its modules log to loggers under `speech_toolkit` (`speech_toolkit.api`,
+`speech_toolkit.backends.nvidia_backend`, `speech_toolkit.server` and so on), and the `speech_toolkit` logger has a
+`NullHandler`: nothing shows until your application configures logging.
+
+```python
+import logging
+
+logging.basicConfig(level=logging.WARNING)                  # your application's choice
+logging.getLogger("speech_toolkit").setLevel(logging.INFO)  # also speech_toolkit's progress messages
+```
+
+| Level | What speech_toolkit logs |
+|---|---|
+| `DEBUG` | What is decoded, transcribed and labelled, and how long each step took. The backends' progress messages, such as `Canary: transcribed 2/5 chunks`, without `verbose=True`. |
+| `INFO` | Those progress messages with `verbose=True`; the `transcribe` command passes it unless `-q` is given. |
+| `WARNING`, `ERROR` | The server's refused uploads and failed transcriptions. |
+
+Before 0.5.0, Parakeet, Canary and Voxtral printed their progress messages to stderr with `verbose=True`. To see them
+again, configure logging at `INFO` as above. whisper's and faster-whisper's own progress bars still go to stderr with
+`verbose=True`.
+
+The `transcribe` command shows `speech_toolkit`'s messages on stderr, see [Messages](cli.md#messages).
 
 ## Decoding audio
 
@@ -224,6 +280,12 @@ register_backend("mine", MyBackend)
 
 `Transcriber` passes the audio as the first positional argument of `transcribe()`: a `pathlib.Path` to the file, or,
 for in-memory input, a temporary 16-bit WAV file that is deleted when `transcribe()` returns.
+
+**Progress and messages:** call `report_progress(done, total, segment)` from `speech_toolkit.backends` as the work
+advances, to reach the caller's [progress](#progress) function: seconds done, the audio's length if known, and each new
+segment, in order. Segments you don't report, `Transcriber` reports when `transcribe()` returns, and it keeps `done`
+in order, so reporting is optional. Outside `Transcriber.transcribe()` the call does nothing. Log with
+`logging.getLogger(__name__)` rather than printing, so that applications decide what their users see.
 
 **Samples instead of a file:** declare the `waveform` capability, and `transcribe()` may get the samples instead of
 the path: a 1-D `float32` NumPy array of mono audio at 16 kHz. `Transcriber` passes them whenever it has decoded the
