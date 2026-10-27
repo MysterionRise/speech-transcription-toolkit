@@ -1,0 +1,126 @@
+# The benchmark (benchmarks/): word error rate, speed (RTFx) and peak memory of the tiny Whisper models on the CPU,
+# on a fixed evaluation set of 100 LibriSpeech test-clean utterances and 30 FLEURS recordings in German, Spanish and
+# French (benchmarks/README.md). It fails when a set's word error rate rises more than one percentage point above
+# benchmarks/baseline.json. Speed and memory vary too much on shared runners to gate on: the run's summary reports
+# them. Runs every week, to catch changes in the libraries the models run on; on pull requests that change the
+# harness; and by hand from the Actions tab ("Run workflow").
+name: Benchmark
+
+on:
+  schedule:
+    - cron: '23 4 * * 1'  # Mondays at 04:23 UTC
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'benchmarks/**'
+      - 'requirements-bench.txt'
+      - 'tests/test_benchmarks.py'
+      - '.github/workflows/benchmark.yml'
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels the PR's previous run; other runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  benchmark:
+    name: Benchmark (CPU, tiny models)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash  # with pipefail: a command that fails before "| tee" fails its step
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: |
+          pyproject.toml
+          requirements-bench.txt
+
+    # ffmpeg from PyPI, as in ci.yml: imageio-ffmpeg's static build, in a folder of its own.
+    - name: Install ffmpeg
+      timeout-minutes: 10
+      run: |
+        pip install --target "$RUNNER_TEMP/imageio-ffmpeg" imageio-ffmpeg==0.6.0
+        exe=$(PYTHONPATH="$RUNNER_TEMP/imageio-ffmpeg" python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')
+        mkdir -p "$RUNNER_TEMP/bin"
+        ln -s "$exe" "$RUNNER_TEMP/bin/ffmpeg"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/bin/ffmpeg" -hide_banner -version
+
+    # The newest releases of the model libraries that pyproject.toml allows, so that the weekly run notices upstream
+    # changes; the scoring tools are pinned in requirements-bench.txt. pytest runs the harness's own tests.
+    - name: Install the package, openai-whisper (CPU-only torch) and the benchmark's tools
+      id: install
+      run: |
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install ".[whisper]" -r requirements-bench.txt $(grep -E '^pytest(-cov)?==' requirements-dev.txt) pyyaml
+        pip list
+
+    # Here the tests that need jiwer, whisper-normalizer and pyarrow run too; the unit test jobs skip them. The
+    # benchmark runs even when they fail, to show everything that broke.
+    - name: Test the harness
+      run: pytest tests/test_benchmarks.py --no-cov -p no:cacheprovider -rs
+
+    - name: Restore the evaluation set
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/speech-toolkit-benchmarks
+        key: benchmark-data-${{ hashFiles('benchmarks/manifest.json') }}
+        restore-keys: benchmark-data-
+
+    # Downloads the clips the cache doesn't have from Hugging Face, and checks every clip against its SHA-256.
+    - name: Download and check the evaluation set
+      id: data
+      if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      run: python -m benchmarks.data
+
+    - name: Restore cached models
+      if: ${{ !cancelled() && steps.data.outcome == 'success' }}
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/huggingface/hub
+          ~/.cache/whisper
+        key: benchmark-models-${{ runner.os }}-${{ hashFiles('.github/workflows/benchmark.yml') }}
+        restore-keys: benchmark-models-${{ runner.os }}-
+
+    # Each -m is a model of the -b before it. To measure another model, add it here and its results to
+    # benchmarks/baseline.json (see benchmarks/README.md).
+    - name: Run the benchmark
+      id: run
+      if: ${{ !cancelled() && steps.data.outcome == 'success' }}
+      run: |
+        python -m benchmarks.run --device cpu --json "$RUNNER_TEMP/benchmark-results.json" \
+          -b faster-whisper -m tiny \
+          -b whisper -m tiny \
+          | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Compare with the baseline
+      if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+      run: |
+        python -m benchmarks.compare benchmarks/baseline.json "$RUNNER_TEMP/benchmark-results.json" \
+          | tee -a "$GITHUB_STEP_SUMMARY"
+
+    # The results, to compare with or to become the new baseline.
+    - name: Upload the results
+      if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: benchmark-results
+        path: ${{ runner.temp }}/benchmark-results.json
+
+    - name: Show the results file
+      if: ${{ !cancelled() && steps.run.outcome == 'success' }}
+      run: cat "$RUNNER_TEMP/benchmark-results.json"

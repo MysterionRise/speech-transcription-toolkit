@@ -74,3 +74,44 @@ with the chunk's time range. Check the transcript there, or transcribe the file 
 
 To use a backend without changing the package, register it at runtime with `speech_toolkit.register_backend()`; see
 [Python API](python-api.md#custom-backends).
+
+## Benchmarks
+
+The benchmark harness in
+[`benchmarks/`](https://github.com/MysterionRise/speech-transcription-toolkit/tree/main/benchmarks) measures each
+backend and model on a fixed evaluation set: 100 LibriSpeech test-clean utterances (English, 12.5 minutes) and 30
+FLEURS recordings in German, Spanish and French (6.3 minutes). It reports the word error rate (WER, after Whisper's
+text normalizers), the speed as RTFx (seconds of audio per second of transcription: higher is faster) and the peak
+memory. It runs from a checkout:
+
+```bash
+pip install -e ".[whisper]" -r requirements-bench.txt     # plus the extras of the backends to measure
+python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny
+```
+
+Each `-m` is a model of the `-b` before it. The table goes to stdout and the results to a JSON file, which
+`python -m benchmarks.compare BEFORE.json AFTER.json` compares. The first run downloads the evaluation set (about 40 MB)
+and checks every clip against its SHA-256.
+
+**On a GPU,** pass `--device cuda`; the table then names the GPU and shows its peak memory. For example:
+
+```bash
+python -m benchmarks.run --device cuda -b faster-whisper -m large-v3 -m turbo -b whisper -m turbo -b parakeet
+```
+
+A workflow runs the tiny models on the CPU every week and fails when a set's WER rises more than one percentage point
+above the committed baseline; speed and memory vary too much on shared runners to gate on. The
+[harness's README](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/benchmarks/README.md)
+describes the evaluation set and its licenses (CC BY 4.0), how each number is measured, the JSON format, the
+tolerances, and how to update the baseline.
+
+### Measured so far
+
+WER per set (lower is better) and RTFx over all clips. Each model ran in a process of its own, with the clips' audio
+decoded beforehand and one warm-up transcription; peak RSS is that process's.
+
+| Machine | Backend | Model | Device | WER LibriSpeech | WER FLEURS (de, es, fr) | RTFx | Peak RSS (MiB) |
+|---|---|---|---|--:|--:|--:|--:|
+| 4-CPU Intel Xeon @ 2.8 GHz, 16 GB (a cloud VM) | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 6.6 | 332 |
+
+No GPU numbers yet: run the command above on one and add a row, naming the GPU.
