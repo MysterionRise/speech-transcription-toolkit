@@ -43,10 +43,12 @@ How batch mode works:
 |---|---|
 | `audio …` | Audio or video files, or folders, to transcribe. Anything ffmpeg can decode works. |
 | `-b`, `--backend` | `faster-whisper` (default), `whisper`, `voxtral`, `parakeet` or `canary`. See [Backends](backends.md). |
-| `-m`, `--model` | Model name (default: the backend's default; see `--list-models`). |
+| `-m`, `--model` | Model name (default: the backend's default; see `--list-models`), or a Hugging Face repo id (`org/name`) or local path: see [Custom models](backends.md#custom-models). |
 | `-l`, `--language` | Language code such as `en` (default: detect it). Parakeet ignores it, with a warning. |
 | `-t`, `--task` | `transcribe` (default), or `translate` to English (whisper, faster-whisper, canary). With another backend, `translate` is an error, reported before the model loads. |
-| `--device` | `cpu` or `cuda` (default: the GPU when available). |
+| `--device` | `auto` (default: the GPU when available), `cpu`, `cuda`, `cuda:N` (the N-th GPU, from 0) or `mps` (an Apple GPU; not faster-whisper). See [Devices and precision](backends.md#devices-and-precision). |
+| `--compute-type TYPE` | Precision: `auto` (default) picks one the device supports; or a type such as `int8` or `float16`, see [Devices and precision](backends.md#devices-and-precision). |
+| `-O`, `--option KEY=VALUE` | Set a backend option, such as `-O cpu_threads=4`; repeat for several. See [Backend options](backends.md#backend-options). |
 | `--hf-token TOKEN` | Hugging Face token for model downloads. Defaults to the `HF_TOKEN` or `HUGGINGFACE_TOKEN` environment variable, which is safer than passing it on the command line. |
 | `-q`, `--quiet` | Hide progress output. |
 | `-o`, `--output FILE` | Write the transcript to this file instead of stdout; its extension picks the format. |
@@ -60,8 +62,8 @@ How batch mode works:
 | `--diarize` | Label speakers with pyannote.audio. See [Speaker labels](diarization.md). |
 | `--num-speakers N` | Exact number of speakers, if known (needs `--diarize`). |
 | `--min-speakers N`, `--max-speakers N` | Bounds on the number of speakers (needs `--diarize`). |
-| `--list-backends` | List the backends with their models and capabilities, and whether their packages are installed, then exit. |
-| `--list-models` | List the models of `--backend`, then exit. |
+| `--list-backends` | List the backends with their models, capabilities, devices and options, and whether their packages are installed, then exit. |
+| `--list-models` | List the models of `--backend`, and the custom models it takes, then exit. |
 | `--version` | Print the version. |
 
 ## ogg2wav

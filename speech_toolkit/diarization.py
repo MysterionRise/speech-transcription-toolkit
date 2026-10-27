@@ -9,6 +9,8 @@ import os
 import pathlib
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from .backends._transformers import torch_device
+from .backends.config import parse_device
 from .errors import BackendUnavailableError, DiarizationError, UnsupportedOptionError
 from .media import SAMPLE_RATE, load_audio
 
@@ -38,10 +40,16 @@ _Turn = Tuple[float, float, str]  # (start, end, speaker)
 def load_diarization_pipeline(device: Optional[str] = None) -> Any:
     """Load the pyannote speaker-diarization pipeline (imported lazily: it is slow to import).
 
+    Args:
+        device: Where it runs: None or "auto" (CUDA when torch sees a GPU, else the CPU), "cpu", "cuda", "cuda:N" or
+            "mps", parsed as for the backends.
+
     Raises:
+        UnsupportedOptionError: If *device* isn't a device (checked before anything is imported).
         BackendUnavailableError: If pyannote.audio is not installed.
         DiarizationError: If the gated model can't be downloaded (terms not accepted, or no token).
     """
+    target = parse_device(device)
     # pyannote.audio 4 sends usage metrics to pyannote.ai by default; stay offline unless the user opted in.
     os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
     try:
@@ -59,7 +67,7 @@ def load_diarization_pipeline(device: Optional[str] = None) -> Any:
             f"could not download '{DIARIZATION_MODEL}'. Accept its terms at https://hf.co/{DIARIZATION_MODEL} "
             "and set HF_TOKEN (or pass --hf-token)."
         )
-    pipeline.to(torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu")))
+    pipeline.to(torch.device(torch_device(torch, target)))
     return pipeline
 
 
