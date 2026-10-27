@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from speech_toolkit import __version__, cli
-from speech_toolkit.cli import parse_args, plan_outputs, positive_int, show_backends, show_models
+from speech_toolkit.cli import Job, Output, parse_args, plan_outputs, positive_int, show_backends, show_models
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -72,7 +72,7 @@ class TestParseArgs:
     def test_parse_args_format(self):
         """Test parsing an explicit output format."""
         args = parse_args(["audio.mp3", "-f", "vtt"])
-        assert args.format == "vtt"
+        assert args.format == ("vtt",)
 
     def test_parse_args_invalid_format(self):
         """Test that unknown formats are rejected."""
@@ -233,10 +233,12 @@ class TestPlanOutputs:
 
     def test_single_file_goes_to_output_or_stdout(self):
         args = parse_args(["talk.mp3"])
-        assert plan_outputs(args, "txt") == [(pathlib.Path("talk.mp3"), None)]
+        assert plan_outputs(args, ["txt"]) == [Job(pathlib.Path("talk.mp3"), (Output("txt", None),))]
 
         args = parse_args(["talk.mp3", "-o", "talk.srt"])
-        assert plan_outputs(args, "srt") == [(pathlib.Path("talk.mp3"), pathlib.Path("talk.srt"))]
+        assert plan_outputs(args, ["srt"]) == [
+            Job(pathlib.Path("talk.mp3"), (Output("srt", pathlib.Path("talk.srt")),))
+        ]
 
     def test_folder_outputs_next_to_inputs(self, tmp_path: pathlib.Path):
         (tmp_path / "a.MP3").touch()
@@ -244,11 +246,11 @@ class TestPlanOutputs:
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "b.wav").touch()
 
-        jobs = plan_outputs(parse_args([str(tmp_path)]), "vtt")
+        jobs = plan_outputs(parse_args([str(tmp_path)]), ["vtt"])
 
         assert jobs == [
-            (tmp_path / "a.MP3", tmp_path / "a.vtt"),
-            (tmp_path / "sub" / "b.wav", tmp_path / "sub" / "b.vtt"),
+            Job(tmp_path / "a.MP3", (Output("vtt", tmp_path / "a.vtt"),)),
+            Job(tmp_path / "sub" / "b.wav", (Output("vtt", tmp_path / "sub" / "b.vtt"),)),
         ]
 
     def test_outdir_mirrors_folder_tree(self, tmp_path: pathlib.Path):
@@ -259,17 +261,17 @@ class TestPlanOutputs:
         (src / "day2" / "talk.mp3").touch()  # same name, different folder: no collision
         out = tmp_path / "out"
 
-        jobs = plan_outputs(parse_args([str(src), "--outdir", str(out)]), "srt")
+        jobs = plan_outputs(parse_args([str(src), "--outdir", str(out)]), ["srt"])
 
-        assert [dest for _, dest in jobs] == [out / "day1" / "talk.srt", out / "day2" / "talk.srt"]
+        assert [job.outputs[0].path for job in jobs] == [out / "day1" / "talk.srt", out / "day2" / "talk.srt"]
 
     def test_same_stem_keeps_full_name(self, tmp_path: pathlib.Path):
         (tmp_path / "talk.mp3").touch()
         (tmp_path / "talk.wav").touch()
 
-        jobs = plan_outputs(parse_args([str(tmp_path)]), "txt")
+        jobs = plan_outputs(parse_args([str(tmp_path)]), ["txt"])
 
-        assert [dest for _, dest in jobs] == [tmp_path / "talk.mp3.txt", tmp_path / "talk.wav.txt"]
+        assert [job.outputs[0].path for job in jobs] == [tmp_path / "talk.mp3.txt", tmp_path / "talk.wav.txt"]
 
     def test_unresolvable_collision_exits(self, tmp_path: pathlib.Path):
         for folder in ("a", "b"):
@@ -278,7 +280,7 @@ class TestPlanOutputs:
         argv = [str(tmp_path / "a" / "talk.mp3"), str(tmp_path / "b" / "talk.mp3"), "--outdir", str(tmp_path / "o")]
 
         with pytest.raises(SystemExit, match="same output file"):
-            plan_outputs(parse_args(argv), "txt")
+            plan_outputs(parse_args(argv), ["txt"])
 
 
 class TestMain:
