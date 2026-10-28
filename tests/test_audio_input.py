@@ -517,7 +517,7 @@ class FakeVoxtralInputs(dict):
 
 
 def test_cut_off_warning_names_samples_audio():
-    """The warning about text cut off at MAX_NEW_TOKENS names the file; samples have none, so they are "audio"."""
+    """The warning about text cut off at max_new_tokens names the file; samples have none, so they are "audio"."""
     from speech_toolkit import SpeechToolkitWarning
 
     torch, transformers = MagicMock(), MagicMock()
@@ -525,7 +525,7 @@ def test_cut_off_warning_names_samples_audio():
     eos, pad = 2, 11
     with patch.dict(sys.modules, {"torch": torch, "transformers": transformers}):
         backend = VoxtralBackend()
-        backend.load_model("voxtral-mini")
+        backend.load_model("voxtral-mini", options={"max_new_tokens": 3})
         processor = transformers.AutoProcessor.from_pretrained.return_value
         processor.apply_transcription_request.side_effect = lambda **kwargs: FakeVoxtralInputs(len(kwargs["audio"]))
         processor.batch_decode.side_effect = [["one", "two", "three"]]
@@ -533,12 +533,12 @@ def test_cut_off_warning_names_samples_audio():
         model.generation_config = SimpleNamespace(eos_token_id=eos, pad_token_id=pad)
         # 70 s: three chunks; the second one's text reaches the limit of 3 tokens without ending.
         model.generate.return_value = np.array([[1, 1, 1, 5, eos, pad], [1, 1, 1, 5, 6, 7], [1, 1, 1, 5, 6, eos]])
-        with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3):
-            with pytest.warns(SpeechToolkitWarning) as warned:
-                result = backend.transcribe(np.zeros(70 * RATE, np.float32), verbose=False)
+        with pytest.warns(SpeechToolkitWarning) as warned:
+            result = backend.transcribe(np.zeros(70 * RATE, np.float32), verbose=False)
 
     assert [str(warning.message) for warning in warned] == [
-        "audio: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, so the text may be cut off."
+        "audio: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, so the text may be cut off. "
+        "Raise the limit with the max_new_tokens option (-O max_new_tokens=6)."
     ]
     assert result.duration == 70.0
 

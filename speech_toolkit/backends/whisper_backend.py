@@ -2,18 +2,24 @@
 
 This backend wraps the openai-whisper library for local speech-to-text transcription. openai-whisper runs on
 PyTorch, so it comes with the ``whisper`` extra: ``pip install "speech-transcription-toolkit[whisper]"``.
+
+Besides the names in ``MODELS``, it loads local checkpoint files (``.pt``), the only custom models openai-whisper
+takes.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
-from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError
+from ..errors import BackendUnavailableError, ModelLoadError
 from .base import TranscriptionBackend, TranscriptionResult
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class WhisperBackend(TranscriptionBackend):
@@ -27,6 +33,8 @@ class WhisperBackend(TranscriptionBackend):
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
     capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps", "waveform"})
     requires = ("whisper",)
+    MODEL_SOURCES = {"file": "a local checkpoint file (.pt)"}  # openai-whisper loads no repo ids or folders
+    DEVICES = frozenset({"cpu", "cuda", "mps"})
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -56,19 +64,25 @@ class WhisperBackend(TranscriptionBackend):
         """Return 'turbo' as the default - best balance of speed and accuracy."""
         return "turbo"
 
-    def load_model(self, model_name: str, device: Optional[str] = None) -> None:
+    def load_model(
+        self, model_name: str, device: Optional[str] = None, *, options: Optional[Mapping[str, Any]] = None
+    ) -> None:
         """Load a Whisper model.
 
         Args:
-            model_name: One of the available model names (tiny ... large-v3, turbo).
-            device: 'cpu', 'cuda', or None for auto-detection.
+            model_name: One of the available model names (tiny ... large-v3, turbo), or a local checkpoint file.
+            device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), 'mps', or None or 'auto' for the GPU when torch sees one.
+            options: The backend has no options, so only an empty mapping is accepted.
 
         Raises:
             ModelNotFoundError: If model_name is not recognized.
+            UnsupportedOptionError: If the device isn't a device, or an option is given.
             BackendUnavailableError: If openai-whisper is not installed.
+            ModelLoadError: If the model cannot be downloaded or loaded.
         """
-        if model_name not in self.MODELS:
-            raise ModelNotFoundError(f"Unknown Whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
+        model_id = self.resolve_model(model_name)
+        target = self._parse_device(device)
+        settings = self._resolve_options(options)
 
         try:
             import whisper  # imported lazily: it pulls in torch, which is slow to import
@@ -78,9 +92,16 @@ class WhisperBackend(TranscriptionBackend):
                 'Install with: pip install "speech-transcription-toolkit[whisper]"'
             ) from e
 
-        self._model = whisper.load_model(model_name, device=device)
+        on = None if target.auto else str(target)  # None: openai-whisper picks CUDA when torch sees a GPU
+        logger.debug("Loading whisper model %r on %s", model_id, on or "the device whisper picks")
+        try:
+            self._model = whisper.load_model(model_id, device=on)
+        except Exception as e:  # download, checksum, unpickling and out-of-memory errors come in many types
+            self._model = None
+            raise ModelLoadError(f"Failed to load whisper model '{model_name}': {e}") from e
         self._model_name = model_name
-        self._device = device or str(next(self._model.parameters()).device)
+        self._device = on or str(next(self._model.parameters()).device)
+        self._options = settings
 
     def transcribe(
         self,
