@@ -16,6 +16,7 @@ Each backend class declares what it can do in ``capabilities`` (see ``CAPABILITI
 ``backends_with()`` names the backends that declare one, e.g. the ones that translate. It also
 declares what loads: the custom models it takes (``MODEL_SOURCES``), the devices it runs on
 (``DEVICES``, parsed by ``parse_device()``) and its settings (``OPTIONS``, ``BackendOption`` specs).
+A backend reports its progress with ``report_progress()``.
 
 Usage:
     from speech_toolkit.backends import get_backend, list_backends
@@ -34,7 +35,15 @@ from __future__ import annotations
 from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
-from .base import CAPABILITIES, AudioInput, TranscriptionBackend, TranscriptionResult
+from .base import (
+    CAPABILITIES,
+    AudioInput,
+    ProgressCallback,
+    ProgressEvent,
+    TranscriptionBackend,
+    TranscriptionResult,
+    report_progress,
+)
 from .config import BackendOption, Device, parse_device
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
@@ -155,6 +164,9 @@ __all__ = [
     "CAPABILITIES",
     "DEFAULT_BACKEND",
     "AudioInput",
+    "ProgressEvent",
+    "ProgressCallback",
+    "report_progress",
     "BackendOption",
     "Device",
     "parse_device",

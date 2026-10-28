@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Uni
 
 from ..errors import BackendUnavailableError, ModelLoadError, SpeechToolkitWarning
 from ..types import Segment
-from .base import TranscriptionBackend, TranscriptionResult
+from .base import TranscriptionBackend, TranscriptionResult, report_progress
 from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -186,7 +186,8 @@ class FasterWhisperBackend(TranscriptionBackend):
             audio_path: Path to the audio file, or its samples (mono float32 at 16 kHz), which it takes as is.
             language: Language code or None for auto-detection.
             task: 'transcribe' or 'translate'.
-            verbose: Show a progress bar during transcription.
+            verbose: Show faster-whisper's progress bar on stderr. Each segment is also passed to report_progress() as
+                soon as it is decoded, whatever *verbose* is.
             prompt: Names, terms or a sample sentence that guide spelling (initial_prompt).
             vad: Skip silence with the built-in Silero VAD filter.
             word_timestamps: Add per-word timings ("words") to each segment.
@@ -213,8 +214,11 @@ class FasterWhisperBackend(TranscriptionBackend):
             vad_filter=vad,
             word_timestamps=word_timestamps,
         )
-        # segment_iter is a generator: decoding happens while it is iterated.
-        segments = [_segment(index, seg) for index, seg in enumerate(segment_iter)]
+        # segment_iter is a generator: decoding happens while it is iterated, so each segment is reported as it comes.
+        segments: List[Segment] = []
+        for seg in segment_iter:
+            segments.append(_segment(len(segments), seg))
+            report_progress(seg.end, info.duration, segments[-1])
 
         return TranscriptionResult(
             text="".join(seg["text"] for seg in segments).strip(),

@@ -37,13 +37,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import logging
 import os
 import pathlib
 import sys
 import time
 import warnings
 from collections import Counter
-from typing import AbstractSet, List, Optional, Sequence, TextIO, Tuple
+from typing import AbstractSet, Iterator, List, Optional, Sequence, TextIO, Tuple
 
 from . import __version__
 from .api import TASKS, Transcriber, check_load_arguments
@@ -149,7 +150,7 @@ Examples:
         metavar="TOKEN",
         help="Hugging Face token for model downloads (default: HF_TOKEN or HUGGINGFACE_TOKEN env var).",
     )
-    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output.")
+    add_general_options(parser)
     add_output_options(parser)
     add_accuracy_options(parser)
     add_diarization_options(parser)
@@ -299,6 +300,30 @@ def add_diarization_options(parser: argparse.ArgumentParser) -> None:
     diarization.add_argument("--num-speakers", type=positive_int, help="Exact number of speakers, if known.")
     diarization.add_argument("--min-speakers", type=positive_int, help="Minimum number of speakers.")
     diarization.add_argument("--max-speakers", type=positive_int, help="Maximum number of speakers.")
+
+
+def add_general_options(parser: argparse.ArgumentParser) -> None:
+    """-q, -v and --log-level: what the command shows on stderr besides the transcript."""
+    general = parser.add_argument_group("general")
+    amount = general.add_mutually_exclusive_group()
+    amount.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Hide progress: loading messages, [i/N] lines and the summary, progress bars (Hugging Face downloads "
+        "and transformers' too) and info messages. Warnings and errors still show.",
+    )
+    amount.add_argument(
+        "-v", "--verbose", action="store_true", help="Also show debug messages (the same as --log-level debug)."
+    )
+    general.add_argument(
+        "--log-level",
+        type=str.lower,
+        choices=LOG_LEVELS,
+        metavar="LEVEL",
+        help="Show messages from this level up: debug, info, warning or error "
+        "(default: info; warning with -q, debug with -v).",
+    )
 
 
 def add_information_options(parser: argparse.ArgumentParser) -> None:
@@ -628,6 +653,73 @@ def show_models(backend_name: str) -> None:
 
 
 ###############################################################################
+# Messages
+###############################################################################
+
+LOG_LEVELS = ("debug", "info", "warning", "error")
+# What -q sets before any model loads: no Hugging Face progress bars (model downloads, and transformers' "Loading
+# weights", which follows the same setting), and no transformers messages below errors. Both libraries read these
+# variables when they are imported.
+QUIET_ENVIRONMENT = {"HF_HUB_DISABLE_PROGRESS_BARS": "1", "TRANSFORMERS_VERBOSITY": "error"}
+
+
+class _LogFormatter(logging.Formatter):
+    """Log messages for stderr: info messages as they are, others after their level, like the Warning: lines."""
+
+    PREFIXES = {logging.DEBUG: "Debug: ", logging.WARNING: "Warning: ", logging.ERROR: "Error: "}
+
+    def format(self, record: logging.LogRecord) -> str:
+        prefix = self.PREFIXES.get(record.levelno, "Error: " if record.levelno > logging.ERROR else "")
+        return prefix + super().format(record)
+
+
+@contextlib.contextmanager
+def show_logs(args: argparse.Namespace) -> Iterator[None]:
+    """Show speech_toolkit's log messages on stderr, from the level -q, -v or --log-level ask for, until the block ends.
+
+    Other libraries' messages aren't shown. With -q, Hugging Face's progress bars and transformers' messages below
+    errors are hidden too (QUIET_ENVIRONMENT): the block must start before any model loads. The environment is
+    restored at the end.
+    """
+    level = args.log_level or ("debug" if args.verbose else "warning" if args.quiet else "info")
+    logger = logging.getLogger("speech_toolkit")
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_LogFormatter())
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(level.upper())
+    saved = {name: os.environ.get(name) for name in QUIET_ENVIRONMENT}
+    try:
+        if args.quiet:
+            _quiet_libraries()
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _quiet_libraries() -> None:
+    """Hide Hugging Face's progress bars and transformers' messages below errors (for -q).
+
+    A library imported already, which no longer reads the environment, is told directly: the modules that keep these
+    settings are loaded once it has read them.
+    """
+    os.environ.update(QUIET_ENVIRONMENT)
+    transformers_logging = sys.modules.get("transformers.utils.logging")
+    if transformers_logging is not None:
+        transformers_logging.set_verbosity_error()
+        transformers_logging.disable_progress_bar()
+    hub_utils = sys.modules.get("huggingface_hub.utils")
+    if hub_utils is not None:
+        hub_utils.disable_progress_bars()
+
+
+###############################################################################
 # Main program flow
 ###############################################################################
 
@@ -683,7 +775,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     utf8_when_redirected(stdout)
     # Libraries print progress and debug text to stdout; send it to stderr so stdout carries only the transcript.
     # Warnings, from the format lookup on, print as one line each.
-    with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr):
+    with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr), show_logs(args):
         warnings.showwarning = _print_warning
         formats = args.format or (format_for_path(args.output),)
         jobs = plan_outputs(args, formats)

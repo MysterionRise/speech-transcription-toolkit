@@ -107,13 +107,14 @@ def test_a_level_set_already_is_kept(serve, package_logger, capsys):
 def test_a_handler_set_up_already_is_used_instead(serve, package_logger, capsys):
     own = io.StringIO()
     package_logger.addHandler(logging.StreamHandler(own))
+    handlers = list(package_logger.handlers)  # also the package's NullHandler
     responses: List[Any] = []
 
     serve(failing_request(responses))
 
     assert "Transcription failed" in own.getvalue()
     assert "Transcription failed" not in capsys.readouterr().err  # not twice
-    assert len(package_logger.handlers) == 1
+    assert package_logger.handlers == handlers
 
 
 def test_the_handler_goes_when_the_model_fails_to_load(serve, package_logger):

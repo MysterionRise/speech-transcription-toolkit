@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import sys
 import warnings
@@ -136,7 +137,8 @@ class TestParakeet:
         backend.load_model("parakeet-tdt-0.6b-v3")
         return backend
 
-    def test_tokens_become_words_and_sentences(self, nvidia_modules, audio_file, capsys):
+    def test_tokens_become_words_and_sentences(self, nvidia_modules, audio_file, caplog):
+        caplog.set_level(logging.INFO, logger="speech_toolkit")
         processor = nvidia_modules.processor
         processor.return_value = FakeBatch(input_features="features")
         tokens = [
@@ -163,7 +165,7 @@ class TestParakeet:
             {"word": " Hello", "start": 0.0, "end": 0.4},
             {"word": " world.", "start": 0.5, "end": 0.9},
         ]
-        assert "1/1 chunks" in capsys.readouterr().err
+        assert "Parakeet: transcribed 1/1 chunks" in caplog.messages  # logged at INFO, as verbose is on
 
     def test_long_audio_is_chunked_and_offset(self, nvidia_modules, audio_file):
         nvidia_modules.load_audio.return_value = np.zeros(130 * RATE, dtype=np.float32)
@@ -231,7 +233,8 @@ class TestCanary:
         processor.batch_decode.side_effect = texts
         return processor
 
-    def test_transcribe_in_batches(self, nvidia_modules, audio_file, capsys):
+    def test_transcribe_in_batches(self, nvidia_modules, audio_file, caplog):
+        caplog.set_level(logging.INFO, logger="speech_toolkit")
         nvidia_modules.load_audio.return_value = np.zeros(70 * RATE, dtype=np.float32)
         processor = self._prepare(nvidia_modules, [[" Hallo ", "Welt"], [""]])
 
@@ -248,7 +251,7 @@ class TestCanary:
         assert [s["start"] for s in result.segments] == pytest.approx([0.0, 25.05, 50.1])
         assert result.text == "Hallo Welt"
         assert result.language == "de"
-        assert "3/3 chunks" in capsys.readouterr().err
+        assert "Canary: transcribed 3/3 chunks" in caplog.messages
 
     def test_translate_to_english(self, nvidia_modules, audio_file):
         processor = self._prepare(nvidia_modules, [["Hello"]])
