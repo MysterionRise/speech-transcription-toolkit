@@ -22,9 +22,11 @@ from tests.integration.helpers import (
     instrumented_env,
     parse_cues,
     require,
+    write_wav,
 )
 
 STARTUP_TIMEOUT = 300  # seconds, model download included
+MAX_AUDIO_SECONDS = 30  # the server's --max-audio-seconds, longer than the samples
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,7 +71,8 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
     folder = tmp_path_factory.mktemp("server")
     log, port, events = folder / "server.log", free_port(), EventLog(folder / "instrument-events.jsonl")
     module = ["tests.integration.instrument", "speech_toolkit.server"]  # python -m speech_toolkit.server, instrumented
-    command = [sys.executable, "-m", *module, *BACKEND_ARGS["faster-whisper"], "--port", str(port), *device_args()]
+    options = ["--port", str(port), "--max-audio-seconds", str(MAX_AUDIO_SECONDS), *device_args()]
+    command = [sys.executable, "-m", *module, *BACKEND_ARGS["faster-whisper"], *options]
     with log.open("w", encoding="utf-8") as out:
         env = instrumented_env(events.path)
         process = subprocess.Popen(command, cwd=folder, env=env, stdout=out, stderr=subprocess.STDOUT)
@@ -126,3 +129,15 @@ def test_verbose_json_with_word_timestamps(client, dialogue):
     assert_timeline(((seg.start, seg.end) for seg in verbose.segments), dialogue.duration, "segments")
     assert_timeline(((word.start, word.end) for word in verbose.words), dialogue.duration, "words")
     assert_wer(" ".join(word.word for word in verbose.words), dialogue, "faster-whisper")
+
+
+def test_audio_over_the_length_limit(client, tmp_path):
+    """The server decodes uploads itself, at most a second past --max-audio-seconds, and refuses longer audio."""
+    import numpy as np
+    from openai import BadRequestError
+
+    path = tmp_path / "silence.wav"
+    write_wav(path, np.zeros(2 * MAX_AUDIO_SECONDS * 16000, np.float32), 16000)
+
+    with pytest.raises(BadRequestError, match=f"longer than this server's {MAX_AUDIO_SECONDS} s limit"):
+        create_transcription(client, path)
