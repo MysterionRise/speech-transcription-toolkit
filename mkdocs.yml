@@ -45,6 +45,7 @@ nav:
   - Speaker labels: diarization.md
   - Output formats: formats.md
   - OpenAI-compatible server: server.md
+  - Docker: docker.md
   - Examples: examples.md
   - API reference:
       - reference/README.md
