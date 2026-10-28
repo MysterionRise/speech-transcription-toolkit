@@ -25,6 +25,7 @@ from speech_toolkit import (
     register_backend,
 )
 from tests.conftest import FakeBackend
+from tests.server_helpers import decoded
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
@@ -248,6 +249,7 @@ class StandInOpenAI:
         return endpoint
 
 
+@pytest.mark.usefixtures("decoded")  # the server decodes uploads; here without ffmpeg
 class TestOpenAIClient:
     @pytest.fixture
     def example(self, fake_backend):
