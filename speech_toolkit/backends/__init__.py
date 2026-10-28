@@ -13,7 +13,9 @@ Heavy libraries (torch, transformers, ...) are imported only when a model is loa
 so importing this package and listing backends/models stays fast.
 
 Each backend class declares what it can do in ``capabilities`` (see ``CAPABILITIES``), and
-``backends_with()`` names the backends that declare one, e.g. the ones that translate.
+``backends_with()`` names the backends that declare one, e.g. the ones that translate. It also
+declares what loads: the custom models it takes (``MODEL_SOURCES``), the devices it runs on
+(``DEVICES``, parsed by ``parse_device()``) and its settings (``OPTIONS``, ``BackendOption`` specs).
 
 Usage:
     from speech_toolkit.backends import get_backend, list_backends
@@ -33,6 +35,7 @@ from typing import Dict, List, Type
 
 from ..errors import BackendNotFoundError
 from .base import CAPABILITIES, AudioInput, TranscriptionBackend, TranscriptionResult
+from .config import BackendOption, Device, parse_device
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
 from .voxtral_backend import VoxtralBackend
@@ -59,6 +62,16 @@ def list_backends() -> List[str]:
 def backends_with(capability: str) -> List[str]:
     """Names of the registered backends that declare *capability*, such as ``"translate"``, in registry order."""
     return [name for name, backend_class in _BACKENDS.items() if capability in backend_class.capabilities]
+
+
+def backends_with_option(option: str) -> List[str]:
+    """Names of the registered backends that declare *option* in ``OPTIONS``, such as ``"compute_type"``."""
+    return [name for name, backend_class in _BACKENDS.items() if option in backend_class.OPTIONS]
+
+
+def backends_on(device: str) -> List[str]:
+    """Names of the registered backends that list the device kind *device*, such as ``"mps"``, in ``DEVICES``."""
+    return [name for name, backend_class in _BACKENDS.items() if device in (backend_class.DEVICES or ())]
 
 
 def get_backend(name: str) -> TranscriptionBackend:
@@ -134,10 +147,15 @@ __all__ = [
     "CanaryBackend",
     "list_backends",
     "backends_with",
+    "backends_with_option",
+    "backends_on",
     "get_backend",
     "get_backend_class",
     "register_backend",
     "CAPABILITIES",
     "DEFAULT_BACKEND",
     "AudioInput",
+    "BackendOption",
+    "Device",
+    "parse_device",
 ]

@@ -15,9 +15,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Mapping, Optional, Tuple, Union, cast
 
+from ..errors import ModelNotFoundError
 from ..formats import format_for_path, render, write_text
 from ..media import AudioSource
 from ..types import SCHEMA_VERSION, Segment
+from .config import DEVICE_KINDS, MODEL_SOURCE_NAMES, BackendOption, Device, check_device, model_source, parse_options
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
@@ -280,17 +282,40 @@ class TranscriptionBackend(ABC):
 
     ``requires`` holds the top-level import names of the packages the backend needs, such as
     ``("faster_whisper",)``; ``transcribe --list-backends`` checks them without importing anything.
+
+    What :meth:`load_model` takes is declared too, and :class:`speech_toolkit.Transcriber` checks a request against
+    it before anything loads. All three are optional, and None or empty by default:
+
+    - ``MODEL_SOURCES``: the custom models it loads besides ``available_models()``, a map from ``"hub"`` (a Hugging
+      Face repo id, ``org/name``), ``"directory"`` (a local folder) or ``"file"`` (a local file) to how messages
+      describe them (``""`` for the usual words). See :meth:`resolve_model`. None leaves model names to
+      ``load_model()`` to check.
+    - ``DEVICES``: the kinds of device it runs on, of ``"cpu"``, ``"cuda"`` (which also takes ``"cuda:N"``) and
+      ``"mps"``. See :meth:`check_device`. None passes the device on unchecked.
+    - ``OPTIONS``: its settings, a map from names to :class:`~speech_toolkit.backends.BackendOption` specs (type,
+      default, help), which users set with ``Transcriber(options={...})`` or ``transcribe -O name=value``. A
+      backend with options takes them as a keyword-only argument, ``load_model(name, device=None, *,
+      options=None)``: the options the user gave, checked and converted. :meth:`_resolve_options` adds the
+      defaults, and ``self.options`` holds them all once the model has loaded. A ``compute_type`` option, for the
+      precision, is what ``transcribe --compute-type`` sets.
+
+    ``Transcriber`` passes ``options`` only when there are some, so a backend without ``OPTIONS`` keeps the
+    signature ``load_model(model_name, device=None)``.
     """
 
     name: str = "base"
     description: str = "Base transcription backend"
     capabilities: FrozenSet[str] = frozenset()
     requires: Tuple[str, ...] = ()
+    MODEL_SOURCES: Optional[Mapping[str, str]] = None
+    DEVICES: Optional[FrozenSet[str]] = None
+    OPTIONS: Mapping[str, BackendOption] = {}
 
     def __init__(self) -> None:
         self._model: Any = None  # the backend library's model object
         self._model_name: Optional[str] = None
         self._device: Optional[str] = None
+        self._options: Dict[str, Any] = self.default_options()  # what load_model() was given, with the defaults
 
     @classmethod
     @abstractmethod
@@ -309,13 +334,105 @@ class TranscriptionBackend(ABC):
         """The modules in ``requires`` that aren't installed. Nothing is imported, so this is fast."""
         return [module for module in cls.requires if not _installed(module)]
 
+    @classmethod
+    def resolve_model(cls, model_name: str) -> str:
+        """What the backend's loader gets for *model_name*: the id of a name from ``available_models()``, or a
+        custom model of a kind in ``MODEL_SOURCES``, unchanged. Only the name is looked at: nothing is downloaded.
+
+        A backend without ``MODEL_SOURCES`` gets every name unchanged, and its ``load_model()`` checks it.
+
+        Raises:
+            ModelNotFoundError: If *model_name* is none of these. The message lists the models and the custom ones
+                the backend takes.
+        """
+        if model_name in cls.available_models():
+            return cls._model_id(model_name)
+        if cls.MODEL_SOURCES is None:
+            return model_name
+        source = model_source(model_name)
+        if source in cls.MODEL_SOURCES:
+            return model_name
+        listed = f"Available: {', '.join(cls.available_models())}"
+        custom = cls.describe_custom_models()
+        if custom:
+            listed += f"; or {custom}"
+        if source is None or not custom:  # not a custom model, or the backend takes none
+            raise ModelNotFoundError(f"Unknown {cls.name} model: {model_name}. {listed}")
+        what = {"hub": "a Hugging Face repo id", "directory": "a folder", "file": "a file"}[source]
+        raise ModelNotFoundError(f"The {cls.name} backend can't load a model from {what}: {model_name}. {listed}")
+
+    @classmethod
+    def _model_id(cls, model_name: str) -> str:
+        """What the loader gets for a name from ``available_models()``: the name itself, unless overridden."""
+        return model_name
+
+    @classmethod
+    def describe_custom_models(cls) -> str:
+        """The custom models the backend loads, from ``MODEL_SOURCES``, as words: ``"a local model folder"``, or
+        ``""`` for none."""
+        return " or ".join(text or MODEL_SOURCE_NAMES[source] for source, text in (cls.MODEL_SOURCES or {}).items())
+
+    @classmethod
+    def check_device(cls, device: Optional[str]) -> Optional[str]:
+        """*device* as :meth:`load_model` takes it: None to pick one, else such as ``"cpu"`` or ``"cuda:1"``.
+
+        A backend with ``DEVICES`` takes ``None``, ``"auto"`` (which becomes None), ``"cpu"``, ``"cuda"``,
+        ``"cuda:N"`` and ``"mps"``, of the kinds it lists. One without gets *device* unchecked, but for ``"auto"``.
+
+        Raises:
+            UnsupportedOptionError: If the backend can't run on *device*.
+        """
+        if cls.DEVICES is None:
+            return None if device is None or str(device).strip().lower() == "auto" else device
+        parsed = check_device(device, cls.DEVICES, cls.name)
+        return None if parsed.auto else str(parsed)
+
+    @classmethod
+    def check_options(cls, options: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """The *options* given, checked against ``OPTIONS`` and converted to their types; no defaults are added.
+
+        ``compute_type="auto"``, the precision every backend picks by default, is dropped for a backend without
+        a ``compute_type`` option.
+
+        Raises:
+            UnsupportedOptionError: For an option the backend doesn't have (the message lists the ones it has), or a
+                value that doesn't fit.
+        """
+        given = {str(key).strip().replace("-", "_"): value for key, value in (options or {}).items()}
+        if "compute_type" not in cls.OPTIONS and given.get("compute_type") == "auto":
+            del given["compute_type"]
+        return parse_options(cls.OPTIONS, given, cls.name)
+
+    @classmethod
+    def default_options(cls) -> Dict[str, Any]:
+        """Every option in ``OPTIONS`` with its default value."""
+        return {name: option.default for name, option in cls.OPTIONS.items()}
+
+    @property
+    def options(self) -> Dict[str, Any]:
+        """The options in effect: the ones :meth:`load_model` was given, and the defaults of the others."""
+        return dict(self._options)
+
+    def _parse_device(self, device: Optional[str]) -> Device:
+        """*device* parsed, and checked against ``DEVICES`` (any device kind if the backend lists none)."""
+        return check_device(device, DEVICE_KINDS if self.DEVICES is None else self.DEVICES, self.name)
+
+    def _resolve_options(self, options: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+        """Every option in ``OPTIONS``: *options* checked, then the defaults of the others. For ``load_model()``."""
+        return {**self.default_options(), **self.check_options(options)}
+
     @abstractmethod
     def load_model(self, model_name: str, device: Optional[str] = None) -> None:
         """Load the specified model.
 
         Args:
-            model_name: Name or size of the model to load.
-            device: Device to run on ('cpu', 'cuda', or None for auto-detect).
+            model_name: A name from ``available_models()``, or a custom model the backend declares in
+                ``MODEL_SOURCES``, such as a Hugging Face repo id; :meth:`resolve_model` gives what to load.
+            device: None (or ``"auto"``) to pick one, else ``"cpu"``, ``"cuda"``, ``"cuda:N"`` or ``"mps"``, of
+                the kinds in ``DEVICES``; :meth:`check_device` checks it.
+
+        A backend with ``OPTIONS`` also takes ``options``, keyword-only: the options the user gave, which
+        :meth:`_resolve_options` checks and completes with the defaults.
         """
         pass
 
