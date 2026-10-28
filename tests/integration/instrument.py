@@ -91,10 +91,13 @@ def torch_peak() -> Optional[int]:
 
 
 def audio_seconds(audio: Any) -> Optional[float]:
-    """The length of the audio file *audio* in seconds, or None if it can't be decoded."""
+    """The length of the audio file *audio*, or of its samples (as the server passes them), in seconds; None if it
+    can't be decoded."""
     try:
         from speech_toolkit.media import SAMPLE_RATE, load_audio
 
+        if getattr(audio, "ndim", None) == 1:  # samples at SAMPLE_RATE
+            return len(audio) / SAMPLE_RATE
         return len(load_audio(audio)) / SAMPLE_RATE
     except Exception:  # the measurement must never fail a transcription that worked
         return None

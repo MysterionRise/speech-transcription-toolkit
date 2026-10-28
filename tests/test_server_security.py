@@ -31,8 +31,10 @@ from speech_toolkit.server import (
     create_app,
 )
 from tests.conftest import FakeBackend, FakeWordsBackend
+from tests.server_helpers import decoded
 
 URL = "/v1/audio/transcriptions"
+pytestmark = pytest.mark.usefixtures("decoded")  # the server decodes uploads; here without ffmpeg
 KEY = "s3cret"
 AUTH = {"Authorization": f"Bearer {KEY}"}
 MIB = 1024 * 1024
@@ -238,21 +240,13 @@ class TestTempFiles:
     def test_suffix_comes_from_an_allowlist(self, filename, suffix):
         assert _upload_suffix(filename) == suffix
 
-    def test_m3u8_upload_is_stored_as_bin(self, fake_backend, temp_dir, monkeypatch):
-        stored = []
-        transcribe = FakeWordsBackend.transcribe
-
-        def record(self, audio_path, *args, **kwargs):
-            stored.append((audio_path, audio_path.is_file()))
-            return transcribe(self, audio_path, *args, **kwargs)
-
-        monkeypatch.setattr(FakeWordsBackend, "transcribe", record)
-
+    def test_m3u8_upload_is_stored_as_bin(self, fake_backend, temp_dir, decoded):
         response = TestClient(create_app(Transcriber("fake-words"))).post(URL, files=upload("x.m3u8"))
 
         assert response.status_code == 200
-        ((path, existed),) = stored
-        assert (path.parent, path.suffix, existed) == (temp_dir, ".bin", True)
+        (decoding,) = decoded.calls  # the server decodes the stored upload (#31); the backend gets the samples
+        path = decoding.path
+        assert (path.parent, path.suffix, decoding.existed) == (temp_dir, ".bin", True)
         assert "m3u8" not in path.name  # a random name, not the client's
         assert list(temp_dir.iterdir()) == []
 
@@ -569,15 +563,18 @@ class TestRealBackends:
             ("canary", "nvidia_backend", {"language": "en"}),
         ],
     )
-    def test_transformers_backends(self, temp_dir, backend, module, data):
+    def test_transformers_backends(self, temp_dir, decoded, backend, module, data):
+        """They decoded uploads with media.load_audio. Since #31 the server does, and they get the samples."""
         torch = MagicMock()
         torch.cuda.is_available.return_value = False
+        decoded.error = AudioDecodeError(f"Failed to load audio: {FFMPEG_BANNER}{temp_dir}/tmp1.wav: Invalid data")
 
         with (
             patch.dict(sys.modules, {"torch": torch, "transformers": MagicMock()}),
-            patch(f"speech_toolkit.backends.{module}.load_audio", side_effect=audio_decode_error),
+            patch(f"speech_toolkit.backends.{module}.load_audio", side_effect=audio_decode_error) as backend_decoder,
         ):
             client = TestClient(create_app(Transcriber(backend)))
             response = client.post(URL, files=upload(), data=data)
 
         assert_not_audio(response)
+        backend_decoder.assert_not_called()

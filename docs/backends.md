@@ -149,3 +149,54 @@ the file with another backend.
 
 To use a backend without changing the package, register it at runtime with `speech_toolkit.register_backend()`; see
 [Python API](python-api.md#custom-backends).
+
+## Benchmarks
+
+The benchmark harness in
+[`benchmarks/`](https://github.com/MysterionRise/speech-transcription-toolkit/tree/main/benchmarks) measures each
+backend and model on a fixed evaluation set: 100 LibriSpeech test-clean utterances (English, 12.5 minutes) and 30
+FLEURS recordings in German, Spanish and French (6.3 minutes). It reports the word error rate (WER, after Whisper's
+text normalizers), the speed as RTFx (seconds of audio per second of transcription: higher is faster) and the peak
+memory. It runs from a checkout:
+
+```bash
+pip install -e ".[whisper]" -r requirements-bench.txt     # plus the extras of the backends to measure
+python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny
+```
+
+Each `-m` is a model of the `-b` before it. The table goes to stdout and the results to a JSON file, which
+`python -m benchmarks.compare BEFORE.json AFTER.json` compares. The first run downloads the evaluation set (about 40 MB)
+and checks every clip against its SHA-256.
+
+**On a GPU,** pass `--device cuda`; the table then names the GPU and shows its peak memory. For example:
+
+```bash
+python -m benchmarks.run --device cuda -b faster-whisper -m large-v3 -m turbo -b whisper -m turbo -b parakeet
+```
+
+A workflow runs the tiny models on the CPU every week and fails when a set's WER rises above the committed baseline by
+more than one percentage point (three for FLEURS); speed and memory vary too much on shared runners to gate on. The
+[harness's README](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/benchmarks/README.md)
+describes the evaluation set and its licenses (CC BY 4.0), how each number is measured, the JSON format, the
+tolerances, and how to update the baseline.
+
+### Measured so far
+
+WER per set (lower is better) and RTFx over all clips (higher is faster), with speech_toolkit 0.4.0. Each model ran in
+a process of its own, with the clips' audio decoded beforehand and one warm-up transcription; peak RSS is that
+process's.
+
+| Machine | Backend | Model | Device | WER LibriSpeech | WER FLEURS (de, es, fr) | RTFx | Peak RSS (MiB) |
+|---|---|---|---|--:|--:|--:|--:|
+| GitHub's `ubuntu-latest` runner: Intel Xeon Platinum 8370C, 4 CPUs, 16 GB | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 12.7 | 356 |
+| GitHub's `ubuntu-latest` runner: Intel Xeon Platinum 8370C, 4 CPUs, 16 GB | whisper (openai-whisper 20250625, torch 2.14.1) | tiny | CPU, float32 | 0.078 | 0.324 (0.286, 0.191, 0.458) | 18.3 | 727 |
+| GitHub's `ubuntu-latest` runner: AMD EPYC 7763, 4 CPUs, 16 GB | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.071 | 0.302 (0.253, 0.191, 0.425) | 12.8 | 346 |
+| GitHub's `ubuntu-latest` runner: AMD EPYC 7763, 4 CPUs, 16 GB | whisper (openai-whisper 20250625, torch 2.14.1) | tiny | CPU, float32 | 0.078 | 0.324 (0.286, 0.191, 0.458) | 11.4 | 726 |
+| A cloud VM: Intel Xeon @ 2.8 GHz, 4 CPUs, 16 GB | faster-whisper 1.2.1 | tiny | CPU, int8 | 0.072 | 0.284 (0.273, 0.153, 0.392) | 6.6 | 332 |
+
+The Intel runner's rows are the workflow's baseline (`benchmarks/baseline.json`). faster-whisper decodes with beam
+search (5 beams) and openai-whisper greedily: openai-whisper's `tiny` is the faster of the two on the Intel runner, and
+faster-whisper's the more accurate. openai-whisper gets the same WER on every machine. faster-whisper's int8 kernels
+compute a little differently on Intel and AMD CPUs, which moves its WER on FLEURS's hard clips.
+
+No GPU numbers yet: run the command above on one and add a row, naming the GPU.
