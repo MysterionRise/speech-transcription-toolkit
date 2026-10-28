@@ -274,7 +274,7 @@ class TestWhisperBackend:
         backend = WhisperBackend()
         with pytest.raises(ValueError) as exc_info:
             backend.load_model("invalid_model")
-        assert "Unknown Whisper model" in str(exc_info.value)
+        assert "Unknown whisper model" in str(exc_info.value)
 
     def test_load_model_missing_dependency(self):
         """Without openai-whisper, the error names the extra that installs it."""
@@ -599,7 +599,7 @@ class TestVoxtralBackend:
 
     def test_load_model_invalid(self):
         """Test loading invalid model raises error."""
-        with pytest.raises(ValueError, match="Unknown Voxtral model"):
+        with pytest.raises(ValueError, match="Unknown voxtral model"):
             VoxtralBackend().load_model("invalid_model")
 
     def test_load_model_missing_dependency(self):

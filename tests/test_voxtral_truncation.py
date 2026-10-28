@@ -1,4 +1,4 @@
-"""Voxtral warns when a chunk's text reaches MAX_NEW_TOKENS and may be cut off (torch and transformers are mocked)."""
+"""Voxtral warns when a chunk's text reaches max_new_tokens and may be cut off (torch and transformers are mocked)."""
 
 from __future__ import annotations
 
@@ -59,20 +59,25 @@ def generates(voxtral, *batches):
     voxtral.model.generate.side_effect = [np.array([PROMPT + row for row in batch]) for batch in batches]
 
 
+def limit(voxtral, tokens):
+    """Load the model again with the max_new_tokens option set to *tokens* (the mocks stay the same)."""
+    voxtral.backend.load_model("voxtral-mini", options={"max_new_tokens": tokens})
+
+
 def test_warns_once_naming_the_cut_off_chunk(voxtral, audio_file):
     generates(voxtral, [[5, EOS, PAD], [5, 6, 7], [5, 6, EOS]])  # ended early, cut off, ended at the limit
     voxtral.processor.batch_decode.side_effect = [["one", "two", "three"]]
+    limit(voxtral, 3)
 
-    with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3):
-        with pytest.warns(SpeechToolkitWarning) as warned:
-            result = voxtral.backend.transcribe(audio_file, verbose=False)
+    with pytest.warns(SpeechToolkitWarning) as warned:
+        result = voxtral.backend.transcribe(audio_file, verbose=False)
 
     assert voxtral.model.generate.call_args[1]["max_new_tokens"] == 3
     assert [(warning.category, str(warning.message)) for warning in warned] == [
         (
             SpeechToolkitWarning,
             f"{audio_file}: Voxtral reached its limit of 3 tokens in the chunk from 0:25 to 0:50, "
-            "so the text may be cut off.",
+            "so the text may be cut off. Raise the limit with the max_new_tokens option (-O max_new_tokens=6).",
         )
     ]
     assert [s["text"] for s in result.segments] == ["one", "two", "three"]  # the text is kept
@@ -81,8 +86,9 @@ def test_warns_once_naming_the_cut_off_chunk(voxtral, audio_file):
 def test_one_warning_for_several_cut_off_chunks(voxtral, audio_file):
     generates(voxtral, [[5, 6], [5, EOS]], [[7, 8]])
     voxtral.processor.batch_decode.side_effect = [["one", "two"], ["three"]]
+    limit(voxtral, 2)
 
-    with patch.multiple("speech_toolkit.backends.voxtral_backend", BATCH_SIZE=2, MAX_NEW_TOKENS=2):
+    with patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
         with pytest.warns(SpeechToolkitWarning) as warned:
             voxtral.backend.transcribe(audio_file, verbose=False)
 
@@ -90,7 +96,7 @@ def test_one_warning_for_several_cut_off_chunks(voxtral, audio_file):
         (
             SpeechToolkitWarning,
             f"{audio_file}: Voxtral reached its limit of 2 tokens in 2 chunks, the first from 0:00 to 0:25, "
-            "so the text may be cut off.",
+            "so the text may be cut off. Raise the limit with the max_new_tokens option (-O max_new_tokens=4).",
         )
     ]
 
@@ -98,8 +104,8 @@ def test_one_warning_for_several_cut_off_chunks(voxtral, audio_file):
 def test_no_warning_when_every_chunk_ends(voxtral, audio_file):
     generates(voxtral, [[5, EOS, PAD], [5, 6, EOS], [EOS, PAD, PAD]])
     voxtral.processor.batch_decode.side_effect = [["one", "two", ""]]
+    limit(voxtral, 3)
 
-    with patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3):
-        result = voxtral.backend.transcribe(audio_file, verbose=False)  # a warning would fail the test
+    result = voxtral.backend.transcribe(audio_file, verbose=False)  # a warning would fail the test
 
     assert result.text == "one two"

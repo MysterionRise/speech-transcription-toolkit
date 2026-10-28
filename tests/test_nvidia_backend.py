@@ -218,9 +218,9 @@ class TestParakeet:
 
 
 class TestCanary:
-    def _backend(self):
+    def _backend(self, **options):
         backend = CanaryBackend()
-        backend.load_model("canary-1b-v2")
+        backend.load_model("canary-1b-v2", options=options)
         return backend
 
     def _prepare(self, nvidia_modules, texts):
@@ -285,15 +285,15 @@ class TestCanary:
             ],
         )
 
-        backend = self._backend()
-        with patch.object(CanaryBackend, "MAX_NEW_TOKENS", 4), pytest.warns(SpeechToolkitWarning) as warned:
+        backend = self._backend(max_new_tokens=4)
+        with pytest.warns(SpeechToolkitWarning) as warned:
             result = backend.transcribe(audio_file, language="en", verbose=False)
 
         assert [(warning.category, str(warning.message)) for warning in warned] == [
             (
                 SpeechToolkitWarning,
                 f"{audio_file}: Canary reached its limit of 4 tokens in the chunk from 0:25 to 0:50, "
-                "so the text may be cut off.",
+                "so the text may be cut off. Raise the limit with the max_new_tokens option (-O max_new_tokens=8).",
             )
         ]
         assert [s["text"] for s in result.segments] == ["one", "two", "three"]  # the text is kept
@@ -303,8 +303,8 @@ class TestCanary:
         self._prepare(nvidia_modules, [["one", "two"], ["three"]])
         self._generate(nvidia_modules, [[5, CANARY_EOS], [5, 6]], [[7, 8]])
 
-        backend = self._backend()
-        with patch.multiple(CanaryBackend, BATCH_SIZE=2, MAX_NEW_TOKENS=2):
+        backend = self._backend(max_new_tokens=2)
+        with patch.object(CanaryBackend, "BATCH_SIZE", 2):
             with pytest.warns(SpeechToolkitWarning) as warned:
                 backend.transcribe(audio_file, language="en", verbose=False)
 
@@ -312,7 +312,7 @@ class TestCanary:
             (
                 SpeechToolkitWarning,
                 f"{audio_file}: Canary reached its limit of 2 tokens in 2 chunks, the first from 0:25 to 0:50, "
-                "so the text may be cut off.",
+                "so the text may be cut off. Raise the limit with the max_new_tokens option (-O max_new_tokens=4).",
             )
         ]
 

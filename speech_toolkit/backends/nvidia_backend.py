@@ -3,7 +3,7 @@
 Parakeet TDT (0.6B parameters) is a fast, accurate transcriber for English and 24 other European
 languages that also gives word timestamps; Canary (1B) transcribes and translates between English
 and the same languages. Needs the ``nvidia`` extra; models download from the Hugging Face Hub on
-first use.
+first use. Loading is shared with Voxtral, in ``_transformers.py``.
 """
 
 from __future__ import annotations
@@ -12,22 +12,17 @@ import re
 import sys
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from ..errors import (
-    BackendUnavailableError,
-    ModelLoadError,
-    ModelNotFoundError,
-    SpeechToolkitWarning,
-    UnsupportedOptionError,
-)
+from ..errors import SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from .base import TranscriptionBackend, TranscriptionResult
+from ._transformers import MAX_NEW_TOKENS, MAX_NEW_TOKENS_OPTION, _TransformersBackend
+from .base import TranscriptionResult
+from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
 
-INSTALL_HINT = 'Install with: pip install "speech-transcription-toolkit[nvidia]"'
 # Parakeet word timings are grouped into segments that end at a sentence, a pause or this length.
 MAX_SEGMENT_SECONDS = 30.0
 PAUSE_SECONDS = 1.0
@@ -37,70 +32,15 @@ PAUSE_SECONDS = 1.0
 ABBREVIATIONS = frozenset({"dr", "mr", "mrs", "ms", "st", "vs"})
 
 
-class _TransformersBackend(TranscriptionBackend):
-    """Loading shared by backends that run a transformers speech model (imported lazily)."""
+class _NvidiaBackend(_TransformersBackend):
+    """What Parakeet and Canary share: the nvidia extra."""
 
     requires = ("torch", "transformers", "librosa")  # the nvidia extra, plus torch
-    MODELS: Dict[str, str] = {}
-    MODEL_CLASS = ""  # transformers class name
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._processor: Any = None
-
-    @classmethod
-    def available_models(cls) -> List[str]:
-        """Return the model names; the first is the default."""
-        return list(cls.MODELS)
-
-    def load_model(self, model_name: str, device: Optional[str] = None) -> None:
-        """Load a model (bfloat16/float16 on CUDA, float32 on CPU).
-
-        Raises:
-            BackendUnavailableError: If torch or a recent enough transformers is not installed.
-            ModelNotFoundError: If model_name is not recognized.
-            ModelLoadError: If the model cannot be downloaded or loaded.
-        """
-        if model_name not in self.MODELS:
-            raise ModelNotFoundError(f"Unknown {self.name} model: {model_name}. Available: {', '.join(self.MODELS)}")
-
-        try:
-            import torch
-            import transformers
-
-            model_class = getattr(transformers, self.MODEL_CLASS)
-        except (ImportError, AttributeError) as e:
-            raise BackendUnavailableError(
-                f"The {self.name} backend needs torch and transformers>=5.18 ({e}). {INSTALL_HINT}"
-            ) from e
-
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        if device == "cuda":
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        else:
-            dtype = torch.float32
-
-        repo_id = self.MODELS[model_name]
-        try:
-            self._processor = transformers.AutoProcessor.from_pretrained(repo_id)
-            self._model = model_class.from_pretrained(repo_id, dtype=dtype).to(device)
-        except Exception as e:  # download, auth and out-of-memory errors come in many types
-            self._model = None
-            self._processor = None
-            raise ModelLoadError(f"Failed to load {self.name} model '{model_name}': {e}") from e
-
-        self._model_name = model_name
-        self._device = device
-
-    def _check_ready(self, audio_path: Union[Path, "np.ndarray"]) -> None:
-        if self._model is None or self._processor is None:
-            raise ModelLoadError("No model loaded. Call load_model() first.")
-        if isinstance(audio_path, Path) and not audio_path.exists():
-            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+    EXTRA = "nvidia"
+    NEEDS = "torch and transformers>=5.18"
 
 
-class ParakeetBackend(_TransformersBackend):
+class ParakeetBackend(_NvidiaBackend):
     """NVIDIA Parakeet TDT: fast, accurate transcription with word timestamps."""
 
     name = "parakeet"
@@ -181,7 +121,7 @@ class ParakeetBackend(_TransformersBackend):
         return _words_from_tokens(timestamps[0], offset)
 
 
-class CanaryBackend(_TransformersBackend):
+class CanaryBackend(_NvidiaBackend):
     """NVIDIA Canary: transcription and translation for English and 24 European languages."""
 
     name = "canary"
@@ -194,7 +134,8 @@ class CanaryBackend(_TransformersBackend):
     # Canary returns text without timestamps, so each chunk becomes one coarsely timestamped segment.
     CHUNK_SECONDS = 30
     BATCH_SIZE = 8
-    MAX_NEW_TOKENS = 500
+    MAX_NEW_TOKENS = MAX_NEW_TOKENS  # the max_new_tokens option's default
+    OPTIONS: Mapping[str, BackendOption] = {**_NvidiaBackend.OPTIONS, "max_new_tokens": MAX_NEW_TOKENS_OPTION}
 
     def transcribe(
         self,
@@ -212,8 +153,9 @@ class CanaryBackend(_TransformersBackend):
             verbose: Print progress to stderr.
 
         Returns:
-            TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches MAX_NEW_TOKENS
-            tokens may be cut off: one warning per file gives the number of such chunks and the first one's times.
+            TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches the
+            max_new_tokens option's limit may be cut off: one warning per file gives the number of such chunks and the
+            first one's times.
         """
         self._check_ready(audio_path)
         if language is None:
@@ -225,7 +167,7 @@ class CanaryBackend(_TransformersBackend):
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         chunks = split_audio(audio, self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
-        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
+        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
         for first in range(0, len(chunks), self.BATCH_SIZE):
             batch = chunks[first : first + self.BATCH_SIZE]
             texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language or "en", task)
@@ -235,7 +177,8 @@ class CanaryBackend(_TransformersBackend):
             if verbose:
                 print(f"Canary: transcribed {len(segments)}/{len(chunks)} chunks", file=sys.stderr)
         if cut_off:
-            warnings.warn(_cut_off_warning(audio_path, "Canary", self.MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
+            limit = self._options["max_new_tokens"]
+            warnings.warn(_cut_off_warning(audio_path, "Canary", limit, cut_off), SpeechToolkitWarning)
 
         return TranscriptionResult(
             text=" ".join(segment["text"] for segment in segments if segment["text"]),
@@ -248,7 +191,7 @@ class CanaryBackend(_TransformersBackend):
         """Transcribe (or translate) a batch of audio chunks.
 
         Returns:
-            One string per chunk, and the positions in the batch of the chunks whose text reached MAX_NEW_TOKENS.
+            One string per chunk, and the positions in the batch of the chunks whose text reached max_new_tokens.
         """
         inputs = self._processor.apply_transcription_request(
             audio=list(chunks),
@@ -256,12 +199,12 @@ class CanaryBackend(_TransformersBackend):
             target_language="en" if task == "translate" else None,
         )
         inputs = inputs.to(self._device, dtype=self._model.dtype)
-        outputs = self._model.generate(**inputs, max_new_tokens=self.MAX_NEW_TOKENS)
+        outputs = self._model.generate(**inputs, max_new_tokens=self._options["max_new_tokens"])
         # The output starts with the prompt (language and task tokens); keep only the generated text.
         prompt_length = inputs["decoder_input_ids"].shape[1] if "decoder_input_ids" in inputs else 0
         generated = outputs[:, prompt_length:]
         texts = self._processor.batch_decode(generated, skip_special_tokens=True)
-        at_limit = _rows_at_limit(generated, self._model.generation_config, self.MAX_NEW_TOKENS)
+        at_limit = _rows_at_limit(generated, self._model.generation_config, self._options["max_new_tokens"])
         return [text.strip() for text in texts], at_limit
 
 
@@ -351,7 +294,10 @@ def _cut_off_warning(
     # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
     # Samples (the "waveform" capability) have no name.
     source = audio_path if isinstance(audio_path, Path) else "audio"
-    return f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off."
+    return (
+        f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off. "
+        f"Raise the limit with the max_new_tokens option (-O max_new_tokens={2 * limit})."
+    )
 
 
 def _clock(seconds: float) -> str:
