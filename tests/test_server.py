@@ -13,8 +13,10 @@ from fastapi.testclient import TestClient
 from speech_toolkit import Transcriber
 from speech_toolkit.server import INSTALL_HINT, _is_loopback, create_app, main, parse_args
 from tests.conftest import FakeWordsBackend
+from tests.server_helpers import decoded
 
 URL = "/v1/audio/transcriptions"
+pytestmark = pytest.mark.usefixtures("decoded")  # the server decodes uploads; here without ffmpeg
 
 
 def upload(name: str = "talk.wav", data: bytes = b"RIFF fake audio") -> dict:
@@ -195,7 +197,14 @@ class TestAuthAndInfo:
         assert response.status_code == 200
 
     def test_health_needs_no_key(self, secured):
-        assert secured.get("/health").json() == {"status": "ok", "backend": "fake-words", "model": "small"}
+        assert secured.get("/health").json() == {
+            "status": "ok",
+            "backend": "fake-words",
+            "model": "small",
+            "transcribing": 0,
+            "waiting": 0,
+            "max_queue": 8,
+        }
 
     def test_models_lists_the_loaded_model(self, client):
         data = client.get("/v1/models").json()["data"]

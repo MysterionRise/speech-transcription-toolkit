@@ -379,20 +379,16 @@ def test_chunk_backends_log_their_progress(transformers, capsys, caplog, backend
 
 @pytest.fixture
 def cut_off(transformers, monkeypatch):
-    """Canary and Voxtral reaching their limit of 3 tokens in every chunk; any audio decodes to 70 s of silence."""
+    """Canary and Voxtral write 3 tokens in every chunk, their limit with warned_about()'s max_new_tokens=3; any audio
+    decodes to 70 s of silence."""
     transformers.tokens = 3
     monkeypatch.setattr("speech_toolkit.api.load_audio", lambda audio: np.zeros(70 * RATE, np.float32))
-    with (
-        patch.object(CanaryBackend, "MAX_NEW_TOKENS", 3),
-        patch("speech_toolkit.backends.voxtral_backend.MAX_NEW_TOKENS", 3),
-    ):
-        yield
 
 
 def warned_about(backend: str, audio: Any, diarize: bool = False) -> str:
     """The recording the truncation warning names, when *backend* transcribes *audio*."""
     with pytest.warns(SpeechToolkitWarning, match="reached its limit of 3 tokens") as warned:
-        Transcriber(backend, diarize=diarize).transcribe(audio, "en")
+        Transcriber(backend, diarize=diarize, options={"max_new_tokens": 3}).transcribe(audio, "en")
     [warning] = [warning for warning in warned if "limit" in str(warning.message)]
     return str(warning.message).split(": ")[0]
 

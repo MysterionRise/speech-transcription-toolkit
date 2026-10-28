@@ -47,8 +47,18 @@ from collections import Counter
 from typing import AbstractSet, Iterator, List, Optional, Sequence, TextIO, Tuple
 
 from . import __version__
-from .api import TASKS, Transcriber
-from .backends import CAPABILITIES, DEFAULT_BACKEND, backends_with, get_backend_class, list_backends
+from .api import TASKS, Transcriber, check_load_arguments
+from .backends import (
+    CAPABILITIES,
+    DEFAULT_BACKEND,
+    backends_on,
+    backends_with,
+    backends_with_option,
+    get_backend_class,
+    list_backends,
+    parse_device,
+)
+from .backends.config import describe_devices
 from .diarization import check_speaker_hints
 from .errors import SpeechToolkitError, UnsupportedOptionError
 from .formats import FORMATS, format_for_path, write_text
@@ -152,8 +162,24 @@ Examples:
     return args
 
 
+def device_arg(value: str) -> str:
+    """argparse type for --device: auto, cpu, cuda, cuda:N or mps, written as given ("CUDA:1" becomes "cuda:1")."""
+    try:
+        return str(parse_device(value))
+    except UnsupportedOptionError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
+def option_arg(value: str) -> Tuple[str, str]:
+    """argparse type for -O: KEY=VALUE, as a (key, value) pair; the backend checks both when it loads."""
+    key, equals, text = value.partition("=")
+    if not equals or not key.strip():
+        raise argparse.ArgumentTypeError(f"expected KEY=VALUE, such as cpu_threads=4, got {value!r}")
+    return key.strip(), text
+
+
 def add_model_options(parser: argparse.ArgumentParser) -> None:
-    """--backend, --model and --device: the model to load (transcribe-server takes them too)."""
+    """--backend, --model, --device, --compute-type and -O: the model to load (transcribe-server takes them too)."""
     model = parser.add_argument_group("model")
     model.add_argument(
         "-b",
@@ -161,8 +187,36 @@ def add_model_options(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_BACKEND,
         help=f"Transcription backend (default: {DEFAULT_BACKEND}). Available: {', '.join(list_backends())}",
     )
-    model.add_argument("-m", "--model", default=None, help="Model name/size (default: the backend's default).")
-    model.add_argument("--device", choices=("cpu", "cuda"), default=None, help="Force device (default: auto).")
+    model.add_argument(
+        "-m",
+        "--model",
+        default=None,
+        help="Model name/size (default: the backend's default), or a Hugging Face repo id (org/name) or local path; "
+        "see --list-models.",
+    )
+    model.add_argument(
+        "--device",
+        type=device_arg,
+        default=None,
+        metavar="DEVICE",
+        help="auto (default: the GPU when available), cpu, cuda, cuda:N for the N-th GPU, or mps for an Apple GPU "
+        f"({', '.join(backends_on('mps')) or 'no backend'}).",
+    )
+    model.add_argument(
+        "--compute-type",
+        metavar="TYPE",
+        help="Precision: auto (default: what suits the device), or a type --list-backends shows, such as int8 or "
+        f"float16 ({', '.join(backends_with_option('compute_type')) or 'no backend'}).",
+    )
+    model.add_argument(
+        "-O",
+        "--option",
+        dest="options",
+        action="append",
+        type=option_arg,
+        metavar="KEY=VALUE",
+        help="Set a backend option, such as cpu_threads=4; repeat for several. --list-backends lists them.",
+    )
 
 
 def input_path(value: str) -> pathlib.Path:
@@ -357,11 +411,27 @@ def plan_outputs(args: argparse.Namespace, formats: Sequence[str]) -> List[Job]:
 
 
 def load_transcriber(args: argparse.Namespace) -> Transcriber:
-    """Load the selected backend's model (its default if --model is not given) and, with --diarize, pyannote."""
-    model_name = args.model or get_backend_class(args.backend).default_model()
+    """Load the selected backend's model (its default if --model is not given) and, with --diarize, pyannote.
+
+    A model name, --device, --compute-type or -O option the backend can't take fails first, before the message that
+    the model loads.
+    """
+    backend_class = get_backend_class(args.backend)
+    model_name = args.model or backend_class.default_model()
+    compute_type = getattr(args, "compute_type", None)
+    options = dict(getattr(args, "options", None) or ())  # the last -O for a key wins
+    check_load_arguments(backend_class, model_name, args.device, compute_type, options)
     if not args.quiet:
         print(f"Loading {args.backend} model '{model_name}'...", file=sys.stderr)
-    return Transcriber(args.backend, model_name, device=args.device, diarize=args.diarize, hf_token=args.hf_token)
+    return Transcriber(
+        args.backend,
+        model_name,
+        device=args.device,
+        compute_type=compute_type,
+        options=options,
+        diarize=args.diarize,
+        hf_token=args.hf_token,
+    )
 
 
 def word_timestamps_option(
@@ -523,9 +593,11 @@ def transcribe_job(
 
 
 def show_backends() -> None:
-    """Display the backends: description, models, capabilities and whether their packages are installed.
+    """Display the backends: description, models, capabilities, whether their packages are installed, and then the
+    custom models, devices and options each declares (a line is left out when it declares nothing for it).
 
-    The installed check looks the packages up without importing them, so listing stays instant.
+    The first lines of each backend stay as they were, in the same places, for scripts that read them. The installed
+    check looks the packages up without importing them, so listing stays instant.
     """
     print("Available transcription backends:\n")
     for name in list_backends():
@@ -538,6 +610,13 @@ def show_backends() -> None:
         print(f"    Models: {', '.join(backend_class.available_models())}")
         print(f"    Capabilities: {_capability_list(backend_class.capabilities)}")
         print(f"    Installed: {installed}")
+        custom = backend_class.describe_custom_models()
+        if custom:
+            print(f"    Custom models: {custom}")
+        if backend_class.DEVICES is not None:
+            print(f"    Devices: {describe_devices(backend_class.DEVICES)}")
+        for option_name, option in backend_class.OPTIONS.items():
+            print(f"    -O {option_name}={option.metavar}: {option.describe()}")
         print()
 
 
@@ -568,6 +647,9 @@ def show_models(backend_name: str) -> None:
     for model in models:
         default_marker = " (default)" if model == default else ""
         print(f"  {model}{default_marker}")
+    custom = backend_class.describe_custom_models()
+    if custom:
+        print(f"\nCustom models: -m also takes {custom}.")
 
 
 ###############################################################################

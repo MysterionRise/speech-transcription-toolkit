@@ -6,24 +6,51 @@ Face Hub on first use.
 
 On an NVIDIA GPU, CTranslate2 also needs NVIDIA's CUDA 12 libraries (cuBLAS, plus cuDNN before CTranslate2 4.6.3),
 which pip doesn't install. ``load_model()`` checks that they load before it uses the GPU.
+
+Besides the names in ``MODELS``, it loads CTranslate2 conversions of Whisper models from the Hugging Face Hub (such as
+``Systran/faster-whisper-small``) or from a local folder. It runs on the CPU or an NVIDIA GPU (``cuda:N`` picks one),
+not on Apple GPUs.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
-from ..errors import BackendUnavailableError, ModelLoadError, ModelNotFoundError, SpeechToolkitWarning
+from ..errors import BackendUnavailableError, ModelLoadError, SpeechToolkitWarning
 from ..types import Segment
 from .base import TranscriptionBackend, TranscriptionResult, report_progress
+from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# What --compute-type takes: "auto", or one of CTranslate2's types ("default" keeps the type the model was saved in).
+COMPUTE_TYPES = (
+    "auto",
+    "default",
+    "int8",
+    "int8_float32",
+    "int8_float16",
+    "int8_bfloat16",
+    "int16",
+    "float16",
+    "bfloat16",
+    "float32",
+)
+# What "auto" picks: the first of these the device supports, so a GPU without fast float16 falls back to int8.
+AUTO_COMPUTE_TYPES: Dict[str, Tuple[str, ...]] = {
+    "cuda": ("float16", "int8_float16", "int8", "float32"),
+    "cpu": ("int8", "float32"),
+}
 
 
 class FasterWhisperBackend(TranscriptionBackend):
@@ -33,6 +60,20 @@ class FasterWhisperBackend(TranscriptionBackend):
     description = "faster-whisper - CTranslate2 Whisper: faster, lighter, no torch needed"
     capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"})
     requires = ("faster_whisper",)
+    MODEL_SOURCES = {
+        "hub": "a Hugging Face repo id (org/name) of a CTranslate2 model",
+        "directory": "a local CTranslate2 model folder",
+    }
+    DEVICES = frozenset({"cpu", "cuda"})  # CTranslate2 doesn't run on Apple GPUs (mps)
+    OPTIONS = {
+        "compute_type": BackendOption(
+            str,
+            "auto",
+            "Precision; auto: float16 on a GPU and int8 on the CPU, or the next best the device supports",
+            choices=COMPUTE_TYPES,
+        ),
+        "cpu_threads": BackendOption(int, 0, "Threads on the CPU; 0 uses OMP_NUM_THREADS if set, else 4", minimum=0),
+    }
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
     MODELS = [
@@ -67,22 +108,29 @@ class FasterWhisperBackend(TranscriptionBackend):
         """Return 'turbo' as the default - best balance of speed and accuracy."""
         return "turbo"
 
-    def load_model(self, model_name: str, device: Optional[str] = None) -> None:
-        """Load a faster-whisper model (int8 on CPU, float16 on CUDA).
+    def load_model(
+        self, model_name: str, device: Optional[str] = None, *, options: Optional[Mapping[str, Any]] = None
+    ) -> None:
+        """Load a faster-whisper model (float16 on a GPU, int8 on the CPU, unless ``compute_type`` says otherwise).
 
         Args:
-            model_name: One of the available model names.
-            device: 'cpu', 'cuda', or None for the GPU when CTranslate2 sees one. If the CUDA libraries it needs
-                don't load, None warns and uses the CPU.
+            model_name: One of the available model names, a Hugging Face repo id of a CTranslate2 model, or a local
+                CTranslate2 model folder.
+            device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), or None or 'auto' for the GPU when CTranslate2 sees one.
+                If the CUDA libraries it needs don't load, the automatic choice warns and uses the CPU.
+            options: Values for ``OPTIONS``: ``compute_type`` and ``cpu_threads``. Afterwards ``self.options`` shows
+                the compute type that "auto" picked.
 
         Raises:
+            ModelNotFoundError: If model_name is none of these.
+            UnsupportedOptionError: If the device is 'mps' or isn't a device, or an option is unknown or invalid.
             BackendUnavailableError: If faster-whisper is not installed.
-            ModelNotFoundError: If model_name is not recognized.
-            ModelLoadError: If the model cannot be downloaded or loaded, or device is 'cuda' and the CUDA libraries
-                are missing.
+            ModelLoadError: If the model cannot be downloaded or loaded, or a CUDA device was asked for and the CUDA
+                libraries are missing.
         """
-        if model_name not in self.MODELS:
-            raise ModelNotFoundError(f"Unknown faster-whisper model: {model_name}. Available: {', '.join(self.MODELS)}")
+        model_id = self.resolve_model(model_name)
+        target = self._parse_device(device)
+        settings = self._resolve_options(options)
 
         try:
             import ctranslate2
@@ -93,12 +141,11 @@ class FasterWhisperBackend(TranscriptionBackend):
                 "Install it with: pip install speech-transcription-toolkit"
             ) from e
 
-        auto = device is None
-        if auto:
-            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        auto = target.auto
+        kind = ("cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu") if auto else target.kind
         # A missing library would fail the first transcription, or on Windows end the process, so check first. Machines
         # without a GPU skip the check.
-        if device == "cuda" and (auto or ctranslate2.get_cuda_device_count() > 0):
+        if kind == "cuda" and (auto or ctranslate2.get_cuda_device_count() > 0):
             problem = _cuda_library_problem(getattr(ctranslate2, "__version__", ""))
             if problem and not auto:
                 raise ModelLoadError(f"faster-whisper can't run on CUDA. {problem}")
@@ -108,17 +155,19 @@ class FasterWhisperBackend(TranscriptionBackend):
                     SpeechToolkitWarning,
                     stacklevel=2,
                 )
-                device = "cpu"
-        compute_type = "float16" if device == "cuda" else "int8"
+                kind = "cpu"
+        arguments = _model_arguments(ctranslate2, kind, target.index, settings)
+        logger.debug("Loading faster-whisper model %r with %s", model_id, arguments)
 
         try:
-            self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            self._model = WhisperModel(model_id, **arguments)
         except Exception as e:  # download and CTranslate2 errors come in many types
             self._model = None
             raise ModelLoadError(f"Failed to load faster-whisper model '{model_name}': {e}") from e
 
         self._model_name = model_name
-        self._device = device
+        self._device = kind if target.index is None else f"{kind}:{target.index}"
+        self._options = {**settings, "compute_type": arguments["compute_type"]}
 
     def transcribe(
         self,
@@ -180,6 +229,38 @@ class FasterWhisperBackend(TranscriptionBackend):
             duration=info.duration,
             language_probability=info.language_probability,
         )
+
+
+def _model_arguments(
+    ctranslate2: Any, device: str, index: Optional[int], settings: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """WhisperModel's keyword arguments for *device* ("cpu" or "cuda"), the GPU *index* and the backend's options.
+
+    Only what differs from WhisperModel's defaults, device_index=0 and cpu_threads=0, is included.
+    """
+    compute_type = settings["compute_type"]
+    if compute_type == "auto":
+        compute_type = _auto_compute_type(ctranslate2, device, index or 0)
+    arguments: Dict[str, Any] = {"device": device, "compute_type": compute_type}
+    if index is not None:
+        arguments["device_index"] = index
+    if settings["cpu_threads"]:
+        arguments["cpu_threads"] = settings["cpu_threads"]
+    return arguments
+
+
+def _auto_compute_type(ctranslate2: Any, device: str, index: int) -> str:
+    """The first of AUTO_COMPUTE_TYPES[device] that CTranslate2 supports on that device (the GPU *index*, for CUDA).
+
+    The first one, as before "auto" existed, if CTranslate2 can't tell.
+    """
+    preferred = AUTO_COMPUTE_TYPES[device]
+    try:
+        supported = set(ctranslate2.get_supported_compute_types(device, index))
+    except Exception as e:  # a CUDA error, say: use the usual type, as before
+        logger.debug("CTranslate2 can't list the compute types of %s:%s: %s", device, index, e)
+        return preferred[0]
+    return next((compute_type for compute_type in preferred if compute_type in supported), preferred[0])
 
 
 def _segment(index: int, seg: Any) -> Segment:

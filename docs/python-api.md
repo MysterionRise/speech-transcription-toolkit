@@ -14,9 +14,25 @@ for path in ["a.mp3", "b.mp3"]:
 
 ## Transcriber
 
-`Transcriber(backend="faster-whisper", model=None, *, device=None, diarize=False, hf_token=None)` loads the model once.
-With `diarize=True` it also loads the pyannote pipeline, and does that first, so a missing package or token fails
-before a large model download.
+`Transcriber(backend="faster-whisper", model=None, *, device=None, compute_type=None, options=None, diarize=False,
+hf_token=None)` loads the model once. With `diarize=True` it also loads the pyannote pipeline, and does that first, so
+a missing package or token fails before a large model download.
+
+| Argument | Meaning |
+|---|---|
+| `model` | A name from `transcribe --list-models`, or a [custom model](backends.md#custom-models): a Hugging Face repo id (`"org/name"`) or a local path. |
+| `device` | `None` or `"auto"` (the GPU when available), `"cpu"`, `"cuda"`, `"cuda:N"` or `"mps"`; see [Devices and precision](backends.md#devices-and-precision). Speaker labels run there too. |
+| `compute_type` | The precision, such as `"int8"` or `"float16"`; `None` or `"auto"` picks one the device supports. |
+| `options` | The backend's [options](backends.md#backend-options), such as `{"cpu_threads": 4}`. Text values, such as `"4"`, are converted. |
+
+```python
+transcriber = Transcriber("faster-whisper", "Systran/faster-whisper-small", device="cuda:1", compute_type="int8")
+transcriber = Transcriber("canary", options={"max_new_tokens": 1000})
+transcriber.backend.options  # the options in effect: {"compute_type": "auto", "max_new_tokens": 1000}
+```
+
+The model name, device and options are checked before anything loads: one the backend can't take raises
+`ModelNotFoundError` or `UnsupportedOptionError`.
 
 `transcriber.transcribe(audio, language=None, task="transcribe", *, ...)` transcribes one recording: a file, its
 content, a file object or the samples, see [Audio input](#audio-input). Keyword options:
@@ -176,15 +192,14 @@ built-in error the library raised before, so `except ValueError` and the like ke
 | Error | Also a | Raised when |
 |---|---|---|
 | `BackendNotFoundError` | `ValueError` | No backend has that name. |
-| `ModelNotFoundError` | `ValueError` | The backend has no model of that name. |
-| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, a `task` other than `transcribe` or `translate`, or speaker hints without `diarize=True`. |
+| `ModelNotFoundError` | `ValueError` | The backend has no model of that name, and it isn't a custom model the backend loads (a repo id or local path of the right kind). |
+| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, a `task` other than `transcribe` or `translate`, speaker hints without `diarize=True`, a device the backend can't run on, or an option or value it doesn't take. |
 | `BackendUnavailableError` | `ImportError` | An optional package is missing, for the backend or for diarization; the message names the extra to install. |
 | `ModelLoadError` | `RuntimeError` | The model can't be downloaded or loaded. |
 | `AudioDecodeError` | `RuntimeError` | The audio can't be decoded. |
 | `DiarizationError` | `RuntimeError` | The diarization model can't be downloaded or loaded, for example without access to it or without a network: accept its terms and set a token, see [Speaker labels](diarization.md). The original error is its `__cause__`. |
 
-A missing input file raises the built-in `FileNotFoundError`, and the `whisper` backend passes on openai-whisper's own
-download and loading errors. Audio of a type `transcribe()` can't take raises the built-in `TypeError`, and an array
+A missing input file raises the built-in `FileNotFoundError`. Audio of a type `transcribe()` can't take raises the built-in `TypeError`, and an array
 that isn't 1-D `float32` raises `ValueError`, see [Audio input](#audio-input). Loading a saved result that isn't one raises the built-in `ValueError`; see
 [Loading a saved result](#loading-a-saved-result).
 
@@ -305,4 +320,27 @@ class MyBackend(TranscriptionBackend):
         ...
 ```
 
-See [Adding a backend](backends.md#adding-a-backend) for the details.
+**Custom models, devices and options:** `load_model(model_name, device=None)` gets the model name and device as given
+(but `"auto"`, which becomes `None`), as it always has. A backend can also declare what it takes, and `Transcriber`
+checks a request against that before anything loads:
+
+```python
+from speech_toolkit.backends import BackendOption
+
+class MyBackend(TranscriptionBackend):
+    MODEL_SOURCES = {"hub": "", "directory": ""}  # also repo ids and local folders; {"file": ""} for files
+    DEVICES = frozenset({"cpu", "cuda"})  # "cuda" also takes "cuda:N"; add "mps" for Apple GPUs
+    OPTIONS = {
+        "compute_type": BackendOption(str, "auto", "Precision", choices=("auto", "float32", "float16")),
+        "beam_size": BackendOption(int, 5, "Beams to search", minimum=1),
+    }
+
+    def load_model(self, model_name, device=None, *, options=None):
+        model_id = self.resolve_model(model_name)  # a model name's id, or the repo id or path as given
+        target = self._parse_device(device)  # Device(kind="cuda", index=1), or kind "auto"
+        self._options = self._resolve_options(options)  # {"compute_type": "auto", "beam_size": 5}, with the user's
+        ...
+```
+
+A backend with `OPTIONS` takes them keyword-only: `Transcriber` passes `options` only when the user gave some, so a
+backend without them keeps the old signature. See [Adding a backend](backends.md#adding-a-backend) for the details.

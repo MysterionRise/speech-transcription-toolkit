@@ -2,7 +2,8 @@
 
 Runs Voxtral Mini (3B) or Voxtral Small (24B) locally through Hugging Face transformers.
 Needs the ``voxtral`` extra; models download from the Hugging Face
-Hub on first use (set HF_TOKEN if the download asks for authentication).
+Hub on first use (set HF_TOKEN if the download asks for authentication). Loading is shared with
+Parakeet and Canary, in ``_transformers.py``.
 """
 
 from __future__ import annotations
@@ -10,17 +11,13 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from ..errors import (
-    BackendUnavailableError,
-    ModelLoadError,
-    ModelNotFoundError,
-    SpeechToolkitWarning,
-    UnsupportedOptionError,
-)
+from ..errors import ModelLoadError, SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from .base import TranscriptionBackend, TranscriptionResult, report_progress
+from ._transformers import MAX_NEW_TOKENS_OPTION, _TransformersBackend
+from .base import TranscriptionResult, report_progress
+from .config import BackendOption
 from .nvidia_backend import _cut_off_warning, _rows_at_limit
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -32,10 +29,9 @@ logger = logging.getLogger(__name__)
 # chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
 CHUNK_SECONDS = 30
 BATCH_SIZE = 8
-MAX_NEW_TOKENS = 500
 
 
-class VoxtralBackend(TranscriptionBackend):
+class VoxtralBackend(_TransformersBackend):
     """Mistral Voxtral transcription backend.
 
     Supports Voxtral Mini (3B parameters) and Voxtral Small (24B parameters)
@@ -51,71 +47,24 @@ class VoxtralBackend(TranscriptionBackend):
     description = "Mistral Voxtral - open-weight multilingual speech-to-text"
     capabilities = frozenset({"waveform"})  # transcription only, and it doesn't report the language
     requires = ("torch", "transformers", "mistral_common")
+    EXTRA = "voxtral"
+    NEEDS = "torch, transformers>=5.17 and mistral-common[audio]"
 
     # Available Voxtral models
     MODELS = {
         "voxtral-mini": "mistralai/Voxtral-Mini-3B-2507",
         "voxtral-small": "mistralai/Voxtral-Small-24B-2507",
     }
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._processor: Any = None
-        self._repo_id: Optional[str] = None
-
-    @classmethod
-    def available_models(cls) -> List[str]:
-        """Return list of available Voxtral model names."""
-        return list(cls.MODELS.keys())
+    MODEL_CLASS = "VoxtralForConditionalGeneration"
+    OPTIONS: Mapping[str, BackendOption] = {
+        **_TransformersBackend.OPTIONS,
+        "max_new_tokens": MAX_NEW_TOKENS_OPTION,
+    }
 
     @classmethod
     def default_model(cls) -> str:
         """Return 'voxtral-mini' as the default - good balance of speed and quality."""
         return "voxtral-mini"
-
-    def load_model(self, model_name: str, device: Optional[str] = None) -> None:
-        """Load a Voxtral model.
-
-        Args:
-            model_name: 'voxtral-mini' or 'voxtral-small'.
-            device: 'cpu', 'cuda', or None for auto-detection.
-
-        Raises:
-            BackendUnavailableError: If required dependencies are missing.
-            ModelNotFoundError: If model_name is not recognized.
-            ModelLoadError: If the model cannot be downloaded or loaded.
-        """
-        if model_name not in self.MODELS:
-            raise ModelNotFoundError(f"Unknown Voxtral model: {model_name}. Available: {', '.join(self.MODELS.keys())}")
-
-        try:
-            import torch
-            from transformers import AutoProcessor, VoxtralForConditionalGeneration
-        except ImportError as e:
-            raise BackendUnavailableError(
-                f"Voxtral backend requires extra packages ({e}). "
-                'Install with: pip install "speech-transcription-toolkit[voxtral]"'
-            ) from e
-
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        if device == "cuda":
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        else:
-            dtype = torch.float32
-
-        repo_id = self.MODELS[model_name]
-        try:
-            self._processor = AutoProcessor.from_pretrained(repo_id)
-            self._model = VoxtralForConditionalGeneration.from_pretrained(repo_id, dtype=dtype).to(device)
-        except Exception as e:  # download, auth and out-of-memory errors come in many types
-            self._model = None
-            self._processor = None
-            raise ModelLoadError(f"Failed to load Voxtral model '{model_name}': {e}") from e
-
-        self._repo_id = repo_id
-        self._model_name = model_name
-        self._device = device
 
     def transcribe(
         self,
@@ -134,8 +83,9 @@ class VoxtralBackend(TranscriptionBackend):
                 also passed to report_progress(), whatever *verbose* is.
 
         Returns:
-            TranscriptionResult with one segment per ~30 s chunk of audio. A chunk whose text reaches MAX_NEW_TOKENS
-            tokens may be cut off: one warning per file gives the number of such chunks and the first one's times.
+            TranscriptionResult with one segment per ~30 s chunk of audio. A chunk whose text reaches the
+            max_new_tokens option's limit may be cut off: one warning per file gives the number of such chunks and the
+            first one's times.
 
         Raises:
             ModelLoadError: If no model is loaded.
@@ -156,7 +106,7 @@ class VoxtralBackend(TranscriptionBackend):
         chunks = split_audio(audio, CHUNK_SECONDS)
 
         segments: List[Dict[str, Any]] = []
-        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached MAX_NEW_TOKENS
+        cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
         for first in range(0, len(chunks), BATCH_SIZE):
             batch = chunks[first : first + BATCH_SIZE]
             texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language)
@@ -168,7 +118,8 @@ class VoxtralBackend(TranscriptionBackend):
             level = logging.INFO if verbose else logging.DEBUG
             logger.log(level, "Voxtral: transcribed %d/%d chunks", len(segments), len(chunks))
         if cut_off:
-            warnings.warn(_cut_off_warning(audio_path, "Voxtral", MAX_NEW_TOKENS, cut_off), SpeechToolkitWarning)
+            limit = self._options["max_new_tokens"]
+            warnings.warn(_cut_off_warning(audio_path, "Voxtral", limit, cut_off), SpeechToolkitWarning)
 
         return TranscriptionResult(
             text=" ".join(seg["text"] for seg in segments if seg["text"]),
@@ -181,7 +132,7 @@ class VoxtralBackend(TranscriptionBackend):
         """Transcribe a batch of audio chunks.
 
         Returns:
-            One string per chunk, and the positions in the batch of the chunks whose text reached MAX_NEW_TOKENS.
+            One string per chunk, and the positions in the batch of the chunks whose text reached max_new_tokens.
         """
         inputs = self._processor.apply_transcription_request(
             audio=list(chunks),
@@ -191,8 +142,8 @@ class VoxtralBackend(TranscriptionBackend):
             format="wav",
         )
         inputs = inputs.to(self._device, dtype=self._model.dtype)
-        outputs = self._model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
+        outputs = self._model.generate(**inputs, max_new_tokens=self._options["max_new_tokens"])
         generated = outputs[:, inputs.input_ids.shape[1] :]  # without the prompt
         texts = self._processor.batch_decode(generated, skip_special_tokens=True)
-        at_limit = _rows_at_limit(generated, self._model.generation_config, MAX_NEW_TOKENS)
+        at_limit = _rows_at_limit(generated, self._model.generation_config, self._options["max_new_tokens"])
         return [text.strip() for text in texts], at_limit

@@ -29,7 +29,21 @@ import tempfile
 import time
 import warnings
 import wave
-from typing import IO, TYPE_CHECKING, AbstractSet, Any, Callable, Dict, Iterator, Optional, Union, cast
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    AbstractSet,
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    Mapping,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
 
 from .backends import (
     DEFAULT_BACKEND,
@@ -75,6 +89,27 @@ def configure_hf_token(token: Optional[str] = None) -> None:
         os.environ["HF_TOKEN"] = token
 
 
+def check_load_arguments(
+    backend_class: Type[TranscriptionBackend],
+    model: str,
+    device: Optional[str] = None,
+    compute_type: Optional[str] = None,
+    options: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Check what a model would load with, without loading anything: what :class:`Transcriber` passes to the
+    backend's ``load_model()``, the device (None to pick one) and the options given (checked and converted).
+
+    Raises:
+        ModelNotFoundError: If the backend can't load *model*.
+        UnsupportedOptionError: If the backend can't run on *device*, or doesn't take an option or its value.
+    """
+    backend_class.resolve_model(model)
+    given = dict(options or {})
+    if compute_type is not None:
+        given["compute_type"] = compute_type
+    return backend_class.check_device(device), backend_class.check_options(given)
+
+
 def _check_task(task: str, backend: str, capabilities: AbstractSet[str]) -> None:
     """Raise UnsupportedOptionError unless *task* is "transcribe", or "translate" for a backend that can translate."""
     if task not in TASKS:
@@ -89,10 +124,20 @@ class Transcriber:
 
     Args:
         backend: Backend name, see :func:`speech_toolkit.list_backends` (default: ``"faster-whisper"``).
-        model: Model name (default: the backend's default, e.g. ``turbo`` for faster-whisper).
-        device: ``"cpu"``, ``"cuda"`` or None to pick automatically.
+        model: Model name (default: the backend's default, e.g. ``turbo`` for faster-whisper). Backends that load
+            custom models also take a Hugging Face repo id (``"org/name"``) or a local path; see
+            ``transcribe --list-models``.
+        device: None or ``"auto"`` to pick automatically, ``"cpu"``, ``"cuda"``, ``"cuda:N"`` for the N-th GPU, or
+            ``"mps"`` for an Apple GPU (not faster-whisper). Speaker diarization runs there too.
+        compute_type: The precision, such as ``"float16"``; the same as ``options={"compute_type": ...}``, and it wins
+            over that. ``"auto"`` (the default) picks one the device supports.
+        options: The backend's options, such as ``{"cpu_threads": 4}``; ``transcribe --list-backends`` lists them.
+            Text values, as the command line has them, are converted.
         diarize: Also label speakers with pyannote.audio (needs the ``diarize`` extra and a Hugging Face token).
         hf_token: Hugging Face token for model downloads (default: ``HF_TOKEN`` or ``HUGGINGFACE_TOKEN``).
+
+    A model name, device or option the backend can't take raises :class:`~speech_toolkit.ModelNotFoundError` or
+    :class:`~speech_toolkit.UnsupportedOptionError` before anything loads.
     """
 
     def __init__(
@@ -101,6 +146,8 @@ class Transcriber:
         model: Optional[str] = None,
         *,
         device: Optional[str] = None,
+        compute_type: Optional[str] = None,
+        options: Optional[Mapping[str, Any]] = None,
         diarize: bool = False,
         hf_token: Optional[str] = None,
     ) -> None:
@@ -108,11 +155,15 @@ class Transcriber:
         backend_class = get_backend_class(backend)
         self.backend_name = backend
         self.model_name = model or backend_class.default_model()
+        # Checked before anything loads, so a typo fails at once rather than after a download.
+        device, load_options = check_load_arguments(backend_class, self.model_name, device, compute_type, options)
 
         # Diarization first: a missing package or HF token should fail before a big model download.
         self._pipeline = load_diarization_pipeline(device) if diarize else None
         self.backend: TranscriptionBackend = backend_class()
-        self.backend.load_model(self.model_name, device=device)
+        # Options only when given: backends without OPTIONS have the signature load_model(model_name, device=None).
+        extra: Dict[str, Any] = {"options": load_options} if load_options else {}
+        self.backend.load_model(self.model_name, device=device, **extra)
 
     @property
     def diarize(self) -> bool:
@@ -275,6 +326,8 @@ def transcribe(
     language: Optional[str] = None,
     task: str = "transcribe",
     device: Optional[str] = None,
+    compute_type: Optional[str] = None,
+    options: Optional[Mapping[str, Any]] = None,
     diarize: bool = False,
     hf_token: Optional[str] = None,
     prompt: Optional[str] = None,
@@ -295,7 +348,15 @@ def transcribe(
     _check_task(task, backend, get_backend_class(backend).capabilities)
     check_speaker_hints(num_speakers, min_speakers, max_speakers, diarize=diarize)
     _check_audio(audio)
-    transcriber = Transcriber(backend, model, device=device, diarize=diarize, hf_token=hf_token)
+    transcriber = Transcriber(
+        backend,
+        model,
+        device=device,
+        compute_type=compute_type,
+        options=options,
+        diarize=diarize,
+        hf_token=hf_token,
+    )
     return transcriber.transcribe(
         audio,
         language,
