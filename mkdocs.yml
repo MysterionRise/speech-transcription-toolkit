@@ -1,0 +1,115 @@
+# The documentation site: the pages in docs/, plus an API reference generated from the docstrings.
+#
+#   pip install -r requirements-docs.txt
+#   mkdocs serve             # preview on http://127.0.0.1:8000, rebuilt as you edit
+#   mkdocs build --strict    # what .github/workflows/docs.yml runs: any warning fails the build
+#
+# The pages stay readable on GitHub too: links between them are relative (cli.md, install.md#gpu), and links to files
+# outside docs/ are absolute GitHub links. A new page needs an entry in "nav" below, or the strict build fails.
+site_name: speech-transcription-toolkit
+site_description: >-
+  Offline speech-to-text from the command line or Python: faster-whisper, Whisper, Voxtral, Parakeet or Canary,
+  optional speaker labels, and txt, srt, vtt or json output.
+site_url: https://mysterionrise.github.io/speech-transcription-toolkit/
+repo_url: https://github.com/MysterionRise/speech-transcription-toolkit
+repo_name: MysterionRise/speech-transcription-toolkit
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: README.md
+  - Installation: install.md
+  - Command line: cli.md
+  - Python API: python-api.md
+  - Backends: backends.md
+  - Speaker labels: diarization.md
+  - Output formats: formats.md
+  - OpenAI-compatible server: server.md
+  - Docker: docker.md
+  - Examples: examples.md
+  - API reference:
+      - reference/README.md
+      - Transcriber: reference/transcriber.md
+      - Results and types: reference/results.md
+      - Errors and warnings: reference/errors.md
+      - Backends: reference/backends.md
+      - Decoding audio: reference/media.md
+      - Server: reference/server.md
+  - Troubleshooting: troubleshooting.md
+  - Development:
+      - development.md
+      - Manual testing: manual-testing.md
+
+exclude_docs: |
+  /_ext/
+
+validation:
+  omitted_files: warn  # every page is in the nav
+  anchors: warn  # links to a heading that doesn't exist (install.md#gpu)
+
+# The pages are written for GitHub. Python-Markdown needs 4 spaces to nest a list, and a blank line before one;
+# GitHub nests with 2 and needs no blank line. mdx_truly_sane_lists takes 2-space nesting, and the github_markdown
+# hook adds the blank lines (and GitHub's heading ids), so the pages come out as on GitHub.
+hooks:
+  - docs/_ext/github_markdown.py
+
+markdown_extensions:
+  - mdx_truly_sane_lists:
+      nested_indent: 2
+      truly_sane: false  # an item's paragraphs, separated by blank lines, stay in one list
+  - admonition
+  - toc:
+      permalink: true  # the hook gives headings GitHub's ids, so that links like install.md#gpu work on both
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  # examples.md shows the scripts in examples/, read from the checkout
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            # Read the source only: building the docs imports nothing, so it needs neither torch nor fastapi.
+            allow_inspection: false
+            docstring_style: google
+            extensions:
+              - docs/_ext/griffe_docstrings.py  # Sphinx roles (:class:`Transcriber`) and shared Args entries
+            filters: ["!^_"]
+            heading_level: 2
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_full_path: true
+            show_root_heading: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true

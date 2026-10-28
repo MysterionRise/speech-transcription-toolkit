@@ -8,6 +8,8 @@ pip install speech-transcription-toolkit             # faster-whisper, the defau
 pip install "speech-transcription-toolkit[whisper]"  # add OpenAI's Whisper (installs PyTorch)
 ```
 
+Or run the server and `transcribe` from a [Docker image](docker.md), with nothing to install but Docker.
+
 To try the latest changes before they're released, install from GitHub:
 
 ```bash
@@ -87,7 +89,8 @@ transcribe talk.mp3
 - Install the [CUDA 12 Toolkit](https://developer.nvidia.com/cuda-downloads) and
   [cuDNN](https://developer.nvidia.com/cudnn-downloads) from NVIDIA. On Windows, CTranslate2 also looks in
   `%CUDA_PATH%\bin`, which the Toolkit's installer sets.
-- Use a CUDA 12 `cudnn-runtime` image of [nvidia/cuda](https://hub.docker.com/r/nvidia/cuda) on Docker, which has both.
+- On Docker, use this project's [`cuda` image](docker.md#gpu), which has cuBLAS, or a CUDA 12 `cudnn-runtime` image
+  of [nvidia/cuda](https://hub.docker.com/r/nvidia/cuda), which has both.
 - See also [faster-whisper's GPU notes](https://github.com/SYSTRAN/faster-whisper#gpu).
 
 **Checking:**

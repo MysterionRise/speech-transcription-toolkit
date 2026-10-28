@@ -1,0 +1,325 @@
+# The Docker images (Dockerfile, docs/docker.md): built and tested on pull requests and main, published to GHCR on
+# release tags.
+#
+# - Pull requests and pushes to main that change what goes into the images:
+#   - cpu: build the image and test it. It runs as a non-root user and has no PyTorch; the server becomes healthy and
+#     transcribes the sample through the OpenAI SDK, with an API key; the CLI transcribes it offline.
+#   - cuda: build the image and check that CTranslate2 finds cuBLAS. Runners have no GPU, so nothing runs on one.
+# - v* tags: the same, then push ghcr.io/mysterionrise/speech-transcription-toolkit:<version> and :latest (cpu),
+#   :<version>-cuda and :cuda. A pre-release (v0.5.0rc1) gets only the version tags.
+#
+# Publishing needs the maintainer to let Actions write packages (#13). Only the publish job can, and it runs on tags
+# only. Pull requests read the layer cache that main and tags write. Actions are pinned to commits.
+name: Docker
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - .github/workflows/docker.yml
+      - pyproject.toml
+      - 'speech_toolkit/**'
+  push:
+    branches: [main]
+    tags: ['v*']  # path filters don't apply to tags
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - .github/workflows/docker.yml
+      - pyproject.toml
+      - 'speech_toolkit/**'
+  workflow_dispatch:
+
+# A new push to a PR cancels the PR's previous run; other runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}  # each job asks for what it needs
+
+# bash -eo pipefail, so a failing command in a pipeline (such as docker run ... | tee) fails the step.
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/mysterionrise/speech-transcription-toolkit
+  SAMPLE: speech.flac  # in tests/data; samples.json has its text
+  MODEL: tiny
+  MAX_WER: '0.25'  # as for faster-whisper tiny in tests/integration/helpers.py
+
+jobs:
+  cpu:
+    name: CPU image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.facts.outputs.version }}
+      prerelease: ${{ steps.facts.outputs.prerelease }}
+    env:
+      TEST_IMAGE: speech-transcription-toolkit:cpu
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Check docker-compose.yml
+      run: docker compose config --quiet
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+    - name: Build the cpu image
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+      with:
+        context: .
+        target: cpu
+        tags: ${{ env.TEST_IMAGE }}
+        load: true
+        cache-from: type=gha,scope=cpu
+        cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=cpu' || '' }}
+
+    # The version as PyPI writes it, which a tag must match (as in release.yml), and whether it is a pre-release.
+    - name: Check the user, PyPI packages and version
+      id: facts
+      run: |
+        uid=$(docker run --rm "$TEST_IMAGE" id -u)
+        echo "Runs as uid $uid ($(docker image inspect --format '{{.Config.User}}' "$TEST_IMAGE"))"
+        if [ "$uid" = 0 ]; then echo "::error::The image runs as root"; exit 1; fi
+
+        docker run --rm "$TEST_IMAGE" pip list
+        if docker run --rm "$TEST_IMAGE" pip list | grep -iE '^(torch|torchaudio|openai-whisper|transformers) '; then
+          echo "::error::The cpu image has the packages listed above"
+          exit 1
+        fi
+        docker run --rm "$TEST_IMAGE" ffmpeg -hide_banner -version | sed -n 1p
+
+        facts=$(docker run --rm "$TEST_IMAGE" python -c 'import importlib.metadata as m, packaging.version as v
+        version = v.Version(m.version("speech-transcription-toolkit"))
+        print(version, str(version.is_prerelease).lower())')
+        read -r version prerelease <<< "$facts"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+        if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+          echo "::error::Tag $GITHUB_REF_NAME doesn't match the package version ($version)"
+          exit 1
+        fi
+        size=$(docker run --rm --user root "$TEST_IMAGE" du -sxm / | cut -f 1)  # unpacked; root reads every folder
+        echo "cpu image: speech-transcription-toolkit $version, $size MB unpacked" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    # The model downloads into the volume, which the offline CLI run below uses.
+    - name: Start the server
+      env:
+        TRANSCRIBE_API_KEY: docker-ci-${{ github.run_id }}
+      run: |
+        docker volume create models
+        docker run --detach --name server --publish 127.0.0.1:8000:8000 --env TRANSCRIBE_API_KEY \
+          --volume models:/models "$TEST_IMAGE" transcribe-server --host 0.0.0.0 -m "$MODEL"
+
+    # The image's own HEALTHCHECK, which polls /health every 5 s while the server starts.
+    - name: Wait until the server is healthy
+      timeout-minutes: 10
+      run: |
+        until [ "$(docker inspect --format '{{.State.Health.Status}}' server)" = healthy ]; do
+          if [ "$(docker inspect --format '{{.State.Running}}' server)" != true ]; then
+            echo "::error::The server exited"
+            exit 1
+          fi
+          sleep 5
+        done
+        curl --fail --silent --show-error http://127.0.0.1:8000/health
+
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+      with:
+        python-version: '3.12'
+
+    - name: Install the OpenAI SDK
+      run: pip install openai
+
+    - name: Transcribe through the OpenAI SDK
+      shell: python
+      env:
+        PYTHONPATH: ${{ github.workspace }}  # for tests.integration.wer
+        SERVER_URL: http://127.0.0.1:8000/v1
+        TRANSCRIBE_API_KEY: docker-ci-${{ github.run_id }}
+      run: |
+        import json
+        import os
+        import pathlib
+        import sys
+
+        import openai
+
+        from tests.integration.wer import wer
+
+        data = pathlib.Path("tests/data")
+        sample = os.environ["SAMPLE"]
+        reference = " ".join(turn["text"] for turn in json.loads((data / "samples.json").read_text())[sample]["turns"])
+
+
+        def transcribe(api_key):
+            with openai.OpenAI(base_url=os.environ["SERVER_URL"], api_key=api_key, max_retries=0, timeout=300) as client:
+                with (data / sample).open("rb") as audio:
+                    return client.audio.transcriptions.create(model="whisper-1", file=audio).text
+
+
+        text = transcribe(os.environ["TRANSCRIBE_API_KEY"])
+        error = wer(reference, text)
+        print(f"Transcript: {text!r} (word error rate {error:.2f})")
+        if error > float(os.environ["MAX_WER"]):
+            sys.exit(f"::error::The word error rate is {error:.2f}, over {os.environ['MAX_WER']}")
+
+        try:
+            transcribe("wrong-key")
+        except openai.AuthenticationError:
+            print("A wrong API key gets a 401.")
+        else:
+            sys.exit("::error::The server answered a request with a wrong API key")
+
+    # No network: the model comes from the volume. stdout must hold the transcript only.
+    - name: Transcribe offline with the CLI
+      run: |
+        docker run --rm --network none --env HF_HUB_OFFLINE=1 --volume models:/models \
+          --volume "$PWD/tests/data:/data:ro" "$TEST_IMAGE" transcribe -m "$MODEL" "$SAMPLE" > "$RUNNER_TEMP/cli.txt"
+        python - "$RUNNER_TEMP/cli.txt" <<'EOF'
+        import json, os, pathlib, sys
+        from tests.integration.wer import wer
+        sample = os.environ["SAMPLE"]
+        turns = json.loads(pathlib.Path("tests/data/samples.json").read_text())[sample]["turns"]
+        text = pathlib.Path(sys.argv[1]).read_text()
+        error = wer(" ".join(turn["text"] for turn in turns), text)
+        print(f"Transcript: {text!r} (word error rate {error:.2f})")
+        if len(text.strip().splitlines()) != 1 or error > float(os.environ["MAX_WER"]):
+            sys.exit("::error::stdout should hold the transcript only, with a word error rate up to " + os.environ["MAX_WER"])
+        EOF
+
+    - name: Show the server's log
+      if: always()
+      run: docker logs server || true
+
+  cuda:
+    name: CUDA image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TEST_IMAGE: speech-transcription-toolkit:cuda
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+    # cuda is cpu plus cuBLAS, so the cpu layers come from the cpu cache.
+    - name: Build the cuda image
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+      with:
+        context: .
+        target: cuda
+        tags: ${{ env.TEST_IMAGE }}
+        load: true
+        cache-from: |
+          type=gha,scope=cpu
+          type=gha,scope=cuda
+        cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=cuda' || '' }}
+
+    # faster-whisper's own check (#56), which runs before it loads a model on the GPU: the CUDA libraries that this
+    # CTranslate2 needs load. So does NVRTC, which cuBLAS loads for some kernels. No GPU is needed to load them.
+    - name: Check the user, PyPI packages and CUDA libraries
+      run: |
+        uid=$(docker run --rm "$TEST_IMAGE" id -u)
+        echo "Runs as uid $uid"
+        if [ "$uid" = 0 ]; then echo "::error::The image runs as root"; exit 1; fi
+
+        if docker run --rm "$TEST_IMAGE" pip list | grep -iE '^(torch|torchaudio|openai-whisper|transformers) '; then
+          echo "::error::The cuda image has the packages listed above"
+          exit 1
+        fi
+
+        docker run --rm --interactive "$TEST_IMAGE" python - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+        import ctypes
+        import importlib.metadata
+        import sys
+
+        import ctranslate2
+
+        from speech_toolkit.backends.faster_whisper_backend import _cuda_library_problem
+
+        problem = _cuda_library_problem(ctranslate2.__version__)
+        if problem:
+            sys.exit(f"::error::{problem}")
+        ctypes.CDLL("libnvrtc.so.12")
+        cublas = importlib.metadata.version("nvidia-cublas-cu12")
+        print(f"cuda image: CTranslate2 {ctranslate2.__version__} finds cuBLAS {cublas}.")
+        EOF
+        size=$(docker run --rm --user root "$TEST_IMAGE" du -sxm / | cut -f 1)
+        echo "cuda image: $size MB unpacked" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish to GHCR
+    needs: [cpu, cuda]
+    # Release tags only; pull requests never get here, and have no packages permission.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write  # push to ghcr.io
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+    - name: Log in to GHCR
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    # Built from the cache the test jobs wrote, so the layers are the ones they tested.
+    - name: Push the cpu image
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+      with:
+        context: .
+        target: cpu
+        push: true
+        tags: |
+          ${{ env.IMAGE }}:${{ needs.cpu.outputs.version }}
+          ${{ needs.cpu.outputs.prerelease == 'false' && format('{0}:latest', env.IMAGE) || '' }}
+        labels: |
+          org.opencontainers.image.version=${{ needs.cpu.outputs.version }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        cache-from: type=gha,scope=cpu
+
+    - name: Push the cuda image
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+      with:
+        context: .
+        target: cuda
+        push: true
+        tags: |
+          ${{ env.IMAGE }}:${{ needs.cpu.outputs.version }}-cuda
+          ${{ needs.cpu.outputs.prerelease == 'false' && format('{0}:cuda', env.IMAGE) || '' }}
+        labels: |
+          org.opencontainers.image.version=${{ needs.cpu.outputs.version }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        cache-from: |
+          type=gha,scope=cpu
+          type=gha,scope=cuda

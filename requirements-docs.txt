@@ -1,0 +1,20 @@
+# The documentation site (mkdocs.yml), which .github/workflows/docs.yml builds and publishes:
+#
+#   pip install -r requirements-docs.txt
+#   mkdocs serve             # preview on http://127.0.0.1:8000
+#   mkdocs build --strict    # what the workflow runs
+#
+# Separate from the package and from requirements-dev.txt. The API reference reads the source without importing it,
+# so the package's own dependencies (and torch, fastapi) aren't needed.
+
+mkdocs==1.6.1
+mkdocs-material==9.8.0
+
+# The API reference, from the docstrings; docs/_ext/griffe_docstrings.py is a griffe extension
+mkdocstrings[python]==1.0.8
+mkdocstrings-python==2.0.10
+griffelib==2.4.1
+black==26.5.1  # wraps long signatures, one parameter per line; the same version as requirements-dev.txt
+
+# Lists nested with 2 spaces, as on GitHub (see mkdocs.yml)
+mdx-truly-sane-lists==1.3

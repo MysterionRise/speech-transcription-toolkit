@@ -1,0 +1,10 @@
+# The image is built from the package alone: everything else (.git, tests, docs, benchmarks, virtualenvs, models)
+# stays out of the build context. The Dockerfile copies only what is listed here.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!MANIFEST.in
+!speech_toolkit/
+**/__pycache__/
+**/*.py[cod]
