@@ -97,6 +97,10 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
    transcribe --version
    ```
    Then run the checks the release issue lists, such as transcribing a sample.
+7. **Check the other release outputs:**
+   - the Docker workflow's run for the tag pushed `ghcr.io/mysterionrise/speech-transcription-toolkit:<version>` and
+     `:<version>-cuda` (after the first release, set the package's visibility to Public on GitHub);
+   - the Docs workflow deployed the site from `main` (needs Pages with the "GitHub Actions" source).
 
 ## If something goes wrong
 

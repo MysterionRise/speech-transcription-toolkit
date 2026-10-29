@@ -92,7 +92,7 @@ One worker runs the model, a request at a time; models can't transcribe two at o
 |---|---|
 | `--host` | Address to listen on (default: `127.0.0.1`, this machine only). |
 | `--port` | Port (default: 8000). |
-| `-b`, `--backend`, `-m`, `--model`, `--device` | As for `transcribe`; see [Command line](cli.md). |
+| `-b`, `--backend`, `-m`, `--model`, `--device`, `--compute-type`, `-O key=value` | As for `transcribe`; see [Command line](cli.md). |
 | `--diarize` | Label speakers; needs the `diarize` extra and `HF_TOKEN`. |
 | `--hf-token TOKEN` | Hugging Face token (default: the `HF_TOKEN` environment variable). |
 | `--api-key KEY` | Require `Authorization: Bearer KEY` on every request except `/health`, and turn off `/docs`, `/redoc` and `/openapi.json` unless `--docs` is given (default: the `TRANSCRIBE_API_KEY` environment variable; unset means no key). |

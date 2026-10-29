@@ -22,6 +22,7 @@ black . && isort --profile black . && flake8 .   # format and lint (120-char lin
 mypy speech_toolkit
 bandit -c pyproject.toml -r .
 python -m build && twine check --strict dist/*   # package check (CI does this too)
+mkdocs build --strict                            # docs site (pip install -r requirements-docs.txt)
 ```
 
 ## Architecture
@@ -40,22 +41,29 @@ speech_toolkit/
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
-    ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save)
+    ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save), ProgressEvent, report_progress()
+    ├── config.py                   BackendOption (the -O options a backend declares in OPTIONS), parse_device()
+    ├── _transformers.py            shared loader for the transformers backends (device, dtype, max_new_tokens)
     ├── whisper_backend.py          openai-whisper (the `whisper` extra, on PyTorch)
     ├── faster_whisper_backend.py   faster-whisper / CTranslate2 (default backend, a core dependency: no torch)
     ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
     └── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
 main.py, convert.py   checkout shims for the two commands (not packaged)
+examples/             runnable scripts, run against the fake backend by tests/test_examples.py (not packaged)
+benchmarks/           WER/RTFx harness: python -m benchmarks.run (requirements-bench.txt; not packaged)
+mkdocs.yml            docs site over docs/ (requirements-docs.txt); every docs page must be in its nav
+Dockerfile            cpu and cuda images; docker-compose.yml is an example
 ```
 
 Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__version__`). Pushing a `v*` tag runs `.github/workflows/release.yml` (PyPI trusted publishing + GitHub release); bump `__version__` first.
 
-**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`. Optional features (`prompt`, `vad`, `word_timestamps`) go in the class's `capabilities` and are keyword-only `transcribe()` arguments; `Transcriber` passes only declared ones and warns about the rest. `Transcriber` passes the audio positionally: a `Path`, or with the `waveform` capability possibly a 1-D float32 16 kHz NumPy array (when it decoded the audio already: in-memory input, diarization); backends without it get a temporary WAV for in-memory input. Word timings use Whisper's format: `segment["words"] = [{"word": " Hi", "start": 0.0, "end": 0.4}]`.
+**Adding a backend:** subclass `TranscriptionBackend`, implement `available_models()`, `load_model()`, `transcribe()`, register it in `speech_toolkit/backends/__init__.py`, and add its packages as an extra in `pyproject.toml`. Optional features (`prompt`, `vad`, `word_timestamps`) go in the class's `capabilities` and are keyword-only `transcribe()` arguments; `Transcriber` passes only declared ones and warns about the rest. Settings a user can change go in `OPTIONS` (`BackendOption` specs, checked against `-O key=value` / `options=` before loading, and passed to `load_model(..., options=...)`), and `MODEL_SOURCES` / `DEVICES` declare the custom models and devices it takes. `Transcriber` passes the audio positionally: a `Path`, or with the `waveform` capability possibly a 1-D float32 16 kHz NumPy array (when it decoded the audio already: in-memory input, diarization); backends without it get a temporary WAV for in-memory input. Word timings use Whisper's format: `segment["words"] = [{"word": " Hi", "start": 0.0, "end": 0.4}]`.
 
 ## Key Design Rules
 
 - **Lazy heavy imports:** torch, whisper, transformers, faster_whisper and pyannote are imported inside `load_model()` / diarization functions, never at module level, so `--help`/`--list-*` stay instant and unit tests run without them.
 - **stdout is for the transcript only:** `cli.main()` wraps all work in `redirect_stdout(sys.stderr)`; progress and messages go to stderr. Library warnings (`warnings.warn`) print as one `Warning: …` line.
+- **Logging, not print:** library modules log with `logging.getLogger(__name__)` under the `speech_toolkit` logger, which has a `NullHandler`; a test fails on any `print` outside the commands' own output. Backends report progress with `report_progress()`, which `Transcriber.transcribe(progress=...)` turns into `ProgressEvent`s.
 - **Errors:** the library raises (`ValueError`, `RuntimeError`, `ImportError`, `FileNotFoundError`) and never prints or exits; only `cli.main()`/`run_jobs()` turn errors into `sys.exit`. In batch mode a failing file doesn't stop the others.
 - **Hugging Face token:** `--hf-token` / `Transcriber(hf_token=...)` / `HUGGINGFACE_TOKEN` are exported as `HF_TOKEN`.
 - **Offline:** `PYANNOTE_METRICS_ENABLED` defaults to `false` (pyannote 4 telemetry).

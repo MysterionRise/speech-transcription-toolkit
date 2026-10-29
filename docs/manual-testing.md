@@ -191,6 +191,15 @@ With the installed `transcribe` command, on Windows (on the GPU) unless a step s
   `file:` prefix (#18), so this checks that a drive letter isn't taken for a protocol.
 - [ ] **An M4A phone recording**, on both machines: an M4A can only be decoded from a path, not a pipe, so this checks
   that the file is handed to ffmpeg by its path.
+- [ ] **Devices and precision** (#29):
+  - on Windows, `transcribe talk.mp3 --device cuda:0 --compute-type auto` runs on the GPU;
+  - on the Mac, `transcribe talk.mp3 -b parakeet --device mps` runs on the Apple GPU, and
+    `transcribe talk.mp3 --device mps` (faster-whisper) stops at once, saying faster-whisper has no `mps`.
+- [ ] **A folder, resumed** (#32): `transcribe recordings -f srt,json --outdir subs --skip-existing`, Ctrl-C during
+  the second file, then the same command again. The second run skips the finished files and writes the rest.
+- [ ] **The Docker images**, if Docker is installed (#35): `docker run --rm -v "$PWD:/data"
+  ghcr.io/mysterionrise/speech-transcription-toolkit transcribe /data/talk.mp3` prints the transcript, and on Windows
+  with the NVIDIA Container Toolkit, the `:cuda` image with `--gpus all` runs on the GPU.
 
 ## 5. Error paths
 
