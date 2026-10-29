@@ -35,7 +35,7 @@ from .types import Segment, Word
 # A library leaves showing its messages to the application: without this, Python would print warnings and errors.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "Transcriber",

@@ -24,11 +24,18 @@ speech_toolkit/
 ├── server.py       transcribe-server, the OpenAI-compatible API
 ├── types.py        the Segment and Word TypedDicts, and the JSON schema version
 ├── convert.py      the ogg2wav command
-└── backends/       the backend registry, the TranscriptionBackend base class and one module per backend
-docs/               user documentation (one page per topic)
+└── backends/       the backend registry, the TranscriptionBackend base class, option and device parsing
+                    (config.py), the shared transformers loader (_transformers.py) and one module per backend
+docs/               user documentation (one page per topic), built into a site by MkDocs (mkdocs.yml)
+examples/           runnable scripts; tests/test_examples.py runs them against the fake backend
+benchmarks/         the WER and speed harness, python -m benchmarks.run (see benchmarks/README.md)
 changelog.d/        changelog fragments, assembled into CHANGELOG.md at release time
 tests/              unit tests, with heavy model libraries mocked; tests/integration runs real models
+Dockerfile          the cpu and cuda images (see docs/docker.md)
 ```
+
+The docs site builds with `pip install -r requirements-docs.txt` and `mkdocs build --strict`; a new page in `docs/` must
+also be added to `nav` in `mkdocs.yml`.
 
 `main.py` and `convert.py` at the top level are shims for running the two commands from a checkout; they aren't packaged.
 
