@@ -15,10 +15,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 
 from ..errors import ModelLoadError, SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from ._transformers import MAX_NEW_TOKENS_OPTION, _TransformersBackend
+from ._transformers import MAX_NEW_TOKENS_OPTION, _cut_off_warning, _rows_at_limit, _TransformersBackend
 from .base import TranscriptionResult, report_progress
 from .config import BackendOption
-from .nvidia_backend import _cut_off_warning, _rows_at_limit
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np

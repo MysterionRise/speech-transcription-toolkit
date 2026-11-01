@@ -475,12 +475,31 @@ def sentence_tokens(processor: Any) -> None:
     processor.decode.return_value = ("One. Two.", [tokens])
 
 
+def run_transformers_pipeline(audio: pathlib.Path) -> TranscriptionResult:
+    """The transformers backend: an English-only Whisper model's segments, numbered across two 30 s chunks."""
+    torch, transformers = MagicMock(), MagicMock()
+    torch.cuda.is_available.return_value = False
+    asr = transformers.pipeline.return_value
+    asr.type = "seq2seq_whisper"
+    asr.model.generation_config = SimpleNamespace(no_timestamps_token_id=50362)
+    asr.side_effect = [
+        {"text": text, "chunks": [{"text": text, "timestamp": (0.0, 1.0)}]} for text in (" One.", " Two.")
+    ]
+    silence = np.zeros(40 * RATE, dtype=np.float32)
+    with patch.dict(sys.modules, {"torch": torch, "transformers": transformers}):
+        with patch("speech_toolkit.backends.transformers_backend.load_audio", return_value=silence):
+            backend = get_backend("transformers")
+            backend.load_model("openai/whisper-tiny.en")
+            return backend.transcribe(audio, verbose=False)
+
+
 BACKEND_RUNS: Dict[str, Callable[[pathlib.Path], TranscriptionResult]] = {
     "whisper": run_whisper,
     "faster-whisper": run_faster_whisper,
     "voxtral": lambda audio: run_transformers_backend("voxtral", audio, 40, chunk_texts, language="en"),
     "parakeet": lambda audio: run_transformers_backend("parakeet", audio, 5, sentence_tokens),
     "canary": lambda audio: run_transformers_backend("canary", audio, 40, chunk_texts, language="en"),
+    "transformers": run_transformers_pipeline,
 }
 
 

@@ -40,6 +40,7 @@ RUNTIMES: Dict[str, str] = {
     "parakeet": "torch",
     "canary": "torch",
     "voxtral": "torch",
+    "transformers": "torch",
     "diarize": "torch",
 }
 

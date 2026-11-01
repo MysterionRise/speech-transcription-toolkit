@@ -7,6 +7,7 @@
 | `voxtral` | **voxtral-mini**, voxtral-small | Mistral Voxtral (3B and 24B); transcription only, timestamps per ~30 s |
 | `parakeet` | **parakeet-tdt-0.6b-v3**, parakeet-tdt-0.6b-v2 | NVIDIA Parakeet: fast and accurate, word timestamps. v3: English + 24 European languages, detected automatically; v2: English only |
 | `canary` | **canary-1b-v2** | NVIDIA Canary: the same 25 languages; translates to English. Can't detect the language: give it with `-l` (default English). Timestamps per ~30 s |
+| `transformers` | **openai/whisper-large-v3-turbo**, or any speech recognition model on the Hugging Face Hub | Hugging Face transformers' pipeline: Whisper fine-tunes, distil-whisper, wav2vec2, MMS, Moonshine, ... What it can do depends on the model: see [Any Hugging Face model](#any-hugging-face-model-transformers) |
 
 `transcribe --list-backends` lists them with their models, capabilities, devices and [options](#backend-options), and
 says whether each one's packages are installed. `transcribe --list-models -b <backend>` lists one backend's models.
@@ -21,6 +22,7 @@ Besides the names in the table, `-m` (`model=` in Python) takes fine-tunes, othe
 | `faster-whisper` | A Hugging Face repo id (`org/name`) of a CTranslate2 model, or a local CTranslate2 model folder | `-m Systran/faster-whisper-small`, `-m deepdml/faster-whisper-large-v3-turbo-ct2`, `-m ./models/my-ct2-model` |
 | `whisper` | A local checkpoint file (`.pt`); openai-whisper loads no repo ids or folders | `-m ~/models/whisper-finetuned.pt` |
 | `voxtral`, `parakeet`, `canary` | A Hugging Face repo id (`org/name`), or a local model folder, of a model of the same kind | `-m nvidia/parakeet-tdt-0.6b-v2` |
+| `transformers` | The repo id (`org/name`), or a local folder, of any speech recognition model transformers' pipeline runs | `-m openai/whisper-small`, `-m facebook/wav2vec2-base-960h`, `-m ./models/my-fine-tune` |
 
 - **Offline:** a local folder or file loads without the network. A folder saved by `huggingface-cli download` or
   `faster_whisper.download_model()` works as is.
@@ -41,6 +43,8 @@ option.
 | `prompt`: `--prompt` | yes | yes | no | no | no |
 | `vad`: `--vad` | no | yes | no | no | no |
 | `word_timestamps`: `--word-timestamps` | yes | yes | no | yes | no |
+
+The `transformers` backend's capabilities depend on the model it loads: see [Any Hugging Face model](#any-hugging-face-model-transformers).
 
 **Translation:**
 - `-t translate` with a backend that can't translate is an error, reported before the model loads.
@@ -63,7 +67,7 @@ The GPU is used when available. `--device` (`device=` in Python) picks one:
 | `cpu` | The CPU. | all |
 | `cuda` | The first NVIDIA GPU. | all |
 | `cuda:N` | The NVIDIA GPU numbered N, from 0: `cuda:1` is the second. | all |
-| `mps` | An Apple Silicon GPU. | whisper, voxtral, parakeet, canary; not faster-whisper (CTranslate2 has no Apple GPU support) |
+| `mps` | An Apple Silicon GPU. | whisper, voxtral, parakeet, canary, transformers; not faster-whisper (CTranslate2 has no Apple GPU support) |
 
 - A device the backend can't use, such as `-b faster-whisper --device mps`, stops before anything loads.
 - [Speaker labels](diarization.md) run on the same device.
@@ -76,7 +80,7 @@ device:
 | Backend | `auto` on an NVIDIA GPU | `auto` on an Apple GPU | `auto` on the CPU | `--compute-type` also takes |
 |---|---|---|---|---|
 | faster-whisper | float16, or the next of int8_float16, int8, float32 the GPU supports | (no Apple GPU) | int8, or float32 | CTranslate2's types: `int8`, `int8_float32`, `int8_float16`, `int8_bfloat16`, `int16`, `float16`, `bfloat16`, `float32`, and `default` (the type the model was saved in) |
-| voxtral, parakeet, canary | bfloat16, or float16 on a GPU without bfloat16 | float16 | float32 | `float32`, `float16`, `bfloat16` |
+| voxtral, parakeet, canary, transformers | bfloat16, or float16 on a GPU without bfloat16 | float16 | float32 | `float32`, `float16`, `bfloat16` |
 | whisper | fp16 | fp16 | fp32 | (nothing else) |
 
 faster-whisper asks CTranslate2 which types the device supports, so a GPU without fast float16 runs in int8 instead
@@ -94,7 +98,7 @@ Python; `transcribe --list-backends` lists them, with their defaults:
 |---|---|---|---|
 | faster-whisper | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | faster-whisper | `cpu_threads` | `0` | Threads on the CPU; 0 uses `OMP_NUM_THREADS` if set, else 4. |
-| voxtral, parakeet, canary | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
+| voxtral, parakeet, canary, transformers | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | voxtral, canary | `max_new_tokens` | `500` | Most tokens of text per ~30 s chunk; see [Text limit per chunk](#text-limit-per-chunk). |
 
 ```bash
@@ -112,6 +116,60 @@ Canary and Voxtral transcribe ~30 s chunks and write at most 500 tokens for each
 that reaches the limit, from very fast speech or the model repeating itself, may be cut off, so they warn once per file
 with the chunk's time range. Check the transcript there, raise the limit with `-O max_new_tokens=1000`, or transcribe
 the file with another backend.
+
+## Any Hugging Face model (`transformers`)
+
+`-b transformers` runs most speech recognition models on the Hugging Face Hub through transformers' speech recognition
+pipeline, with no code per model: Whisper fine-tunes and distil-whisper, CTC models such as wav2vec2, HuBERT and MMS,
+and the other models the pipeline supports, such as Moonshine and Granite Speech. Install the
+[`transformers` extra](install.md#extras) and give `-m` a repo id or a local model folder:
+
+```bash
+transcribe talk.mp3 -b transformers -m openai/whisper-small
+transcribe talk.mp3 -b transformers -m facebook/wav2vec2-base-960h --word-timestamps -o talk.json
+transcribe talk.mp3 -b transformers -m ./models/my-whisper-fine-tune -l de
+```
+
+In Python: `Transcriber("transformers", "openai/whisper-small")`. `transcribe --list-models -b transformers` lists a
+few models that work well; without `-m`, the backend loads `openai/whisper-large-v3-turbo`.
+
+**What a model can do** is read from it once it has loaded, from the kind of model the pipeline makes of it and, for
+Whisper, from its generation config:
+
+| Kind of model | For example | Timestamps | Word timestamps | `-l` | Detects the language | Translates |
+|---|---|---|---|---|---|---|
+| Whisper, multilingual | `openai/whisper-small`, `openai/whisper-large-v3-turbo`, fine-tunes | per segment | yes, if its generation config has `alignment_heads` (OpenAI's models do) | yes | yes, unless its generation config sets a language, as distil-whisper's English models do | yes (turbo isn't trained for it: a warning says so) |
+| Whisper, English-only | `openai/whisper-small.en` | per segment | as above | no: English | no | no |
+| CTC | `facebook/wav2vec2-base-960h`, HuBERT, MMS | per segment, made from the words | yes | no | no | no |
+| Others: sequence-to-sequence models, speech LLMs | `moonshine-ai/moonshine-tiny`, Granite Speech | per ~30 s chunk | no | no | no | no |
+
+- **Segments:** with word timestamps, a Whisper model's segments are made from its words, like a CTC model's: a segment
+  ends after a sentence, before a pause of more than a second, or at 30 s.
+- **Language:** a multilingual Whisper model takes a language code (`-l de`) or, as Whisper does, detects the
+  language in the first 30 s and keeps it for the rest. Other models can't be told the language, so they ignore `-l`
+  with a warning (an English-only Whisper model takes `-l en` silently).
+- **Long recordings** are cut into chunks of up to 30 s, in pauses, and each chunk goes to the model whole. The
+  pipeline's own `chunk_length_s`, whose merging of overlapping chunks is experimental for sequence-to-sequence models,
+  isn't used.
+- **Precision and devices** are as for the other transformers backends: `--compute-type` and `--device`, including
+  `cuda:N` and `mps`.
+- **Dedicated backends do more** for some models: `-b parakeet` gives Parakeet TDT's word timestamps, which the
+  pipeline doesn't, and `-b canary` and `-b voxtral` know their models' prompts and token limits.
+- **Not supported yet:** models that need `trust_remote_code`; MMS's language adapters (it loads its default,
+  English); and models whose feature extractor expects another sampling rate than 16 kHz need `torchaudio` installed,
+  which the pipeline uses to resample.
+
+**When requests are checked.** Before a model loads, the backend's capabilities are what *some* models can do, so
+`-t translate` and `--word-timestamps` pass the checks made then (the model name's shape, the device and the options
+are checked as for every backend). Once the model has loaded, the backend's capabilities are that model's:
+
+- A translation the model can't do stops with `UnsupportedOptionError` before any audio is decoded, as with any
+  backend that can't translate.
+- `--word-timestamps` for a model without them prints a warning and is skipped, as with any backend without them. So
+  `--diarize` and `--max-line-width` don't ask such a model for word timings.
+- The server rejects both requests with a 400 error.
+- Called directly (`get_backend("transformers")`), the backend raises `UnsupportedOptionError` for a task, word
+  timestamps or a language the model can't take, before it reads the audio.
 
 ## Adding a backend
 

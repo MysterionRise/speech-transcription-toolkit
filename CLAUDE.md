@@ -47,7 +47,8 @@ speech_toolkit/
     ├── whisper_backend.py          openai-whisper (the `whisper` extra, on PyTorch)
     ├── faster_whisper_backend.py   faster-whisper / CTranslate2 (default backend, a core dependency: no torch)
     ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)
-    └── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
+    ├── nvidia_backend.py           Parakeet TDT (word timings from generate durations) and Canary, via transformers
+    └── transformers_backend.py     any Hub ASR model via transformers' pipeline; capabilities read after loading
 main.py, convert.py   checkout shims for the two commands (not packaged)
 examples/             runnable scripts, run against the fake backend by tests/test_examples.py (not packaged)
 benchmarks/           WER/RTFx harness: python -m benchmarks.run (requirements-bench.txt; not packaged)
