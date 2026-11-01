@@ -8,6 +8,7 @@ first use. Loading is shared with Voxtral, in ``_transformers.py``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import warnings
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 
 from ..errors import SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from ._transformers import MAX_NEW_TOKENS, MAX_NEW_TOKENS_OPTION, _TransformersBackend
+from ._transformers import BATCH_SIZE_OPTION, MAX_NEW_TOKENS, MAX_NEW_TOKENS_OPTION, _TransformersBackend
 from .base import TranscriptionResult, recording_name, report_progress
 from .config import BackendOption
 
@@ -57,6 +58,11 @@ class ParakeetBackend(_NvidiaBackend):
     MODEL_CLASS = "ParakeetForTDT"
     # The encoder attends over the whole chunk, so memory grows quickly with chunk length.
     CHUNK_SECONDS = 120
+    OPTIONS: Mapping[str, BackendOption] = {
+        **_NvidiaBackend.OPTIONS,
+        # Two 120 s chunks at a time by default: the 4 minutes of audio of Canary's and Voxtral's eight 30 s chunks.
+        "batch_size": dataclasses.replace(BATCH_SIZE_OPTION, default=2),
+    }
 
     def transcribe(
         self,
@@ -75,8 +81,11 @@ class ParakeetBackend(_NvidiaBackend):
                 language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. How far it got is also passed to
-                report_progress() after each chunk, whatever *verbose* is.
+                report_progress() after each batch of chunks, whatever *verbose* is.
             word_timestamps: Keep each segment's per-word timings ("words").
+
+        The audio is cut into chunks of up to 120 s, which the model transcribes ``batch_size`` (an option, 2 by
+        default) at a time.
 
         Raises:
             ModelLoadError: If no model is loaded.
@@ -96,13 +105,16 @@ class ParakeetBackend(_NvidiaBackend):
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
         chunks = split_audio(audio, self.CHUNK_SECONDS)
+        batch_size = self._options["batch_size"]
         words: List[Dict[str, Any]] = []
-        for number, (offset, samples) in enumerate(chunks, start=1):
-            words += self._transcribe_chunk(samples, offset)
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
+            words += self._transcribe_batch(batch)
             # A segment can go on into the next chunk, so segments are made, and reported, once every chunk is done.
+            offset, samples = batch[-1]
             report_progress(offset + len(samples) / SAMPLE_RATE, duration)
             level = logging.INFO if verbose else logging.DEBUG
-            logger.log(level, "Parakeet: transcribed %d/%d chunks", number, len(chunks))
+            logger.log(level, "Parakeet: transcribed %d/%d chunks", first + len(batch), len(chunks))
 
         segments = _segments_from_words(words)
         if not word_timestamps:
@@ -115,16 +127,35 @@ class ParakeetBackend(_NvidiaBackend):
             duration=duration,
         )
 
-    def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
-        """Words of one chunk, with times shifted by the chunk's *offset* in seconds."""
-        inputs = self._processor(samples, sampling_rate=SAMPLE_RATE).to(self._device, dtype=self._model.dtype)
-        with warnings.catch_warnings():
-            # Parakeet sizes generation from the audio length, but transformers still warns about max_length.
-            warnings.filterwarnings("ignore", message="Using the model-agnostic default `max_length`")
-            outputs = self._model.generate(**inputs)
-        # The TDT decoder predicts how many frames each token lasts; decode() turns that into token times.
+    def _transcribe_batch(self, chunks: Sequence[Tuple[float, Any]]) -> List[Dict[str, Any]]:
+        """The words of a batch of *chunks*, (offset in seconds, samples) pairs, in order, with each chunk's times
+        shifted by its offset. The processor pads the shorter chunks, and generate() stops at the end of each."""
+        inputs = self._processor([samples for _, samples in chunks], sampling_rate=SAMPLE_RATE)
+        inputs = inputs.to(self._device, dtype=self._model.dtype)
+        longest = max(len(samples) for _, samples in chunks)
+        outputs = self._model.generate(**inputs, max_new_tokens=self._max_steps(longest))
+        # The TDT decoder predicts how many frames each token lasts; decode() turns that into token times, per chunk.
         _, timestamps = self._processor.decode(outputs.sequences, durations=outputs.durations)
-        return _words_from_tokens(timestamps[0], offset)
+        words: List[Dict[str, Any]] = []
+        for (offset, _), tokens in zip(chunks, timestamps):
+            words += _words_from_tokens(tokens, offset)
+        return words
+
+    def _max_steps(self, samples: int) -> int:
+        """The most decoding steps generate() may take for *samples* of audio: ``max_symbols_per_step`` for each
+        frame of the encoder, which makes one per ``hop_length`` samples ``subsampling_factor`` times fewer.
+
+        That is the limit Parakeet sets itself when it is given none. Giving it keeps transformers from warning about
+        its default ``max_length`` on every call. (Hiding that warning in a ``warnings.catch_warnings()`` block, as
+        before, made every other warning show again for each file: leaving the block resets Python's record of the
+        warnings shown.)
+        """
+        config = self._model.config
+        symbols = int(getattr(config, "max_symbols_per_step", 10))
+        subsampling = int(getattr(getattr(config, "encoder_config", None), "subsampling_factor", 8))
+        hop = int(getattr(getattr(self._processor, "feature_extractor", None), "hop_length", 160))
+        frames = samples // hop + 1
+        return symbols * -(-frames // subsampling)
 
 
 class CanaryBackend(_NvidiaBackend):
@@ -139,9 +170,12 @@ class CanaryBackend(_NvidiaBackend):
     MODEL_CLASS = "CanaryForConditionalGeneration"
     # Canary returns text without timestamps, so each chunk becomes one coarsely timestamped segment.
     CHUNK_SECONDS = 30
-    BATCH_SIZE = 8
     MAX_NEW_TOKENS = MAX_NEW_TOKENS  # the max_new_tokens option's default
-    OPTIONS: Mapping[str, BackendOption] = {**_NvidiaBackend.OPTIONS, "max_new_tokens": MAX_NEW_TOKENS_OPTION}
+    OPTIONS: Mapping[str, BackendOption] = {
+        **_NvidiaBackend.OPTIONS,
+        "max_new_tokens": MAX_NEW_TOKENS_OPTION,
+        "batch_size": BATCH_SIZE_OPTION,
+    }
 
     def transcribe(
         self,
@@ -160,7 +194,8 @@ class CanaryBackend(_NvidiaBackend):
                 are also passed to report_progress(), whatever *verbose* is.
 
         Returns:
-            TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches the
+            TranscriptionResult with one segment per chunk of up to 30 s; the model transcribes ``batch_size`` chunks
+            (an option, 8 by default) at a time. A chunk whose text reaches the
             max_new_tokens option's limit may be cut off: one warning per file gives the number of such chunks and the
             first one's times.
         """
@@ -176,8 +211,9 @@ class CanaryBackend(_NvidiaBackend):
         chunks = split_audio(audio, self.CHUNK_SECONDS)
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
-        for first in range(0, len(chunks), self.BATCH_SIZE):
-            batch = chunks[first : first + self.BATCH_SIZE]
+        batch_size = self._options["batch_size"]
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
             texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language or "en", task)
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})

@@ -673,10 +673,9 @@ class TestVoxtralBackend:
         processor.batch_decode.side_effect = [[" one ", "two"], [""]]
 
         backend = VoxtralBackend()
-        backend.load_model("voxtral-mini")
+        backend.load_model("voxtral-mini", options={"batch_size": 2})
         caplog.set_level(logging.INFO, logger="speech_toolkit")
-        with patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
-            result = backend.transcribe(audio_file, language="en")
+        result = backend.transcribe(audio_file, language="en")
 
         first_call = processor.apply_transcription_request.call_args_list[0][1]
         assert len(first_call["audio"]) == 2

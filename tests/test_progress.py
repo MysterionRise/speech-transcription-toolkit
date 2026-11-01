@@ -266,26 +266,25 @@ def transformers():
         yield state
 
 
-# backend: (its mocked library, model, language, seconds of audio)
+# backend: (its mocked library, model, language, seconds of audio, options)
 BACKENDS = {
-    "whisper": ("whisper", "tiny", None, 70),
-    "faster-whisper": ("faster_whisper", "tiny", None, 70),
-    "parakeet": ("transformers", None, None, 130),  # two chunks of up to 120 s
-    "canary": ("transformers", None, "en", 70),  # three chunks of up to 30 s
-    "voxtral": ("transformers", None, None, 70),
+    "whisper": ("whisper", "tiny", None, 70, {}),
+    "faster-whisper": ("faster_whisper", "tiny", None, 70, {}),
+    "parakeet": ("transformers", None, None, 130, {"batch_size": 1}),  # two chunks of up to 120 s, one at a time
+    "canary": ("transformers", None, "en", 70, {"batch_size": 2}),  # three chunks of up to 30 s, in two batches
+    "voxtral": ("transformers", None, None, 70, {"batch_size": 2}),
 }
 
 
 @pytest.mark.parametrize("backend", list(BACKENDS))
 def test_every_backend(request, backend):
-    library, model, language, seconds = BACKENDS[backend]
+    library, model, language, seconds, options = BACKENDS[backend]
     request.getfixturevalue(library)
     events: List[ProgressEvent] = []
 
-    with patch.object(CanaryBackend, "BATCH_SIZE", 2), patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
-        result = Transcriber(backend, model).transcribe(
-            np.zeros(seconds * RATE, np.float32), language, progress=events.append
-        )
+    result = Transcriber(backend, model, options=options).transcribe(
+        np.zeros(seconds * RATE, np.float32), language, progress=events.append
+    )
 
     check(events, result, ["transcribe"])
     assert len(result.segments) >= 2
@@ -337,8 +336,8 @@ def test_segments_are_reported_after_each_batch(transformers, backend):
         return make_batch(audio, **kwargs)
 
     processor.apply_transcription_request.side_effect = apply_transcription_request
-    with patch.object(CanaryBackend, "BATCH_SIZE", 2), patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
-        Transcriber(backend).transcribe(np.zeros(70 * RATE, np.float32), "en", progress=events.append)
+    transcriber = Transcriber(backend, options={"batch_size": 2})
+    transcriber.transcribe(np.zeros(70 * RATE, np.float32), "en", progress=events.append)
 
     assert batches == [0, 2]  # the first batch's two segments were reported before the second batch ran
 
@@ -351,7 +350,7 @@ def test_segments_are_reported_after_each_batch(transformers, backend):
 @pytest.mark.parametrize(
     "backend_class, message",
     [
-        (ParakeetBackend, "Parakeet: transcribed 1/2 chunks"),  # two chunks of up to 120 s
+        (ParakeetBackend, "Parakeet: transcribed 2/2 chunks"),  # two chunks of up to 120 s, one batch
         (CanaryBackend, "Canary: transcribed 5/5 chunks"),  # 130 s: five chunks of up to 30 s, one batch
         (VoxtralBackend, "Voxtral: transcribed 5/5 chunks"),
     ],

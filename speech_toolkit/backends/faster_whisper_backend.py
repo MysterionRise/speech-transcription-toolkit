@@ -27,6 +27,7 @@ from ..errors import BackendUnavailableError, ModelLoadError, SpeechToolkitWarni
 from ..types import Segment
 from .base import TranscriptionBackend, TranscriptionResult, report_progress
 from .config import BackendOption
+from .whisper_backend import HALLUCINATION_OPTIONS, decoding_arguments
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
@@ -73,7 +74,27 @@ class FasterWhisperBackend(TranscriptionBackend):
             choices=COMPUTE_TYPES,
         ),
         "cpu_threads": BackendOption(int, 0, "Threads on the CPU; 0 uses OMP_NUM_THREADS if set, else 4", minimum=0),
+        "num_workers": BackendOption(
+            int,
+            1,
+            "Transcriptions the model runs at once when several threads share it; each worker takes memory",
+            minimum=1,
+        ),
+        "batch_size": BackendOption(
+            int,
+            1,
+            "Pieces of audio decoded at a time; above 1, the batched pipeline: several times faster on a GPU, it cuts "
+            "the audio at pauses with voice activity detection",
+            minimum=1,
+        ),
+        "beam_size": BackendOption(int, 5, "Beams in beam search; 1 decodes greedily, the fastest", minimum=1),
+        **HALLUCINATION_OPTIONS,
     }
+    # The options that are keyword arguments of the model's transcribe(), with faster-whisper's defaults.
+    DECODING_OPTIONS = ("beam_size", *HALLUCINATION_OPTIONS)
+    # What the batched pipeline ignores: it decodes the pieces of audio independently, and skips silence with voice
+    # activity detection instead.
+    SEQUENTIAL_OPTIONS = tuple(HALLUCINATION_OPTIONS)
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
     MODELS = [
@@ -118,8 +139,11 @@ class FasterWhisperBackend(TranscriptionBackend):
                 CTranslate2 model folder.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), or None or 'auto' for the GPU when CTranslate2 sees one.
                 If the CUDA libraries it needs don't load, the automatic choice warns and uses the CPU.
-            options: Values for ``OPTIONS``: ``compute_type`` and ``cpu_threads``. Afterwards ``self.options`` shows
-                the compute type that "auto" picked.
+            options: Values for ``OPTIONS``. ``compute_type``, ``cpu_threads`` and ``num_workers`` load the model;
+                afterwards ``self.options`` shows the compute type that "auto" picked. The others are for
+                transcribe(): ``batch_size`` (above 1, faster-whisper's batched pipeline), ``beam_size``,
+                ``condition_on_previous_text``, ``no_speech_threshold`` and ``hallucination_silence_threshold``. The
+                batched pipeline ignores the last three, so setting them with a ``batch_size`` above 1 warns.
 
         Raises:
             ModelNotFoundError: If model_name is none of these.
@@ -131,6 +155,14 @@ class FasterWhisperBackend(TranscriptionBackend):
         model_id = self.resolve_model(model_name)
         target = self._parse_device(device)
         settings = self._resolve_options(options)
+        ignored = [name for name in self.SEQUENTIAL_OPTIONS if settings[name] != self.OPTIONS[name].default]
+        if settings["batch_size"] > 1 and ignored:
+            warnings.warn(
+                f"faster-whisper's batched pipeline (batch_size above 1) ignores {' and '.join(ignored)}; it skips "
+                "silence with voice activity detection instead.",
+                SpeechToolkitWarning,
+                stacklevel=2,
+            )
 
         try:
             import ctranslate2
@@ -189,8 +221,13 @@ class FasterWhisperBackend(TranscriptionBackend):
             verbose: Show faster-whisper's progress bar on stderr. Each segment is also passed to report_progress() as
                 soon as it is decoded, whatever *verbose* is.
             prompt: Names, terms or a sample sentence that guide spelling (initial_prompt).
-            vad: Skip silence with the built-in Silero VAD filter.
+            vad: Skip silence with the built-in Silero VAD filter. The batched pipeline (the ``batch_size`` option
+                above 1) always does: it decodes the pieces of speech it finds.
             word_timestamps: Add per-word timings ("words") to each segment.
+
+        The options the model loaded with (``beam_size`` and the others in ``DECODING_OPTIONS``) go to faster-whisper's
+        transcribe(), or with a ``batch_size`` above 1 to its ``BatchedInferencePipeline``, which keeps word timings
+        and gives the segments in order, as they are decoded.
 
         Returns:
             TranscriptionResult with transcript text and segments.
@@ -205,19 +242,34 @@ class FasterWhisperBackend(TranscriptionBackend):
         if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        segment_iter, info = self._model.transcribe(
+        # The options set, as keyword arguments; the ones left at faster-whisper's defaults aren't passed.
+        arguments = decoding_arguments(self._options, {name: self.OPTIONS[name] for name in self.DECODING_OPTIONS})
+        model = self._model
+        if self._options["batch_size"] > 1:
+            model = self._batched_pipeline()
+            for name in self.SEQUENTIAL_OPTIONS:  # it ignores them (load_model() warned)
+                arguments.pop(name, None)
+            # The pipeline decodes the pieces of speech that voice activity detection finds, of up to 30 s each, and
+            # needs them for audio longer than that. It predicts timestamps here, which it skips by default, so that
+            # segments end at sentences as they do without it, rather than at the end of each piece.
+            arguments.update(batch_size=self._options["batch_size"], without_timestamps=False)
+            vad = True
+        # hallucination_silence_threshold works on word timings: they are computed for it, and kept if asked for.
+        words = word_timestamps or bool(arguments.get("hallucination_silence_threshold"))
+        segment_iter, info = model.transcribe(
             str(audio_path) if isinstance(audio_path, Path) else audio_path,
             language=language,
             task=task,
             log_progress=verbose,
             initial_prompt=prompt,
             vad_filter=vad,
-            word_timestamps=word_timestamps,
+            word_timestamps=words,
+            **arguments,
         )
         # segment_iter is a generator: decoding happens while it is iterated, so each segment is reported as it comes.
         segments: List[Segment] = []
         for seg in segment_iter:
-            segments.append(_segment(len(segments), seg))
+            segments.append(_segment(len(segments), seg, words=word_timestamps))
             report_progress(seg.end, info.duration, segments[-1])
 
         return TranscriptionResult(
@@ -230,13 +282,20 @@ class FasterWhisperBackend(TranscriptionBackend):
             language_probability=info.language_probability,
         )
 
+    def _batched_pipeline(self) -> Any:
+        """faster-whisper's batched pipeline on the loaded model: a new one for each transcription, as it keeps the
+        last word's time between batches, which a transcription stopped halfway would leave behind."""
+        from faster_whisper import BatchedInferencePipeline  # imported by load_model() already
+
+        return BatchedInferencePipeline(self._model)
+
 
 def _model_arguments(
     ctranslate2: Any, device: str, index: Optional[int], settings: Mapping[str, Any]
 ) -> Dict[str, Any]:
     """WhisperModel's keyword arguments for *device* ("cpu" or "cuda"), the GPU *index* and the backend's options.
 
-    Only what differs from WhisperModel's defaults, device_index=0 and cpu_threads=0, is included.
+    Only what differs from WhisperModel's defaults, device_index=0, cpu_threads=0 and num_workers=1, is included.
     """
     compute_type = settings["compute_type"]
     if compute_type == "auto":
@@ -246,6 +305,8 @@ def _model_arguments(
         arguments["device_index"] = index
     if settings["cpu_threads"]:
         arguments["cpu_threads"] = settings["cpu_threads"]
+    if settings["num_workers"] != 1:
+        arguments["num_workers"] = settings["num_workers"]
     return arguments
 
 
@@ -263,10 +324,11 @@ def _auto_compute_type(ctranslate2: Any, device: str, index: int) -> str:
     return next((compute_type for compute_type in preferred if compute_type in supported), preferred[0])
 
 
-def _segment(index: int, seg: Any) -> Segment:
-    """A faster-whisper Segment in the standard format (with "words" when word timestamps were asked for).
+def _segment(index: int, seg: Any, words: bool = True) -> Segment:
+    """A faster-whisper Segment in the standard format, with "words" when it has them and *words* is true.
 
-    faster-whisper numbers segments from 1; *index*, the segment's position, numbers them from 0 like other backends.
+    faster-whisper numbers segments from 1 (the batched pipeline, across the whole recording); *index*, the segment's
+    position, numbers them from 0 like other backends.
     """
     segment: Segment = {
         "id": index,
@@ -279,7 +341,7 @@ def _segment(index: int, seg: Any) -> Segment:
         "compression_ratio": seg.compression_ratio,
         "no_speech_prob": seg.no_speech_prob,
     }
-    if getattr(seg, "words", None):
+    if words and getattr(seg, "words", None):
         segment["words"] = [
             {"word": w.word, "start": w.start, "end": w.end, "probability": w.probability} for w in seg.words
         ]

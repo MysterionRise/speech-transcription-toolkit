@@ -7,7 +7,7 @@ import pathlib
 import sys
 import warnings
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -153,7 +153,7 @@ class TestParakeet:
         result = self._backend().transcribe(audio_file, word_timestamps=True)
 
         model = nvidia_modules.transformers.ParakeetForTDT.from_pretrained.return_value.to.return_value
-        model.generate.assert_called_once_with(input_features="features")
+        model.generate.assert_called_once_with(input_features="features", max_new_tokens=ANY)
         outputs = model.generate.return_value
         processor.decode.assert_called_once_with(outputs.sequences, durations=outputs.durations)
         assert result.text == "Hello world. Howdy"
@@ -170,10 +170,11 @@ class TestParakeet:
     def test_long_audio_is_chunked_and_offset(self, nvidia_modules, audio_file):
         nvidia_modules.load_audio.return_value = np.zeros(130 * RATE, dtype=np.float32)
         nvidia_modules.processor.return_value = FakeBatch()
-        nvidia_modules.processor.decode.side_effect = [
-            ("", [[{"token": " One.", "start": 1.0, "end": 1.5}]]),
-            ("", [[{"token": " Two.", "start": 2.0, "end": 2.5}]]),
-        ]
+        # Both chunks in one batch (batch_size is 2 by default): a list of token times for each.
+        nvidia_modules.processor.decode.return_value = (
+            "",
+            [[{"token": " One.", "start": 1.0, "end": 1.5}], [{"token": " Two.", "start": 2.0, "end": 2.5}]],
+        )
 
         result = self._backend().transcribe(audio_file, verbose=False)
 
@@ -181,15 +182,16 @@ class TestParakeet:
         assert [(s["start"], s["text"]) for s in result.segments] == [(1.0, " One."), (117.05, " Two.")]
         assert "words" not in result.segments[0]  # only kept when asked for
 
-    def test_generate_max_length_warning_is_silenced(self, nvidia_modules, audio_file, recwarn):
-        """transformers warns about the default max_length on every Parakeet call, though it's sized correctly."""
+    def test_generate_gets_a_length_so_that_transformers_doesnt_warn(self, nvidia_modules, audio_file, recwarn):
+        """Without max_new_tokens, transformers warns about its default max_length on every Parakeet call."""
         nvidia_modules.processor.return_value = FakeBatch()
         nvidia_modules.processor.decode.return_value = ("", [[]])
         backend = self._backend()
         model = nvidia_modules.transformers.ParakeetForTDT.from_pretrained.return_value.to.return_value
 
-        def generate(**inputs):
-            warnings.warn("Using the model-agnostic default `max_length` (=430) to control the generation length.")
+        def generate(max_new_tokens=None, **inputs):
+            if max_new_tokens is None:
+                warnings.warn("Using the model-agnostic default `max_length` (=430) to control the generation length.")
             return SimpleNamespace(sequences="seq", durations="dur")
 
         model.generate.side_effect = generate
@@ -238,9 +240,8 @@ class TestCanary:
         nvidia_modules.load_audio.return_value = np.zeros(70 * RATE, dtype=np.float32)
         processor = self._prepare(nvidia_modules, [[" Hallo ", "Welt"], [""]])
 
-        backend = self._backend()
-        with patch.object(CanaryBackend, "BATCH_SIZE", 2):
-            result = backend.transcribe(audio_file, language="de")
+        backend = self._backend(batch_size=2)
+        result = backend.transcribe(audio_file, language="de")
 
         first = processor.apply_transcription_request.call_args_list[0][1]
         assert (len(first["audio"]), first["source_language"], first["target_language"]) == (2, "de", None)
@@ -306,10 +307,9 @@ class TestCanary:
         self._prepare(nvidia_modules, [["one", "two"], ["three"]])
         self._generate(nvidia_modules, [[5, CANARY_EOS], [5, 6]], [[7, 8]])
 
-        backend = self._backend(max_new_tokens=2)
-        with patch.object(CanaryBackend, "BATCH_SIZE", 2):
-            with pytest.warns(SpeechToolkitWarning) as warned:
-                backend.transcribe(audio_file, language="en", verbose=False)
+        backend = self._backend(max_new_tokens=2, batch_size=2)
+        with pytest.warns(SpeechToolkitWarning) as warned:
+            backend.transcribe(audio_file, language="en", verbose=False)
 
         assert [(warning.category, str(warning.message)) for warning in warned] == [
             (
