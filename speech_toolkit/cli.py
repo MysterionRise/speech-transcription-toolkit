@@ -30,6 +30,9 @@ Better accuracy and readable subtitles:
 
 Speaker labels (needs the ``diarize`` extra and a Hugging Face token):
     transcribe meeting.wav --diarize --num-speakers 3
+
+The language of each file, from its first 30 s, without transcribing:
+    transcribe --detect-language recordings/
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import json
 import logging
 import os
 import pathlib
@@ -44,10 +48,10 @@ import sys
 import time
 import warnings
 from collections import Counter
-from typing import AbstractSet, Iterator, List, Optional, Sequence, TextIO, Tuple
+from typing import AbstractSet, Any, Iterator, List, Mapping, Optional, Sequence, TextIO, Tuple
 
 from . import __version__
-from .api import TASKS, Transcriber, check_load_arguments
+from .api import TASKS, Transcriber, check_language_detection, check_load_arguments, language_detectors
 from .backends import (
     CAPABILITIES,
     DEFAULT_BACKEND,
@@ -126,6 +130,7 @@ Examples:
   %(prog)s talk.mp3 -o talk.srt --max-line-width 42
   %(prog)s meeting.wav --diarize --num-speakers 3
   %(prog)s --list-models --backend voxtral
+  %(prog)s --detect-language recordings/      # each file's language, without transcribing
 """,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -158,6 +163,8 @@ Examples:
 
     args = parser.parse_args(argv)
     if not (args.list_backends or args.list_models):
+        if args.detect_language:
+            _validate_detection(parser, args)
         _validate_args(parser, args)
     return args
 
@@ -331,6 +338,13 @@ def add_information_options(parser: argparse.ArgumentParser) -> None:
     info = parser.add_argument_group("information")
     info.add_argument("--list-backends", action="store_true", help="List available backends and exit.")
     info.add_argument("--list-models", action="store_true", help="List models for the selected backend and exit.")
+    info.add_argument(
+        "--detect-language",
+        action="store_true",
+        help="Print the language of each input, from its first 30 s, and exit without transcribing: a line each, "
+        "with the file, the language and its probability separated by tabs, or with -f json a JSON object each "
+        f"({', '.join(language_detectors()) or 'no backend'}).",
+    )
 
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -653,6 +667,99 @@ def show_models(backend_name: str) -> None:
 
 
 ###############################################################################
+# Language detection
+###############################################################################
+
+# The options --detect-language refuses, as (dest, flag): it transcribes nothing, and prints its lines to stdout.
+DETECTION_REFUSES = (
+    ("language", "--language"),
+    ("task", "--task"),
+    ("prompt", "--prompt"),
+    ("vad", "--vad"),
+    ("word_timestamps", "--word-timestamps"),
+    ("diarize", "--diarize"),
+    ("num_speakers", "--num-speakers"),
+    ("min_speakers", "--min-speakers"),
+    ("max_speakers", "--max-speakers"),
+    ("output", "--output"),
+    ("outdir", "--outdir"),
+    ("json", "--json"),
+    ("skip_existing", "--skip-existing"),
+    ("max_line_width", "--max-line-width"),
+)
+# What -f takes with --detect-language: txt, tab-separated lines (the default), or json, a JSON object per line.
+DETECTION_FORMATS = ("txt", "json")
+
+
+def _validate_detection(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject the options --detect-language doesn't take (exits via parser.error)."""
+    given = [flag for dest, flag in DETECTION_REFUSES if getattr(args, dest) != parser.get_default(dest)]
+    if given:
+        parser.error(f"--detect-language only detects the language, so it doesn't take {', '.join(given)}")
+    if args.format is not None and tuple(args.format) not in [(fmt,) for fmt in DETECTION_FORMATS]:
+        parser.error("--detect-language prints a line per input, or with -f json a JSON object: -f takes txt or json")
+
+
+def detect_languages(args: argparse.Namespace) -> None:
+    """--detect-language: print the language of each input, from its first 30 seconds, without transcribing.
+
+    Each input's line goes to stdout as soon as it is detected (see detection_line()). The inputs are found as for
+    transcription: folders are searched for media files, and ``-`` reads standard input. A backend that can't detect
+    languages and a missing file are errors before the model loads. A file that fails is reported on stderr and the
+    others carry on; the exit status is then non-zero, and 130 after Ctrl-C.
+    """
+    stdout = sys.stdout
+    utf8_when_redirected(stdout)
+    as_json = args.format == ("json",)
+    # As when transcribing: stdout carries only the lines, other output goes to stderr, a warning is one line.
+    with warnings.catch_warnings(), contextlib.redirect_stdout(sys.stderr), show_logs(args):
+        warnings.showwarning = _print_warning
+        try:
+            check_language_detection(args.backend)
+        except ValueError as e:  # an unknown backend, or one that can't detect languages
+            sys.exit(f"Error: {e}")
+        inputs = detection_inputs(args.audio)
+        if not inputs:
+            sys.exit("Error: no audio files found.")
+        check_inputs([Job(audio, ()) for audio in inputs])  # before the (slow) model load
+        transcriber = load_or_exit(args)
+        try:
+            failed = sum(not detect_input(transcriber, audio, as_json, stdout) for audio in inputs)
+        except KeyboardInterrupt:
+            sys.exit(130)  # the exit status of a program stopped by Ctrl-C
+    if failed:
+        sys.exit(1 if len(inputs) == 1 else f"Error: {failed} of {len(inputs)} files failed.")
+
+
+def detection_inputs(paths: Sequence[pathlib.Path]) -> List[pathlib.Path]:
+    """The inputs of --detect-language: standard input, or the files given and the media files in the folders given."""
+    if paths and is_stdin(paths[0]):
+        return [paths[0]]  # the only input: output_problem() checks that
+    return [file for file, _ in collect_files(paths, MEDIA_EXTENSIONS)]
+
+
+def detect_input(transcriber: Transcriber, audio: pathlib.Path, as_json: bool, stdout: TextIO) -> bool:
+    """Detect the language of *audio* (standard input for STDIN) and print its line. Returns False after an error."""
+    try:
+        detection = transcriber.detect_language(sys.stdin.buffer if is_stdin(audio) else audio)
+    except Exception as e:  # one bad file doesn't stop the others; KeyboardInterrupt isn't an Exception
+        message = str(e) if isinstance(e, FILE_ERRORS) else f"{type(e).__name__}: {e}".removesuffix(": ")
+        print(f"Error: {shown_name(audio)}: {message}", file=sys.stderr)
+        return False
+    print(detection_line(audio, detection, as_json), file=stdout, flush=True)
+    return True
+
+
+def detection_line(audio: pathlib.Path, detection: Mapping[str, Any], as_json: bool) -> str:
+    """What --detect-language prints for *audio*: ``file<TAB>language<TAB>probability``, the probability with two
+    decimals; or with *as_json*, *detection* as a JSON object after the file, ``{"file": "talk.mp3", "language": "de",
+    "probability": 0.97, "candidates": [...]}``. Standard input is the file ``-``."""
+    if as_json:
+        return json.dumps({"file": str(audio), **detection}, ensure_ascii=False)
+    return f"{audio}\t{detection['language']}\t{detection['probability']:.2f}"
+
+
+###############################################################################
 # Messages
 ###############################################################################
 
@@ -769,6 +876,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.list_models:
         show_models(args.backend)
+        return
+
+    if args.detect_language:
+        detect_languages(args)
         return
 
     stdout = sys.stdout
