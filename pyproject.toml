@@ -46,12 +46,15 @@ faster-whisper = []
 voxtral =["torch>=2.6", "transformers>=5.17.0", "mistral-common[audio]>=1.12.0"]
 # Parakeet and Canary; transformers' Parakeet feature extractor needs librosa.
 nvidia = ["torch>=2.6", "transformers>=5.18.0", "librosa>=0.10"]
+# Most speech recognition models on the Hugging Face Hub (-b transformers -m <repo id>), through transformers'
+# pipeline. A model that needs another sampling rate than 16 kHz also needs torchaudio.
+transformers = ["torch>=2.6", "transformers>=5.0.0"]
 # Speaker labels: also needs a Hugging Face token and the terms of
 # https://hf.co/pyannote/speaker-diarization-community-1 accepted.
 diarize = ["pyannote.audio>=4.0.7"]
 # transcribe-server: OpenAI-compatible HTTP API
 server = ["fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.18"]
-all = ["speech-transcription-toolkit[whisper,voxtral,nvidia,diarize,server]"]
+all = ["speech-transcription-toolkit[whisper,voxtral,nvidia,transformers,diarize,server]"]
 
 [project.scripts]
 transcribe = "speech_toolkit.cli:main"

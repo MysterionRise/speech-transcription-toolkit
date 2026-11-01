@@ -41,7 +41,7 @@ from tests.conftest import FakeBackend, FakeWordsBackend
 from tests.server_helpers import decoded
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-TRANSLATORS = "whisper, faster-whisper, canary"  # the built-in backends that translate
+TRANSLATORS = "whisper, faster-whisper, canary, transformers"  # the built-in backends that translate
 
 
 class TranscribeOnlyBackend(FakeWordsBackend):
@@ -124,11 +124,11 @@ class TestDeclarations:
         assert all("." not in module for module in backend_class.requires)  # find_spec("a.b") imports a
 
     def test_backends_with(self):
-        assert backends_with("translate") == ["whisper", "faster-whisper", "canary"]
-        assert backends_with("language_detection") == ["whisper", "faster-whisper"]
+        assert backends_with("translate") == ["whisper", "faster-whisper", "canary", "transformers"]
+        assert backends_with("language_detection") == ["whisper", "faster-whisper", "transformers"]
         assert backends_with("prompt") == ["whisper", "faster-whisper"]
         assert backends_with("vad") == ["faster-whisper"]
-        assert backends_with("word_timestamps") == ["whisper", "faster-whisper", "parakeet"]
+        assert backends_with("word_timestamps") == ["whisper", "faster-whisper", "parakeet", "transformers"]
         assert backends_with("telepathy") == []
 
     def test_backends_with_includes_registered_backends(self, transcribe_only):
@@ -189,6 +189,7 @@ class TestListBackends:
             "voxtral": "transcription only",
             "parakeet": "word timestamps",
             "canary": "translate",
+            "transformers": "translate, language detection, word timestamps",  # what some models can do
         }
         assert backends["whisper"]["Models"].endswith("large-v3-turbo, turbo")
 
@@ -340,7 +341,7 @@ class TestHelpText:
 
         assert self.backends_in_help(text, "--prompt") == "whisper, faster-whisper"
         assert self.backends_in_help(text, "--vad") == "faster-whisper"
-        assert self.backends_in_help(text, "--word-timestamps") == "whisper, faster-whisper, parakeet"
+        assert self.backends_in_help(text, "--word-timestamps") == "whisper, faster-whisper, parakeet, transformers"
         assert f"Backends that translate: {TRANSLATORS}." in text
 
     @pytest.mark.parametrize("option, capability", OPTIONS)
