@@ -336,6 +336,20 @@ class TransformersBackend(_TransformersBackend):
         logger.debug("Detected the language %s", token)
         return _language_code(token) if token else None
 
+    def _pipeline_options(self, language: Optional[str], task: str, word_timestamps: bool) -> Dict[str, Any]:
+        """What the pipeline gets besides the audio: the timestamps to return and, for Whisper, generate()'s task and
+        language."""
+        traits = self._traits
+        options: Dict[str, Any] = {}
+        if traits.family == CTC:
+            options["return_timestamps"] = "word"  # the words make the segments
+        elif traits.family == WHISPER:
+            if traits.languages:  # a multilingual model: it takes the task, and a language (else its own, or detected)
+                options["generate_kwargs"] = {"task": task, **({"language": language} if language else {})}
+            if traits.segment_timestamps:
+                options["return_timestamps"] = "word" if word_timestamps else True
+        return options
+
     def _transcribe_chunk(
         self, samples: "np.ndarray", offset: float, language: Optional[str], task: str, word_timestamps: bool
     ) -> List[Dict[str, Any]]:
@@ -346,19 +360,7 @@ class TransformersBackend(_TransformersBackend):
         """
         traits = self._traits
         end = offset + len(samples) / SAMPLE_RATE
-        options: Dict[str, Any] = {}
-        if traits.family == WHISPER:
-            generate: Dict[str, Any] = {}
-            if traits.languages:  # a multilingual model: it takes the task, and a language (else its own, or detected)
-                generate["task"] = task
-                if language:
-                    generate["language"] = language
-            if generate:
-                options["generate_kwargs"] = generate
-            if traits.segment_timestamps:
-                options["return_timestamps"] = "word" if word_timestamps else True
-        elif traits.family == CTC:
-            options["return_timestamps"] = "word"  # the words make the segments
+        options = self._pipeline_options(language, task, word_timestamps)
         # A fresh dict each time: the pipeline takes its keys out. It resamples for models that need another rate.
         output = self._pipeline({"raw": samples, "sampling_rate": SAMPLE_RATE}, **options)
 
