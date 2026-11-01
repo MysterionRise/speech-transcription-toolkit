@@ -28,7 +28,7 @@ a missing package or token fails before a large model download.
 ```python
 transcriber = Transcriber("faster-whisper", "Systran/faster-whisper-small", device="cuda:1", compute_type="int8")
 transcriber = Transcriber("canary", options={"max_new_tokens": 1000})
-transcriber.backend.options  # the options in effect: {"compute_type": "auto", "max_new_tokens": 1000}
+transcriber.backend.options  # the options in effect: {"compute_type": "auto", "max_new_tokens": 1000, "batch_size": 8}
 ```
 
 The model name, device and options are checked before anything loads: one the backend can't take raises

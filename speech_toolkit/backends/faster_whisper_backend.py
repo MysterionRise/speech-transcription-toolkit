@@ -226,8 +226,8 @@ class FasterWhisperBackend(TranscriptionBackend):
             word_timestamps: Add per-word timings ("words") to each segment.
 
         The options the model loaded with (``beam_size`` and the others in ``DECODING_OPTIONS``) go to faster-whisper's
-        transcribe(), or with a ``batch_size`` above 1 to its ``BatchedInferencePipeline``, which keeps word timings
-        and gives the segments in order, as they are decoded.
+        transcribe(), or with a ``batch_size`` above 1 to its ``BatchedInferencePipeline``. That makes a segment of
+        each piece of speech of up to 30 s, and gives them in order, as they are decoded, with word timings if asked.
 
         Returns:
             TranscriptionResult with transcript text and segments.
@@ -250,9 +250,10 @@ class FasterWhisperBackend(TranscriptionBackend):
             for name in self.SEQUENTIAL_OPTIONS:  # it ignores them (load_model() warned)
                 arguments.pop(name, None)
             # The pipeline decodes the pieces of speech that voice activity detection finds, of up to 30 s each, and
-            # needs them for audio longer than that. It predicts timestamps here, which it skips by default, so that
-            # segments end at sentences as they do without it, rather than at the end of each piece.
-            arguments.update(batch_size=self._options["batch_size"], without_timestamps=False)
+            # needs them for audio longer than that. Each piece becomes a segment: it decodes each piece once, so
+            # asking it for timestamps (without_timestamps=False) would split the pieces, but lose the text after a
+            # piece's first few sentences now and then.
+            arguments["batch_size"] = self._options["batch_size"]
             vad = True
         # hallucination_silence_threshold works on word timings: they are computed for it, and kept if asked for.
         words = word_timestamps or bool(arguments.get("hallucination_silence_threshold"))

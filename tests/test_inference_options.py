@@ -124,7 +124,10 @@ class TestFasterWhisper:
             ({"condition_on_previous_text": "false"}, {"condition_on_previous_text": False}),
             ({"no_speech_threshold": "0.3"}, {"no_speech_threshold": 0.3}),
             # It needs word timings, which are computed for it.
-            ({"hallucination_silence_threshold": "2"}, {"hallucination_silence_threshold": 2.0, "word_timestamps": True}),
+            (
+                {"hallucination_silence_threshold": "2"},
+                {"hallucination_silence_threshold": 2.0, "word_timestamps": True},
+            ),
         ],
     )
     def test_decoding_options_reach_transcribe(self, fw, audio, options, passed):
@@ -162,14 +165,10 @@ class TestFasterWhisper:
         transcriber.transcribe(audio, language="de", verbose=False)
 
         fw.module.BatchedInferencePipeline.assert_called_once_with(fw.model)
-        # The pipeline cuts the audio where voice activity detection finds speech, also without --vad; it predicts
-        # timestamps, so that segments end at sentences rather than at the end of each piece.
+        # The pipeline cuts the audio where voice activity detection finds speech, also without --vad. It isn't asked
+        # for timestamps (without_timestamps=False), with which it loses text.
         fw.pipeline.transcribe.assert_called_once_with(
-            str(audio),
-            **{**USUAL, "language": "de", "vad_filter": True},
-            batch_size=8,
-            beam_size=2,
-            without_timestamps=False,
+            str(audio), **{**USUAL, "language": "de", "vad_filter": True}, batch_size=8, beam_size=2
         )
         fw.model.transcribe.assert_not_called()
 
@@ -340,7 +339,9 @@ PARAKEET_CHUNKS = [(0.0, 115.05), (115.05, 230.1), (230.1, 345.15), (345.15, 370
 
 
 class TestParakeet:
-    @pytest.mark.parametrize("options, batches", [({}, [2, 2]), ({"batch_size": 3}, [3, 1]), ({"batch_size": 1}, [1] * 4)])
+    @pytest.mark.parametrize(
+        "options, batches", [({}, [2, 2]), ({"batch_size": 3}, [3, 1]), ({"batch_size": 1}, [1] * 4)]
+    )
     def test_chunks_are_transcribed_batch_size_at_a_time(self, transformers, audio, options, batches):
         result = Transcriber("parakeet", options=options).transcribe(audio, word_timestamps=True, verbose=False)
 
@@ -406,7 +407,9 @@ class TestParakeet:
 
 @pytest.mark.parametrize("backend, language", [("canary", "en"), ("voxtral", None)])
 class TestCanaryAndVoxtral:
-    @pytest.mark.parametrize("options, batches", [({}, [3]), ({"batch_size": "2"}, [2, 1]), ({"batch_size": 1}, [1] * 3)])
+    @pytest.mark.parametrize(
+        "options, batches", [({}, [3]), ({"batch_size": "2"}, [2, 1]), ({"batch_size": 1}, [1] * 3)]
+    )
     def test_batch_size(self, transformers, audio, backend, language, options, batches):
         """70 s: three chunks of up to 30 s, eight at a time by default."""
         transformers.state.seconds = 70
@@ -580,7 +583,6 @@ class TestBenchmarkOptions:
 
     def test_measured_with_the_options_and_kept_in_the_results(self, bench, monkeypatch, tmp_path):
         from benchmarks.data import Clip
-
         from speech_toolkit.backends import _BACKENDS
 
         monkeypatch.setattr("speech_toolkit.backends._BACKENDS", {**_BACKENDS, "beams": BeamsBackend})
@@ -588,7 +590,9 @@ class TestBenchmarkOptions:
         clips = [Clip("ls/a", "ls", "en", "file", "a.wav", "0" * 64, 1.0, "beams 2")]
         messages: List[str] = []
 
-        measured = bench.run.measure("beams", "small", None, clips, tmp_path, log=messages.append, options={"beam_size": 2})
+        measured = bench.run.measure(
+            "beams", "small", None, clips, tmp_path, log=messages.append, options={"beam_size": 2}
+        )
 
         assert measured["options"] == {"beam_size": 2}
         assert measured["clips"]["ls/a"]["text"] == "beams 2"

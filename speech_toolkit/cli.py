@@ -306,8 +306,8 @@ def add_inference_options(parser: argparse.ArgumentParser) -> None:
         "--batch-size",
         type=positive_int,
         metavar="N",
-        help="Transcribe N pieces of audio at a time: faster on a GPU, with more memory. faster-whisper uses its "
-        "batched pipeline from 2 up, which skips silence like --vad "
+        help="Transcribe N pieces of audio at a time: faster on a GPU, with more memory. From 2 up, faster-whisper "
+        "uses its batched pipeline, which skips silence like --vad and makes a segment of each piece of up to 30 s "
         f"({', '.join(backends_with_option('batch_size')) or 'no backend'}; the same as -O batch_size=N).",
     )
     inference.add_argument(
