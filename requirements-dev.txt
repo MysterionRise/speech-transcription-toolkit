@@ -5,22 +5,22 @@
 pre-commit>=4.6.2
 
 # Testing framework
-pytest==9.1.1
+pytest==9.2.0
 pytest-cov==7.1.0
 
 # Audio decoding and chunking (speech_toolkit/media.py); unpinned so each Python gets a matching wheel
 numpy>=1.26
 
 # OpenAI-compatible server (speech_toolkit/server.py) and its TestClient; uvicorn is mocked in tests
-fastapi==0.142.2
+fastapi==0.162.0
 httpx==0.28.1
 python-multipart==0.0.32
 
 # Code quality
-black==26.5.1
+black==26.10.1
 flake8==7.4.1
 isort==9.0.2
-mypy==2.4.0
+mypy==2.4.1
 
 # Security scanning
 bandit[toml]==1.9.4
