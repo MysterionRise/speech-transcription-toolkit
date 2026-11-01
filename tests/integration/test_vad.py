@@ -93,7 +93,9 @@ def test_silence_gives_no_text(backend, speech, transcribe, tmp_path):
         what = f"{clip.name}: {'words' if words else 'segments'}"
         assert_timeline(spans, clip.duration, what)
         start, end = clip.turns[0].start, clip.turns[-1].end
-        print(f"{backend} on {clip.name}: speech {start:.2f}-{end:.2f} s, {what} {spans[0][0]:.2f}-{spans[-1][1]:.2f} s")
+        print(
+            f"{backend} on {clip.name}: speech {start:.2f}-{end:.2f} s, {what} {spans[0][0]:.2f}-{spans[-1][1]:.2f} s"
+        )
         assert abs(spans[0][0] - start) <= FIRST_WORD_TOLERANCE, f"{what} start at {spans[0][0]:.2f} s, not {start} s"
         in_silence = [span for span in spans if span[0] < start - PADDING or span[1] > end + PADDING + END_TOLERANCE]
         assert not in_silence, f"{what} in the silence: {in_silence} (speech {start:.2f}-{end:.2f} s)"
