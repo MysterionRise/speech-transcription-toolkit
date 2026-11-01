@@ -15,8 +15,10 @@ from tests.integration.wer import edit_distance, normalize
 SAMPLE_NAMES = ["speech", "dialogue"]
 CTC_MODEL = "facebook/wav2vec2-base-960h"  # 95M parameters, English; upper case, no punctuation
 TEXT_MODEL = "moonshine-ai/moonshine-tiny"  # 27M parameters, English; text only
-# The highest word error rate accepted for these models; openai/whisper-tiny's is MAX_WER["transformers"].
-MODEL_MAX_WER = {CTC_MODEL: 0.3, TEXT_MODEL: 0.3}
+# The highest word error rate accepted for these models; openai/whisper-tiny's is MAX_WER["transformers"]. wav2vec2
+# mishears two of the speech sample's 8 words in flite's synthetic voice ("HILLO WHIRLED") and 4 of the dialogue's 27
+# (WER 0.25 and 0.15): 0.4 leaves room for one more error in the short sample. Moonshine gets the speech sample right.
+MODEL_MAX_WER = {CTC_MODEL: 0.4, TEXT_MODEL: 0.25}
 
 
 def assert_model_wer(transcript: str, sample: Sample, model: str) -> None:
