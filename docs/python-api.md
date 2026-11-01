@@ -139,8 +139,11 @@ transcriber.transcribe(int16_samples.astype(np.float32) / 32768)
 - `speaker_segments`: with diarization, the segments with a `speaker` label each, and a `segment_id`: the `id` of
   the segment in `segments` each one comes from. Otherwise `None`.
 - `raw`: other backend output. faster-whisper also keeps `duration` and `language_probability` here, as before.
-- `render(fmt="txt", max_line_width=None)`: the result as txt, srt, vtt or json text.
-- `save(path, fmt=None, max_line_width=None)`: writes the rendered result, taking the format from the extension.
+- `render(fmt="txt", max_line_width=None, *, ...)`: the result as txt, srt, vtt, json, tsv or rttm text. The
+  keyword-only options are `max_lines`, `max_cue_duration`, `speaker_names`, `timestamps`, `word_level` and
+  `file_id`; see [Output options](formats.md#output-options).
+- `save(path, fmt=None, max_line_width=None, *, ...)`: writes the rendered result, taking the format from the
+  extension.
 - `to_dict()`: the result as a dict, as the JSON output has it.
 
 See [Output formats](formats.md) for what each format contains.

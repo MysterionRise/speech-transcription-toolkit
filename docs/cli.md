@@ -4,9 +4,10 @@
 
 ```bash
 transcribe audio.mp3                           # transcript to stdout
-transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json)
+transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json, tsv, rttm)
 transcribe recordings/ --outdir out -f vtt     # every audio file in a folder
 transcribe recordings/ -f srt,json --skip-existing  # two formats; resume a stopped run
+transcribe --from-json audio.json -f vtt --word-level  # a saved result in another format, no model
 cat audio.mp3 | transcribe -                   # audio from standard input
 transcribe audio.mp3 -m large-v3 -l de         # another model, known language
 transcribe audio.mp3 -t translate -m large-v3  # translate to English (turbo can't translate)
@@ -20,7 +21,7 @@ Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` 
 **Better results:**
 - `--prompt "Kubernetes, Grafana"` helps spell names and jargon.
 - `--vad` skips silence, which stops made-up text in quiet parts (faster-whisper, the default backend).
-- `--max-line-width 42` splits subtitles into readable lines.
+- `--max-line-width 42` splits subtitles into readable lines, and `--max-cue-duration 6` keeps cues short.
 - `--word-timestamps` adds per-word timings to JSON.
 
 ### Several files and formats
@@ -41,7 +42,10 @@ How batch mode works:
   other disks to hold a file's metadata. `.ts` files aren't picked up, since most are TypeScript. To transcribe one of
   these, name it on the command line, like any other file ffmpeg can decode.
 - **Formats:** `-f srt,json` (several, separated by commas) or `-f all` writes a file per format, all from one
-  transcription of each input.
+  transcription of each input. `-f all` writes rttm only with `--diarize`; see [Output formats](formats.md).
+- **Saved results:** with `--from-json`, the inputs are results saved as JSON, and folders are searched for `.json`
+  files. They are written in the formats asked for without transcribing, so no model loads; see
+  [Rendering a saved result again](formats.md#rendering-a-saved-result-again).
 - **Output location:**
   - With `--outdir`, outputs go into that folder and mirror the input folder structure.
   - Without it, each output is written next to its input.
@@ -96,11 +100,17 @@ text in any language can be saved; set `PYTHONIOENCODING` to choose another enco
 | `-v`, `--verbose` | Also show debug messages: what is decoded, transcribed and labelled, and how long it took. Can't be combined with `-q`. |
 | `--log-level LEVEL` | Show messages from this level up: `debug`, `info`, `warning` or `error` (default: `info`; `warning` with `-q`, `debug` with `-v`). |
 | `-o`, `--output FILE` | Write the transcript to this file instead of stdout; its extension picks the format. |
-| `-f`, `--format` | `txt`, `srt`, `vtt` or `json` (default: from the `--output` extension, else txt). Several separated by commas (`srt,json`), or `all`, write a file each from one transcription. See [Output formats](formats.md). |
+| `-f`, `--format` | `txt`, `srt`, `vtt`, `json`, `tsv` or `rttm` (default: from the `--output` extension, else txt; rttm needs `--diarize`). Several separated by commas (`srt,json`), or `all` (rttm only with `--diarize`), write a file each from one transcription. See [Output formats](formats.md). |
 | `--outdir DIR` | Write each input's output files into this folder. |
 | `--json FILE` | Also write the full result as JSON to this file (a single input; for several, add `json` to `-f`). |
 | `--skip-existing` | Keep output files that already exist: transcribe only the inputs with an output missing, and write just the missing ones (default: overwrite them). |
+| `--from-json` | The inputs are results saved as JSON (by `--json` or `-f json`), not audio: write them in the formats asked for without transcribing, so no model loads. Folders are searched for `.json` files. See [Rendering a saved result again](formats.md#rendering-a-saved-result-again). |
 | `--max-line-width N` | Split subtitles into lines of at most N columns, 2 lines per cue (srt, vtt). Chinese, Japanese and Korean characters take two columns. |
+| `--max-lines N` | With `--max-line-width`, at most N lines per cue (default: 2). |
+| `--max-cue-duration SECONDS` | Split subtitle cues that would last longer than SECONDS (srt, vtt). See [Cue length](formats.md#cue-length). |
+| `--speaker-names NAMES` | Rename the speakers in the order they first speak, such as `"Alice,Bob"`, in every format; an empty name keeps that speaker's label (with `--diarize`, or `--from-json`). See [Speaker names](formats.md#speaker-names). |
+| `--timestamps` | txt: one line per segment, starting with its time: `[00:01:02] text`. |
+| `--word-level` | vtt: mark when each word starts, with `<00:00:01.200>` tags, so players can highlight the words as they are spoken. Turns on word timestamps. See [Word-level WebVTT](formats.md#word-level-webvtt). |
 | `--prompt TEXT` | Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper). |
 | `--vad` | Skip silence before transcribing (faster-whisper). |
 | `--word-timestamps` | Add per-word timings to the JSON output (whisper, faster-whisper, parakeet). |

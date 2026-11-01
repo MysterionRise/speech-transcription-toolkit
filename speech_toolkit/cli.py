@@ -38,6 +38,7 @@ import argparse
 import contextlib
 import dataclasses
 import logging
+import math
 import os
 import pathlib
 import sys
@@ -58,10 +59,11 @@ from .backends import (
     list_backends,
     parse_device,
 )
+from .backends.base import TranscriptionResult
 from .backends.config import describe_devices
 from .diarization import check_speaker_hints
 from .errors import SpeechToolkitError, UnsupportedOptionError
-from .formats import FORMATS, format_for_path, write_text
+from .formats import FORMATS, SPEAKER_FORMATS, format_for_path, write_text
 from .media import MEDIA_EXTENSIONS, collect_files
 
 # Errors whose message says what went wrong, so it is shown alone. In a batch, any other Exception also fails only
@@ -71,6 +73,28 @@ FILE_ERRORS = (SpeechToolkitError, OSError, RuntimeError, ValueError)
 STDIN = pathlib.Path("-")
 """The input ``-``: audio piped into standard input. With --outdir, its outputs are named ``stdin.<format>``."""
 STDIN_NAME = "stdin"
+
+JSON_EXTENSIONS = frozenset({".json"})
+"""What --from-json picks up in folders: results saved as JSON."""
+
+# The options that change what is transcribed, as (dest, flag): --from-json, which transcribes nothing, refuses them.
+TRANSCRIPTION_OPTIONS = (
+    ("backend", "--backend"),
+    ("model", "--model"),
+    ("device", "--device"),
+    ("compute_type", "--compute-type"),
+    ("options", "-O"),
+    ("language", "--language"),
+    ("task", "--task"),
+    ("hf_token", "--hf-token"),
+    ("prompt", "--prompt"),
+    ("vad", "--vad"),
+    ("word_timestamps", "--word-timestamps"),
+    ("diarize", "--diarize"),
+    ("num_speakers", "--num-speakers"),
+    ("min_speakers", "--min-speakers"),
+    ("max_speakers", "--max-speakers"),
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,6 +123,14 @@ def positive_int(value: str) -> int:
     number = int(value)
     if number <= 0:
         raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return number
+
+
+def positive_float(value: str) -> float:
+    """argparse type for numbers greater than zero, such as 7 or 2.5."""
+    number = float(value)
+    if not (math.isfinite(number) and number > 0):
+        raise argparse.ArgumentTypeError(f"must be a positive number, got {value}")
     return number
 
 
@@ -230,13 +262,32 @@ def is_stdin(path: pathlib.Path) -> bool:
 
 
 def format_list(value: str) -> Tuple[str, ...]:
-    """argparse type for --format: a format, several separated by commas (``srt,json``), or ``all`` of them."""
+    """argparse type for --format: a format, several separated by commas (``srt,json``), or ``all`` of them.
+
+    ``all`` stays in the list, as it stands for formats that depend on other options: see expand_formats().
+    """
     names = [name.strip().lower() for name in value.split(",") if name.strip()]
     if not names or any(name not in FORMATS and name != "all" for name in names):
         raise argparse.ArgumentTypeError(
             f"invalid format {value!r}: choose from {', '.join(FORMATS)}, several separated by commas, or all"
         )
-    return tuple(FORMATS) if "all" in names else tuple(dict.fromkeys(names))
+    return tuple(dict.fromkeys(names))
+
+
+def expand_formats(names: Optional[Sequence[str]], diarize: bool) -> Optional[Tuple[str, ...]]:
+    """The formats of --format, with ``all`` standing for every format, but for the ones that need speaker labels
+    (rttm) unless *diarize* or the list names them too. None (no --format) stays None."""
+    if names is None or "all" not in names:
+        return None if names is None else tuple(names)
+    return tuple(fmt for fmt in FORMATS if diarize or fmt in names or fmt not in SPEAKER_FORMATS)
+
+
+def speaker_names_arg(value: str) -> Tuple[str, ...]:
+    """argparse type for --speaker-names: names separated by commas; an empty one keeps that speaker's label."""
+    names = tuple(name.strip() for name in value.split(","))
+    if not any(names):
+        raise argparse.ArgumentTypeError(f"expected names separated by commas, such as Alice,Bob, got {value!r}")
+    return names
 
 
 def add_output_options(parser: argparse.ArgumentParser) -> None:
@@ -248,8 +299,9 @@ def add_output_options(parser: argparse.ArgumentParser) -> None:
         "--format",
         type=format_list,
         metavar="FORMAT",
-        help=f"Output format: {', '.join(FORMATS)}. Several separated by commas (srt,json), or all, write a file "
-        "each from one transcription (default: from the --output extension, else txt).",
+        help=f"Output format: {', '.join(FORMATS)} (rttm needs --diarize). Several separated by commas (srt,json), "
+        "or all (rttm only with --diarize), write a file each from one transcription (default: from the --output "
+        "extension, else txt).",
     )
     output.add_argument("--outdir", type=pathlib.Path, help="Write each input's output files into this folder.")
     output.add_argument(
@@ -265,11 +317,47 @@ def add_output_options(parser: argparse.ArgumentParser) -> None:
         "just the missing ones (default: overwrite them).",
     )
     output.add_argument(
+        "--from-json",
+        action="store_true",
+        help="The inputs are results saved as JSON (by --json or -f json), not audio: write them in the formats "
+        "asked for without transcribing, so no model loads. Folders are searched for .json files.",
+    )
+    output.add_argument(
         "--max-line-width",
         type=positive_int,
         metavar="N",
         help="Split subtitles into lines of at most N columns, 2 lines per cue (srt/vtt). Chinese, Japanese and "
         "Korean characters take two columns.",
+    )
+    output.add_argument(
+        "--max-lines",
+        type=positive_int,
+        metavar="N",
+        help="With --max-line-width, at most N lines per cue (default: 2).",
+    )
+    output.add_argument(
+        "--max-cue-duration",
+        type=positive_float,
+        metavar="SECONDS",
+        help="Split subtitle cues that would last longer than this many seconds (srt/vtt).",
+    )
+    output.add_argument(
+        "--speaker-names",
+        type=speaker_names_arg,
+        metavar="NAMES",
+        help='Rename the speakers in the order they first speak, such as "Alice,Bob", in every format; an empty name '
+        "keeps that speaker's label (with --diarize, or --from-json).",
+    )
+    output.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="txt: one line per segment, starting with its time: [00:01:02] text.",
+    )
+    output.add_argument(
+        "--word-level",
+        action="store_true",
+        help="vtt: mark when each word starts, with <00:00:01.200> tags, so players can highlight the words as they "
+        "are spoken. Turns on word timestamps.",
     )
 
 
@@ -337,7 +425,8 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
     """Reject option combinations that can't work (exits via parser.error), before any model loads."""
     if not args.audio:
         parser.error("the following arguments are required: audio")
-    problem = output_problem(args)
+    args.format = expand_formats(args.format, args.diarize)
+    problem = output_problem(args) or rendering_problem(parser, args)
     if problem:
         parser.error(problem)
     try:
@@ -361,6 +450,21 @@ def output_problem(args: argparse.Namespace) -> Optional[str]:
         return "--json takes a single input file; for one JSON file per input, add json to --format (-f srt,json)"
     if stdin and is_batch(args) and args.outdir is None:
         return f"several formats from standard input need --outdir, where they are named {STDIN_NAME}.<format>"
+    return None
+
+
+def rendering_problem(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Optional[str]:
+    """Why the rendering options, and --from-json, don't fit the other options, or None when they do."""
+    if args.max_lines and not args.max_line_width:
+        return "--max-lines needs --max-line-width: cues are split into lines to a width"
+    if args.speaker_names and not (args.diarize or args.from_json):
+        return "--speaker-names renames the speakers --diarize labels, so it needs --diarize (or --from-json)"
+    if args.from_json:
+        if any(is_stdin(path) for path in args.audio):
+            return "--from-json reads results saved in files, not standard input"
+        given = [flag for dest, flag in TRANSCRIPTION_OPTIONS if getattr(args, dest) != parser.get_default(dest)]
+        if given:
+            return f"--from-json writes saved results without transcribing, so it doesn't take {', '.join(given)}"
     return None
 
 
@@ -391,7 +495,7 @@ def plan_outputs(args: argparse.Namespace, formats: Sequence[str]) -> List[Job]:
     if is_stdin(args.audio[0]):
         files = [(args.audio[0], pathlib.Path(STDIN_NAME))]
     else:
-        files = collect_files(args.audio, MEDIA_EXTENSIONS)
+        files = collect_files(args.audio, JSON_EXTENSIONS if args.from_json else MEDIA_EXTENSIONS)
     # An input's outputs are named after it, each with its format's extension: talk.mp3 gives talk.srt and talk.json.
     bases = [(args.outdir / rel if args.outdir else src).with_suffix("") for src, rel in files]
     # talk.mp3 and talk.wav would share theirs; keep the full name for those (talk.mp3.srt).
@@ -437,9 +541,12 @@ def load_transcriber(args: argparse.Namespace) -> Transcriber:
 def word_timestamps_option(
     args: argparse.Namespace, formats: AbstractSet[str], transcriber: Transcriber
 ) -> Optional[bool]:
-    """--word-timestamps forces word timings; subtitle line splitting uses them when the backend has them."""
-    splits_lines = args.max_line_width and not formats.isdisjoint({"srt", "vtt"})
-    if args.word_timestamps or (splits_lines and transcriber.supports("word_timestamps")):
+    """--word-timestamps forces word timings, and so does --word-level for vtt (the library warns if the backend has
+    none); splitting subtitle cues to a width or a duration uses them when the backend has them."""
+    splits_cues = (args.max_line_width or args.max_cue_duration) and not formats.isdisjoint({"srt", "vtt"})
+    if args.word_timestamps or (args.word_level and "vtt" in formats):
+        return True
+    if splits_cues and transcriber.supports("word_timestamps"):
         return True
     return None  # the library's default: on for diarization
 
@@ -459,6 +566,25 @@ def write_output(text: str, dest: Optional[pathlib.Path], stdout: TextIO) -> Non
         temporary.replace(dest)
     finally:
         temporary.unlink(missing_ok=True)  # already gone once renamed
+
+
+def recording_id(audio: pathlib.Path) -> str:
+    """The name rttm lines give the recording: its file name without the extension, or ``stdin``."""
+    return STDIN_NAME if is_stdin(audio) else audio.stem
+
+
+def render_output(args: argparse.Namespace, result: TranscriptionResult, fmt: str, audio: pathlib.Path) -> str:
+    """*result* of the input *audio*, in format *fmt*, with the output options of *args*."""
+    return result.render(
+        fmt,
+        args.max_line_width,
+        max_lines=args.max_lines,
+        max_cue_duration=args.max_cue_duration,
+        speaker_names=args.speaker_names,
+        timestamps=args.timestamps,
+        word_level=args.word_level,
+        file_id=recording_id(audio),
+    )
 
 
 def pending_outputs(job: Job, skip_existing: bool) -> Tuple[Output, ...]:
@@ -522,7 +648,8 @@ def load_or_exit(args: argparse.Namespace) -> Transcriber:
 def run_jobs(args: argparse.Namespace, jobs: List[Job], stdout: TextIO) -> Summary:
     """Transcribe every job and write its outputs, carrying on after any per-file error. Returns the summary.
 
-    The model loads before the first transcription, so a run with nothing left to do (--skip-existing) loads none.
+    The model loads before the first transcription, so a run with nothing left to do (--skip-existing) loads none;
+    with --from-json, none loads: each input is a saved result, loaded instead.
     In batch mode, each input gets an ``[i/N]`` line on stderr and the run a summary at the end; -q hides them.
     Ctrl-C stops the run and shows the summary; the files written so far are complete.
     """
@@ -539,7 +666,7 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], stdout: TextIO) -> Summa
             if not outputs:
                 summary.skipped += 1
                 continue
-            if transcriber is None:
+            if transcriber is None and not args.from_json:
                 transcriber = load_or_exit(args)
                 word_timestamps = word_timestamps_option(args, formats, transcriber)
             if transcribe_job(args, transcriber, job.audio, outputs, word_timestamps, stdout):
@@ -555,28 +682,32 @@ def run_jobs(args: argparse.Namespace, jobs: List[Job], stdout: TextIO) -> Summa
 
 def transcribe_job(
     args: argparse.Namespace,
-    transcriber: Transcriber,
+    transcriber: Optional[Transcriber],
     audio: pathlib.Path,
     outputs: Sequence[Output],
     word_timestamps: Optional[bool],
     stdout: TextIO,
 ) -> bool:
-    """Transcribe *audio* (standard input for STDIN) and write each of *outputs*. Returns False after an error."""
+    """Transcribe *audio* (standard input for STDIN), or without a *transcriber* (--from-json) load the result saved
+    in it, and write each of *outputs*. Returns False after an error."""
     try:
-        result = transcriber.transcribe(
-            sys.stdin.buffer if is_stdin(audio) else audio,
-            args.language,
-            args.task,
-            prompt=args.prompt,
-            vad=args.vad,
-            word_timestamps=word_timestamps,
-            num_speakers=args.num_speakers,
-            min_speakers=args.min_speakers,
-            max_speakers=args.max_speakers,
-            verbose=not args.quiet,
-        )
+        if transcriber is None:
+            result = TranscriptionResult.load(audio)
+        else:
+            result = transcriber.transcribe(
+                sys.stdin.buffer if is_stdin(audio) else audio,
+                args.language,
+                args.task,
+                prompt=args.prompt,
+                vad=args.vad,
+                word_timestamps=word_timestamps,
+                num_speakers=args.num_speakers,
+                min_speakers=args.min_speakers,
+                max_speakers=args.max_speakers,
+                verbose=not args.quiet,
+            )
         for output in outputs:
-            write_output(result.render(output.fmt, args.max_line_width), output.path, stdout)
+            write_output(render_output(args, result, output.fmt, audio), output.path, stdout)
             if output.path is not None and not args.quiet:
                 print(f"→ {output.path}", file=sys.stderr)
     except Exception as e:  # one bad file doesn't stop the batch; KeyboardInterrupt isn't an Exception
@@ -759,6 +890,33 @@ def check_inputs(jobs: Sequence[Job]) -> None:
         sys.exit("Error: - reads audio piped into standard input, as in: cat talk.mp3 | transcribe -")
 
 
+def check_outputs(args: argparse.Namespace, jobs: Sequence[Job]) -> None:
+    """Exit unless every output can be written: rttm needs speaker labels, and --from-json doesn't replace a file it
+    reads (unless --skip-existing keeps it)."""
+    formats = {output.fmt for job in jobs for output in job.outputs}
+    if not (args.diarize or args.from_json) and not formats.isdisjoint(SPEAKER_FORMATS):
+        sys.exit("Error: rttm lists the speaker turns --diarize finds, so it needs --diarize")
+    if args.from_json and not args.skip_existing:
+        sources = {_file_identity(job.audio) for job in jobs}
+        replaced = [
+            str(output.path)
+            for job in jobs
+            for output in job.outputs
+            if output.path is not None and output.path.exists() and _file_identity(output.path) in sources
+        ]
+        if replaced:
+            sys.exit(
+                f"Error: --from-json would replace a result it reads: {', '.join(replaced)}. "
+                "Use --outdir, or leave json out of -f."
+            )
+
+
+def _file_identity(path: pathlib.Path) -> Tuple[int, int]:
+    """What tells whether two paths name the same file: its device and inode numbers."""
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -780,8 +938,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         formats = args.format or (format_for_path(args.output),)
         jobs = plan_outputs(args, formats)
         if not jobs:
-            sys.exit("Error: no audio files found.")
+            sys.exit(f"Error: no {'JSON' if args.from_json else 'audio'} files found.")
         check_inputs(jobs)  # before the (slow) model load
+        check_outputs(args, jobs)
         summary = run_jobs(args, jobs, stdout)
     if summary.interrupted:
         sys.exit(130)  # the exit status of a program stopped by Ctrl-C
