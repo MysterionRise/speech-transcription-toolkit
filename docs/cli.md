@@ -19,7 +19,8 @@ Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` 
 
 **Better results:**
 - `--prompt "Kubernetes, Grafana"` helps spell names and jargon.
-- `--vad` skips silence, which stops made-up text in quiet parts (faster-whisper, the default backend).
+- `--vad` skips silence, which stops made-up text in quiet parts (every backend; see
+  [Voice activity detection](backends.md#voice-activity-detection)).
 - `--max-line-width 42` splits subtitles into readable lines.
 - `--word-timestamps` adds per-word timings to JSON.
 
@@ -102,7 +103,7 @@ text in any language can be saved; set `PYTHONIOENCODING` to choose another enco
 | `--skip-existing` | Keep output files that already exist: transcribe only the inputs with an output missing, and write just the missing ones (default: overwrite them). |
 | `--max-line-width N` | Split subtitles into lines of at most N columns, 2 lines per cue (srt, vtt). Chinese, Japanese and Korean characters take two columns. |
 | `--prompt TEXT` | Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper). |
-| `--vad` | Skip silence before transcribing (faster-whisper). |
+| `--vad` | Transcribe only the speech, skipping silence; the `vad_` options (`-O`) tune it. |
 | `--word-timestamps` | Add per-word timings to the JSON output (whisper, faster-whisper, parakeet). |
 | `--diarize` | Label speakers with pyannote.audio. See [Speaker labels](diarization.md). |
 | `--num-speakers N` | Exact number of speakers, if known (needs `--diarize`). |

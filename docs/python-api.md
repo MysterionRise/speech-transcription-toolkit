@@ -40,7 +40,7 @@ content, a file object or the samples, see [Audio input](#audio-input). Keyword 
 | Option | Meaning |
 |---|---|
 | `prompt` | Names, terms or a sample sentence that guide spelling. |
-| `vad` | Skip silence first. |
+| `vad` | Transcribe only the speech, skipping silence; see [Voice activity detection](backends.md#voice-activity-detection). |
 | `word_timestamps` | Add per-word timings. Defaults to on when diarizing, so the speaker can change mid-segment. |
 | `num_speakers`, `min_speakers`, `max_speakers` | Speaker-count hints; need `diarize=True`. |
 | `progress` | A function called with a `ProgressEvent` as the work advances, with each segment; see [Progress](#progress). |

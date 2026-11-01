@@ -138,6 +138,7 @@ class BackendOption:
         help: What it does, in a sentence, for ``--list-backends`` and the docs.
         choices: The values it takes, if only some are allowed.
         minimum: The smallest value it takes, for a number.
+        maximum: The largest value it takes, for a number.
     """
 
     type: type
@@ -145,6 +146,7 @@ class BackendOption:
     help: str
     choices: Tuple[Any, ...] = ()
     minimum: Optional[float] = None
+    maximum: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.type not in _TYPES:
@@ -178,6 +180,8 @@ class BackendOption:
             raise UnsupportedOptionError(f"option {name} takes {self.metavar}, not {value!r}")
         if self.minimum is not None and cast(float, value) < self.minimum:  # a number: only numbers have a minimum
             raise UnsupportedOptionError(f"option {name} must be at least {self.minimum:g}, not {value!r}")
+        if self.maximum is not None and cast(float, value) > self.maximum:
+            raise UnsupportedOptionError(f"option {name} must be at most {self.maximum:g}, not {value!r}")
         return value
 
     def _from_text(self, text: str, name: str) -> Any:

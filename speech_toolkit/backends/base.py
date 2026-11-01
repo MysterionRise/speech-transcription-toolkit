@@ -44,8 +44,8 @@ class ProgressEvent:
 
     Attributes:
         stage: ``"decode"``, ``"transcribe"`` or ``"diarize"``, in that order. ``"decode"`` is reported when the
-            Transcriber decodes the audio itself (in-memory input, or a path with speaker labels and a backend that
-            takes samples), ``"diarize"`` only with speaker labels.
+            Transcriber decodes the audio itself (in-memory input, or a path with speaker labels or ``vad`` and a
+            backend that takes samples), ``"diarize"`` only with speaker labels.
         done: Seconds of the audio this stage has processed. Within a stage it never decreases and never exceeds
             *total*, and the stage's last event has ``done == total``.
         total: The audio's length in seconds, or None until it is known.
@@ -384,7 +384,8 @@ class TranscriptionBackend(ABC):
     Optional features, which the backend accepts as keyword-only arguments of ``transcribe()``:
 
     - ``"prompt"`` (``prompt: str``): names, terms or a sample sentence that guide the transcript.
-    - ``"vad"`` (``vad: bool``): skip silence (voice activity detection) before transcribing.
+    - ``"vad"`` (``vad: bool``): skip silence (voice activity detection) before transcribing. :mod:`speech_toolkit.vad`
+      has the shared detector the built-in backends use.
     - ``"word_timestamps"`` (``word_timestamps: bool``): give each segment a ``"words"`` list of
       ``{"word": " Hello", "start": 0.0, "end": 0.4}`` dicts (Whisper's format; ``"probability"`` optional).
 

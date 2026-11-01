@@ -100,7 +100,7 @@ class TestDeclarations:
         [
             (
                 WhisperBackend,
-                {"translate", "language_detection", "prompt", "word_timestamps", "waveform"},
+                {"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"},
                 ("whisper",),
             ),
             (
@@ -108,9 +108,9 @@ class TestDeclarations:
                 {"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"},
                 ("faster_whisper",),
             ),
-            (VoxtralBackend, {"waveform"}, ("torch", "transformers", "mistral_common")),
-            (ParakeetBackend, {"word_timestamps", "waveform"}, ("torch", "transformers", "librosa")),
-            (CanaryBackend, {"translate", "waveform"}, ("torch", "transformers", "librosa")),
+            (VoxtralBackend, {"vad", "waveform"}, ("torch", "transformers", "mistral_common")),
+            (ParakeetBackend, {"vad", "word_timestamps", "waveform"}, ("torch", "transformers", "librosa")),
+            (CanaryBackend, {"translate", "vad", "waveform"}, ("torch", "transformers", "librosa")),
         ],
     )
     def test_builtin_backends(self, backend_class, capabilities, requires):
@@ -127,12 +127,12 @@ class TestDeclarations:
         assert backends_with("translate") == ["whisper", "faster-whisper", "canary"]
         assert backends_with("language_detection") == ["whisper", "faster-whisper"]
         assert backends_with("prompt") == ["whisper", "faster-whisper"]
-        assert backends_with("vad") == ["faster-whisper"]
+        assert backends_with("vad") == ["whisper", "faster-whisper", "voxtral", "parakeet", "canary"]
         assert backends_with("word_timestamps") == ["whisper", "faster-whisper", "parakeet"]
         assert backends_with("telepathy") == []
 
     def test_backends_with_includes_registered_backends(self, transcribe_only):
-        assert backends_with("vad") == ["faster-whisper", "fake-words"]
+        assert backends_with("vad") == ["whisper", "faster-whisper", "voxtral", "parakeet", "canary", "fake-words"]
         assert "transcribe-only" not in backends_with("translate")
 
     def test_supports(self, fake_backend):
@@ -184,11 +184,11 @@ class TestListBackends:
         backends = listing(capsys.readouterr().out)
 
         assert {name: fields["Capabilities"] for name, fields in backends.items()} == {
-            "whisper": "translate, language detection, prompt, word timestamps",
+            "whisper": "translate, language detection, prompt, vad, word timestamps",
             "faster-whisper": "translate, language detection, prompt, vad, word timestamps",
-            "voxtral": "transcription only",
-            "parakeet": "word timestamps",
-            "canary": "translate",
+            "voxtral": "vad",
+            "parakeet": "vad, word timestamps",
+            "canary": "translate, vad",
         }
         assert backends["whisper"]["Models"].endswith("large-v3-turbo, turbo")
 
@@ -339,7 +339,7 @@ class TestHelpText:
         text = help_text(capsys, monkeypatch)
 
         assert self.backends_in_help(text, "--prompt") == "whisper, faster-whisper"
-        assert self.backends_in_help(text, "--vad") == "faster-whisper"
+        assert self.backends_in_help(text, "--vad") == "whisper, faster-whisper, voxtral, parakeet, canary"
         assert self.backends_in_help(text, "--word-timestamps") == "whisper, faster-whisper, parakeet"
         assert f"Backends that translate: {TRANSLATORS}." in text
 
@@ -355,7 +355,7 @@ class TestHelpText:
 
         text = help_text(capsys, monkeypatch)
 
-        assert self.backends_in_help(text, "--vad") == "no backend"
+        assert self.backends_in_help(text, "--prompt") == "no backend"
         assert "Backends that translate: no backend." in text
 
     def test_server_reuses_the_model_options(self, capsys, monkeypatch):

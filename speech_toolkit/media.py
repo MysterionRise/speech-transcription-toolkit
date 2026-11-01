@@ -342,27 +342,41 @@ def _shown(message: str, url: str) -> str:
 
 
 def split_audio(
-    audio: "np.ndarray", max_seconds: float, sr: int = SAMPLE_RATE, search_seconds: float = 5.0
+    audio: "np.ndarray",
+    max_seconds: float,
+    sr: int = SAMPLE_RATE,
+    search_seconds: float = 5.0,
+    *,
+    regions: Optional[Iterable[Tuple[float, float]]] = None,
 ) -> List[Tuple[float, "np.ndarray"]]:
     """Cut *audio* into chunks of at most *max_seconds*, as ``(start time in seconds, samples)`` pairs.
 
     Each cut goes in the quietest 100 ms of the last *search_seconds* before the limit, so words
     are rarely chopped in half.
+
+    *regions* keeps only those stretches of the audio: ``(start, end)`` pairs in seconds, in order and not
+    overlapping, such as the stretches of speech :func:`speech_toolkit.vad.detect_speech` finds. Each is cut as the
+    whole audio would be, so a chunk starts and ends inside one, and the audio between them is in no chunk. An empty
+    list gives no chunks; None (the default) cuts all of the audio.
     """
     import numpy as np
 
     max_len = int(max_seconds * sr)
     window = int(0.1 * sr)
     search = min(int(search_seconds * sr), max_len // 2)
+    if regions is None:
+        spans = [(0, len(audio))]
+    else:
+        spans = [(max(0, round(start * sr)), min(len(audio), round(end * sr))) for start, end in regions]
     chunks: List[Tuple[float, "np.ndarray"]] = []
-    start = 0
-    while len(audio) - start > max_len:
-        region = audio[start + max_len - search : start + max_len]
-        frames = len(region) // window
-        energy = np.square(region[: frames * window]).reshape(frames, window).mean(axis=1)
-        cut = start + max_len - search + int(np.argmin(energy)) * window + window // 2
-        chunks.append((start / sr, audio[start:cut]))
-        start = cut
-    if len(audio) > start:
-        chunks.append((start / sr, audio[start:]))
+    for start, end in spans:
+        while end - start > max_len:
+            region = audio[start + max_len - search : start + max_len]
+            frames = len(region) // window
+            energy = np.square(region[: frames * window]).reshape(frames, window).mean(axis=1)
+            cut = start + max_len - search + int(np.argmin(energy)) * window + window // 2
+            chunks.append((start / sr, audio[start:cut]))
+            start = cut
+        if end > start:
+            chunks.append((start / sr, audio[start:end]))
     return chunks

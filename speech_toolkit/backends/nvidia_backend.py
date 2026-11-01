@@ -48,7 +48,7 @@ class ParakeetBackend(_NvidiaBackend):
     name = "parakeet"
     description = "NVIDIA Parakeet TDT - fast, accurate English/European speech-to-text with word timestamps"
     # No "language_detection": v3 detects the language internally but can't report it.
-    capabilities = frozenset({"word_timestamps", "waveform"})
+    capabilities = frozenset({"vad", "word_timestamps", "waveform"})
 
     MODELS = {
         "parakeet-tdt-0.6b-v3": "nvidia/parakeet-tdt-0.6b-v3",  # 25 European languages, detected automatically
@@ -65,6 +65,7 @@ class ParakeetBackend(_NvidiaBackend):
         task: str = "transcribe",
         verbose: bool = True,
         *,
+        vad: bool = False,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio with Parakeet; segments end at sentences or pauses.
@@ -76,6 +77,8 @@ class ParakeetBackend(_NvidiaBackend):
             task: Only 'transcribe' is supported.
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. How far it got is also passed to
                 report_progress() after each chunk, whatever *verbose* is.
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                chunks are cut at its edges, and audio without speech reaches no model.
             word_timestamps: Keep each segment's per-word timings ("words").
 
         Raises:
@@ -95,7 +98,7 @@ class ParakeetBackend(_NvidiaBackend):
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
-        chunks = split_audio(audio, self.CHUNK_SECONDS)
+        chunks = split_audio(audio, self.CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
         words: List[Dict[str, Any]] = []
         for number, (offset, samples) in enumerate(chunks, start=1):
             words += self._transcribe_chunk(samples, offset)
@@ -133,7 +136,7 @@ class CanaryBackend(_NvidiaBackend):
     name = "canary"
     description = "NVIDIA Canary - multilingual speech-to-text and translation to English (25 European languages)"
     # No "language_detection": it needs the language, else assumes English.
-    capabilities = frozenset({"translate", "waveform"})
+    capabilities = frozenset({"translate", "vad", "waveform"})
 
     MODELS = {"canary-1b-v2": "nvidia/canary-1b-v2"}
     MODEL_CLASS = "CanaryForConditionalGeneration"
@@ -149,6 +152,8 @@ class CanaryBackend(_NvidiaBackend):
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
+        *,
+        vad: bool = False,
     ) -> TranscriptionResult:
         """Transcribe (or translate to English) audio with Canary.
 
@@ -158,6 +163,9 @@ class CanaryBackend(_NvidiaBackend):
             task: 'transcribe', or 'translate' to English.
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. The segments of each batch of chunks
                 are also passed to report_progress(), whatever *verbose* is.
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                chunks are cut at its edges, so each stretch of speech gets segments of its own, and audio without
+                speech reaches no model.
 
         Returns:
             TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches the
@@ -173,7 +181,7 @@ class CanaryBackend(_NvidiaBackend):
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
-        chunks = split_audio(audio, self.CHUNK_SECONDS)
+        chunks = split_audio(audio, self.CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
         for first in range(0, len(chunks), self.BATCH_SIZE):

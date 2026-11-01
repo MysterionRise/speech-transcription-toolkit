@@ -54,6 +54,7 @@ nav:
       - Errors and warnings: reference/errors.md
       - Backends: reference/backends.md
       - Decoding audio: reference/media.md
+      - Voice activity detection: reference/vad.md
       - Server: reference/server.md
   - Troubleshooting: troubleshooting.md
   - Development:

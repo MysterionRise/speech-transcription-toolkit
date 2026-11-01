@@ -47,6 +47,7 @@ from speech_toolkit.backends._transformers import torch_dtype
 from speech_toolkit.backends.config import check_device, describe_devices, model_source, parse_options
 from speech_toolkit.diarization import load_diarization_pipeline
 from speech_toolkit.server import parse_args as server_parse_args
+from speech_toolkit.vad import VAD_OPTIONS
 
 TRANSFORMERS_BACKENDS = [
     (ParakeetBackend, "ParakeetForTDT"),
@@ -60,6 +61,10 @@ REPO_ID = "someone/fine-tuned-model"
 def no_color(monkeypatch):
     """Python 3.14's argparse can colour help and errors; these tests match the plain text."""
     monkeypatch.setenv("PYTHON_COLORS", "0")
+
+
+# The vad_ options every built-in backend has, at their defaults.
+VAD_DEFAULTS = {name: option.default for name, option in VAD_OPTIONS.items()}
 
 
 @pytest.fixture
@@ -628,7 +633,7 @@ class TestComputeType:
         device = "cuda" if gpus else "cpu"
         ct2.ctranslate2.get_supported_compute_types.assert_called_once_with(device, 0)
         ct2.WhisperModel.assert_called_once_with("tiny", device=device, compute_type=chosen)
-        assert backend.options == {"compute_type": chosen, "cpu_threads": 0}
+        assert backend.options == {"compute_type": chosen, "cpu_threads": 0, **VAD_DEFAULTS}
 
     def test_auto_when_ctranslate2_cant_tell(self, ct2):
         ct2.ctranslate2.get_cuda_device_count.return_value = 1
@@ -674,7 +679,8 @@ class TestComputeType:
         whisper_module.load_model.assert_called_once_with("tiny", device=None)
         assert OldStyleBackend.calls == [("base", None)]
         with pytest.raises(
-            UnsupportedOptionError, match="^the whisper backend has no option 'compute_type'; it takes no"
+            UnsupportedOptionError,
+            match="^the whisper backend has no option 'compute_type'; its options: vad_threshold, vad_min_silence, vad_padding$",
         ):
             Transcriber("whisper", "tiny", compute_type="float16")
 
@@ -751,7 +757,8 @@ class TestOptions:
             cli.main([str(audio), "-O", "beam_size=5"])
 
         assert error.value.code == (
-            "Error: the faster-whisper backend has no option 'beam_size'; its options: compute_type, cpu_threads"
+            "Error: the faster-whisper backend has no option 'beam_size'; its options: compute_type, cpu_threads, "
+            "vad_threshold, vad_min_silence, vad_padding"
         )
         assert "Loading" not in capsys.readouterr().err
         ct2.WhisperModel.assert_not_called()
@@ -775,25 +782,27 @@ class TestOptions:
 
         transcriber = cli.load_transcriber(args)
 
-        assert transcriber.backend.options == {"compute_type": "int8", "cpu_threads": 6}
+        assert transcriber.backend.options == {"compute_type": "int8", "cpu_threads": 6, **VAD_DEFAULTS}
 
     def test_python_api_converts_text(self, ct2):
         transcriber = Transcriber(model="tiny", options={"cpu_threads": "3"})
 
-        assert transcriber.backend.options == {"compute_type": "int8", "cpu_threads": 3}
+        assert transcriber.backend.options == {"compute_type": "int8", "cpu_threads": 3, **VAD_DEFAULTS}
 
     def test_max_new_tokens(self, torch_modules):
         transcriber = Transcriber("canary", options={"max_new_tokens": "800"})
-        assert transcriber.backend.options == {"compute_type": "auto", "max_new_tokens": 800}
+        assert transcriber.backend.options == {"compute_type": "auto", "max_new_tokens": 800, **VAD_DEFAULTS}
 
         with pytest.raises(UnsupportedOptionError, match="max_new_tokens must be at least 1"):
             Transcriber("voxtral", options={"max_new_tokens": 0})
-        with pytest.raises(UnsupportedOptionError, match="its options: compute_type$"):
+        with pytest.raises(
+            UnsupportedOptionError, match="its options: compute_type, vad_threshold, vad_min_silence, vad_padding$"
+        ):
             Transcriber("parakeet", options={"max_new_tokens": 800})
 
     def test_defaults_before_loading(self):
-        assert CanaryBackend().options == {"compute_type": "auto", "max_new_tokens": 500}
-        assert WhisperBackend().options == {}
+        assert CanaryBackend().options == {"compute_type": "auto", "max_new_tokens": 500, **VAD_DEFAULTS}
+        assert WhisperBackend().options == VAD_DEFAULTS
         backend = FasterWhisperBackend()
         backend.options["cpu_threads"] = 9  # a copy
         assert backend.options["cpu_threads"] == 0
@@ -895,12 +904,15 @@ class TestListings:
         assert faster[6].startswith("-O cpu_threads=INT: Threads on the CPU;")
         assert faster[6].endswith("(default: 0)")
 
+        assert faster[7:] == [f"-O {name}=NUMBER: {option.describe()}" for name, option in VAD_OPTIONS.items()]
+
         whisper = backends["whisper"]
-        assert whisper[1] == "Capabilities: translate, language detection, prompt, word timestamps"
-        assert whisper[3:] == [
+        assert whisper[1] == "Capabilities: translate, language detection, prompt, vad, word timestamps"
+        assert whisper[3:5] == [
             "Custom models: a local checkpoint file (.pt)",
             "Devices: auto, cpu, cuda, cuda:N or mps",
         ]
+        assert whisper[5:] == faster[7:]  # the vad_ options
         canary = [line.split(":", 1)[0] for line in backends["canary"]]
         assert canary == [
             "Models",
@@ -909,6 +921,9 @@ class TestListings:
             "Custom models",
             "Devices",
             "-O compute_type=auto|float32|float16|bfloat16",
+            "-O vad_threshold=NUMBER",
+            "-O vad_min_silence=NUMBER",
+            "-O vad_padding=NUMBER",
             "-O max_new_tokens=INT",
         ]
 

@@ -38,6 +38,7 @@ speech_toolkit/
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
 ├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
 ├── types.py        Segment / Word TypedDicts and SCHEMA_VERSION for JSON results
+├── vad.py          --vad for every backend: detect_speech() (faster-whisper's Silero), SpeechMap, VAD_OPTIONS
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
 └── backends/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()

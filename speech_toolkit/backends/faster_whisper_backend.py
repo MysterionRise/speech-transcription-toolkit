@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError, SpeechToolkitWarning
+from ..media import SAMPLE_RATE, load_audio
 from ..types import Segment
+from ..vad import VAD_OPTIONS, faster_whisper_parameters, has_speech
+from ..vad import settings as vad_settings
 from .base import TranscriptionBackend, TranscriptionResult, report_progress
 from .config import BackendOption
 
@@ -73,6 +76,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             choices=COMPUTE_TYPES,
         ),
         "cpu_threads": BackendOption(int, 0, "Threads on the CPU; 0 uses OMP_NUM_THREADS if set, else 4", minimum=0),
+        **VAD_OPTIONS,
     }
 
     # Mirrors faster_whisper.available_models(); kept static so listing models needs no import.
@@ -118,8 +122,8 @@ class FasterWhisperBackend(TranscriptionBackend):
                 CTranslate2 model folder.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), or None or 'auto' for the GPU when CTranslate2 sees one.
                 If the CUDA libraries it needs don't load, the automatic choice warns and uses the CPU.
-            options: Values for ``OPTIONS``: ``compute_type`` and ``cpu_threads``. Afterwards ``self.options`` shows
-                the compute type that "auto" picked.
+            options: Values for ``OPTIONS``: ``compute_type``, ``cpu_threads`` and the ``vad_`` settings. Afterwards
+                ``self.options`` shows the compute type that "auto" picked.
 
         Raises:
             ModelNotFoundError: If model_name is none of these.
@@ -189,7 +193,9 @@ class FasterWhisperBackend(TranscriptionBackend):
             verbose: Show faster-whisper's progress bar on stderr. Each segment is also passed to report_progress() as
                 soon as it is decoded, whatever *verbose* is.
             prompt: Names, terms or a sample sentence that guide spelling (initial_prompt).
-            vad: Skip silence with the built-in Silero VAD filter.
+            vad: Skip silence with the built-in Silero VAD filter, tuned by the ``vad_`` options. A path is then
+                decoded with load_audio(), and audio without speech returns an empty result without reaching the
+                model.
             word_timestamps: Add per-word timings ("words") to each segment.
 
         Returns:
@@ -205,13 +211,23 @@ class FasterWhisperBackend(TranscriptionBackend):
         if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        audio: Any = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        settings = vad_settings(self._options)
+        if vad:
+            audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+            if not has_speech(audio, threshold=settings["threshold"]):  # its filter would leave nothing to transcribe
+                duration = len(audio) / SAMPLE_RATE
+                raw = {"duration": duration, "language_probability": None}
+                return TranscriptionResult("", [], language, raw=raw, duration=duration)
+
         segment_iter, info = self._model.transcribe(
-            str(audio_path) if isinstance(audio_path, Path) else audio_path,
+            audio,
             language=language,
             task=task,
             log_progress=verbose,
             initial_prompt=prompt,
             vad_filter=vad,
+            vad_parameters=faster_whisper_parameters(**settings) if vad else None,
             word_timestamps=word_timestamps,
         )
         # segment_iter is a generator: decoding happens while it is iterated, so each segment is reported as it comes.

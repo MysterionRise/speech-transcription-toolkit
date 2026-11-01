@@ -5,6 +5,9 @@ PyTorch, so it comes with the ``whisper`` extra: ``pip install "speech-transcrip
 
 Besides the names in ``MODELS``, it loads local checkpoint files (``.pt``), the only custom models openai-whisper
 takes.
+
+With ``vad``, it transcribes only the speech that :func:`speech_toolkit.vad.detect_speech` finds, joined end to end,
+and moves the timestamps back to the recording's; Whisper makes up text in long silences otherwise.
 """
 
 from __future__ import annotations
@@ -14,7 +17,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError
+from ..media import SAMPLE_RATE, load_audio
+from ..vad import VAD_OPTIONS, SpeechMap, detect_speech
+from ..vad import settings as vad_settings
 from .base import TranscriptionBackend, TranscriptionResult
+from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
@@ -31,10 +38,11 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
-    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps", "waveform"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"})
     requires = ("whisper",)
     MODEL_SOURCES = {"file": "a local checkpoint file (.pt)"}  # openai-whisper loads no repo ids or folders
     DEVICES = frozenset({"cpu", "cuda", "mps"})
+    OPTIONS: Mapping[str, BackendOption] = VAD_OPTIONS
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -72,7 +80,7 @@ class WhisperBackend(TranscriptionBackend):
         Args:
             model_name: One of the available model names (tiny ... large-v3, turbo), or a local checkpoint file.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), 'mps', or None or 'auto' for the GPU when torch sees one.
-            options: The backend has no options, so only an empty mapping is accepted.
+            options: Values for ``OPTIONS``: the ``vad_`` settings.
 
         Raises:
             ModelNotFoundError: If model_name is not recognized.
@@ -111,6 +119,7 @@ class WhisperBackend(TranscriptionBackend):
         verbose: bool = True,
         *,
         prompt: Optional[str] = None,
+        vad: bool = False,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio using Whisper.
@@ -121,10 +130,14 @@ class WhisperBackend(TranscriptionBackend):
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
             prompt: Names, terms or a sample sentence that guide spelling (Whisper's initial_prompt).
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                stretches of speech joined end to end, the times mapped back to the recording's. A path is then
+                decoded with load_audio(), and audio without speech returns an empty result without reaching the
+                model.
             word_timestamps: Add per-word timings ("words") to each segment.
 
         Returns:
-            TranscriptionResult with transcript text and segments.
+            TranscriptionResult with transcript text and segments; its duration is known with *vad*.
 
         Raises:
             ModelLoadError: If no model is loaded.
@@ -151,9 +164,21 @@ class WhisperBackend(TranscriptionBackend):
         if word_timestamps:
             kwargs["word_timestamps"] = True
 
-        # Run transcription
-        audio = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        audio: Any = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        speech: Optional[SpeechMap] = None
+        duration: Optional[float] = None
+        if vad:
+            samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+            duration = len(samples) / SAMPLE_RATE
+            regions = detect_speech(samples, **vad_settings(self._options))
+            if not regions:
+                return TranscriptionResult("", [], language, duration=duration)
+            speech = SpeechMap(regions)
+            audio = speech.join(samples)
+
         raw_result: Dict[str, Any] = self._model.transcribe(audio, **kwargs)
+        if speech is not None:
+            speech.restore(raw_result.get("segments", []))  # also raw's, which the result keeps
 
         # Convert to standardized format
         segments = [_segment(seg) for seg in raw_result.get("segments", [])]
@@ -163,6 +188,7 @@ class WhisperBackend(TranscriptionBackend):
             segments=segments,
             language=raw_result.get("language"),
             raw=raw_result,
+            duration=duration,
         )
 
 
