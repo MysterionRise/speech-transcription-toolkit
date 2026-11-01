@@ -8,9 +8,10 @@ Apps and SDKs written for OpenAI's speech-to-text endpoints work offline against
     client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="unused")
     print(client.audio.transcriptions.create(model="whisper-1", file=open("talk.mp3", "rb")).text)
 
-The server runs one model, so the request's ``model`` field is accepted and ignored. One worker thread runs it,
-taking the requests in turn from a bounded queue: when the queue is full, more requests get a 503 at once, and
-``/health`` answers straight away however busy the model is. Needs the ``server`` extra.
+The server runs one model, so the request's ``model`` field is accepted and ignored, except that ``stream=true``
+streams the transcript as server-sent events for any model but ``whisper-1``, as OpenAI does. One worker thread runs
+the model, taking the requests in turn from a bounded queue: when the queue is full, more requests get a 503 at once,
+and ``/health`` answers straight away however busy the model is. Needs the ``server`` extra.
 """
 
 # No "from __future__ import annotations": FastAPI reads the endpoints' annotations at runtime, and the
@@ -34,6 +35,7 @@ import tempfile
 import threading
 import time
 import traceback
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
     TYPE_CHECKING,
@@ -48,12 +50,13 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Tuple,
     TypeVar,
 )
 
 from . import AudioDecodeError, __version__
 from .api import Transcriber
-from .backends import TranscriptionResult
+from .backends import ProgressCallback, ProgressEvent, TranscriptionResult
 from .cli import FILE_ERRORS, add_model_options, load_transcriber, positive_int
 from .media import SAMPLE_RATE, load_audio
 
@@ -61,7 +64,20 @@ if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
 
 INSTALL_HINT = 'transcribe-server needs the server extra: pip install "speech-transcription-toolkit[server]"'
-RESPONSE_FORMATS = ("json", "text", "srt", "vtt", "verbose_json")
+RESPONSE_FORMATS = ("json", "text", "srt", "vtt", "verbose_json", "diarized_json")
+# Translations take OpenAI's formats for them: all but diarized_json, which is for transcriptions.
+TRANSLATION_FORMATS = tuple(fmt for fmt in RESPONSE_FORMATS if fmt != "diarized_json")
+# The formats of a streamed transcription, as OpenAI's models that stream have them: the events carry the text, and
+# with diarized_json the speakers.
+STREAM_FORMATS = ("json", "text", "diarized_json")
+# OpenAI ignores stream=true for whisper-1, which can't stream, and so does the server: clients send it anyway.
+WHISPER_1 = "whisper-1"
+# A stream sends a comment after this many seconds without an event, as while diarizing, so that proxies and clients
+# don't take the connection for dead.
+KEEPALIVE_SECONDS = 15.0
+KEEPALIVE = b": keep-alive\n\n"
+# no-cache: never stored; X-Accel-Buffering: nginx passes each event on at once.
+STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 CHUNK_BYTES = 1024 * 1024
 # A request's body may be this much larger than --max-upload-mb, for the other form fields and the multipart framing.
 FORM_OVERHEAD = 1024 * 1024
@@ -128,6 +144,8 @@ class _Service:
     transcribes, at most *max_queue* requests are let in to wait (from the start of their upload); the guard refuses
     more with a 503 before reading them. The counts are kept under a lock of their own, never held for longer than
     it takes to change or read them, so ``/health`` never waits for the model.
+
+    An empty *api_key* means no key, as None does. *language* is the language of requests that don't give one.
     """
 
     def __init__(
@@ -138,9 +156,11 @@ class _Service:
         *,
         max_queue: int = DEFAULT_MAX_QUEUE,
         max_audio_seconds: Optional[float] = DEFAULT_MAX_AUDIO_SECONDS,
+        language: Optional[str] = None,
     ) -> None:
         self.transcriber = transcriber
-        self.api_key = api_key
+        self.api_key = api_key or None
+        self.language = language or None
         self.max_upload_mb = max_upload_mb
         self.max_bytes = int(max_upload_mb * 1024 * 1024)
         self.max_request_bytes = self.max_bytes + FORM_OVERHEAD
@@ -206,6 +226,47 @@ class _Service:
             left.cancel()
             future.cancel()  # in case this request was cancelled, as when the server stops: the job then never runs
 
+    async def start_stream(self, receive: Receive, job: Callable[["_TranscriptStream"], None]) -> "_TranscriptStream":
+        """Run *job*, a streamed transcription, in the worker thread as run() does, and return its stream once the job
+        has sent its first event.
+
+        Errors until then, such as an upload that isn't audio or an unknown language, are raised here, so they get an
+        HTTP status as any request's do. A client that disconnects before then ends the request with a 499: while it
+        waits, its job is dropped; once the job has started, it stops at the model's next segment, or before the model
+        runs.
+
+        Args:
+            receive: The request's ASGI receive(), as for run().
+            job: What the worker runs, given the stream to send its events to.
+        """
+        stream = _TranscriptStream(asyncio.get_running_loop())
+        future = self.worker.submit(self._work, functools.partial(job, stream))
+        stream.done = asyncio.wrap_future(future)
+        first = asyncio.ensure_future(stream.next())
+        left = asyncio.ensure_future(_disconnected(receive))
+        started = False
+        try:
+            await asyncio.wait((first, left), return_when=asyncio.FIRST_COMPLETED)
+            if not first.done():  # the client left
+                if future.cancel():
+                    logger.info("A client disconnected while its request waited for the model; dropped the request.")
+                else:
+                    stream.stop()
+                    await asyncio.wait((stream.done,))
+                raise APIError(CLIENT_CLOSED, "The client closed the request.")
+            item = first.result()
+            if isinstance(item, APIError):  # the job failed before its first event, and has ended
+                await asyncio.wait((stream.done,))
+                raise item
+            started = True
+            return stream
+        finally:
+            first.cancel()
+            left.cancel()
+            if not started:  # also when this request is cancelled, as when the server stops
+                future.cancel()
+                stream.stop()
+
     def _work(self, job: Callable[[], T]) -> T:
         """Run *job*, in the worker thread, counting it for /health and timing it for Retry-After."""
         with self._counts:
@@ -228,16 +289,26 @@ class _Service:
             raise APIError(401, "Missing or wrong API key: send 'Authorization: Bearer <key>'.", code="invalid_api_key")
 
     def check_request(self, task: str, response_format: str, granularities: List[str], stream: bool) -> bool:
-        """Reject what the server can't do; returns whether word timestamps were asked for."""
+        """Reject what the server can't do; returns whether word timestamps were asked for.
+
+        Args:
+            stream: Whether to stream the response: stream=true, for a model other than whisper-1.
+        """
         if task == "translate" and not self.transcriber.supports("translate"):
             raise APIError(400, f"The {self.transcriber.backend_name} backend can't translate.")
         words = "word" in granularities
-        if stream:
-            raise APIError(400, "Streaming isn't supported; leave stream unset.", param="stream")
-        if response_format not in RESPONSE_FORMATS:
-            raise APIError(
-                400, f"response_format must be one of: {', '.join(RESPONSE_FORMATS)}.", param="response_format"
+        formats = RESPONSE_FORMATS if task == "transcribe" else TRANSLATION_FORMATS
+        if response_format not in formats:
+            raise APIError(400, f"response_format must be one of: {', '.join(formats)}.", param="response_format")
+        if response_format == "diarized_json" and not self.transcriber.diarize:
+            message = "response_format=diarized_json needs speaker labels: start the server with --diarize."
+            raise APIError(400, message, param="response_format")
+        if stream and response_format not in STREAM_FORMATS:
+            message = (
+                f"A streamed transcription (stream=true) takes response_format {', '.join(STREAM_FORMATS)}; "
+                f"send stream=false for {response_format}."
             )
+            raise APIError(400, message, param="response_format")
         if set(granularities) - {"word", "segment"}:
             raise APIError(
                 400, "timestamp_granularities[] takes 'word' and 'segment'.", param="timestamp_granularities[]"
@@ -291,8 +362,14 @@ class _Service:
         stream: bool,
     ) -> Any:
         """A transcription request, from the route: validate it, then wait for the worker to transcribe it and render
-        the response. All of that stays off the event loop, which keeps answering other requests."""
+        the response. All of that stays off the event loop, which keeps answering other requests.
+
+        Returns the Response: for a streamed request (*stream*), one that sends the events as they come.
+        """
         words = self.check_request(task, response_format, granularities, stream)
+        if stream:
+            events = functools.partial(self.stream_events, upload, task, language, prompt, response_format)
+            return _event_stream_response()(await self.start_stream(receive, events))
         job = functools.partial(self.respond, upload, task, language, prompt, words, response_format)
         return await self.run(receive, job)
 
@@ -305,27 +382,84 @@ class _Service:
         """
         from starlette.responses import JSONResponse, PlainTextResponse  # imported already, with the app
 
-        result = self.transcribe(upload, task, language, prompt, words)
-        body = _response_body(result, response_format, task, words)
+        result, seconds = self.transcribe(upload, task, language, prompt, words)
+        body = _response_body(result, response_format, task, words, seconds)
         return JSONResponse(body) if isinstance(body, dict) else PlainTextResponse(body)
 
+    def stream_events(
+        self,
+        upload: Any,
+        task: str,
+        language: Optional[str],
+        prompt: Optional[str],
+        response_format: str,
+        stream: "_TranscriptStream",
+    ) -> None:
+        """A streamed transcription, in the worker thread: its events go to *stream* as the model goes.
+
+        A delta per segment as the backend reports it, then with diarized_json a segment event per speaker turn, and
+        the done event. It stops at the next segment once the client has left (stream.stop()).
+        """
+        events = _StreamEvents()
+
+        def progress(event: ProgressEvent) -> None:
+            if stream.stopped:
+                raise _ClientLeft()  # out through the backend and Transcriber.transcribe(), which stops the model
+            if event.segment is not None:
+                delta = events.delta(event.segment)
+                if delta:
+                    stream.send(delta)
+
+        try:
+            result, _ = self.transcribe(upload, task, language, prompt, False, progress=progress)
+            for event in events.finish(result, response_format):
+                stream.send(event)
+        except _ClientLeft:
+            logger.info("A client disconnected during its streamed transcription; stopped the transcription.")
+        except APIError as error:
+            stream.fail(error)
+        except Exception:  # building the events: a bug, which mustn't leave the client waiting for the end
+            logger.exception("Streaming a transcription failed")
+            stream.fail(APIError(500, SERVER_ERROR, error_type="server_error"))
+        finally:
+            stream.end()
+
     def transcribe(
-        self, upload: Any, task: str, language: Optional[str], prompt: Optional[str], words: bool
-    ) -> TranscriptionResult:
+        self,
+        upload: Any,
+        task: str,
+        language: Optional[str],
+        prompt: Optional[str],
+        words: bool,
+        *,
+        progress: Optional[ProgressCallback] = None,
+    ) -> Tuple[TranscriptionResult, float]:
         """Save the upload to a temporary file, decode it and transcribe the samples; the file is deleted whatever
-        happens. The worker thread runs this, one request at a time."""
+        happens. The worker thread runs this, one request at a time.
+
+        Returns the result and the audio's duration in seconds, as decoded: what usage counts. *progress* is
+        Transcriber.transcribe()'s.
+        """
         fd, name = tempfile.mkstemp(suffix=_upload_suffix(upload.filename))
         path = pathlib.Path(name)
         try:
             with os.fdopen(fd, "wb") as out:
                 self.save_upload(upload, out)
             samples = self.decode(path)
-            return self.transcriber.transcribe(
-                samples, language or None, task, prompt=prompt or None, word_timestamps=True if words else None
+            result = self.transcriber.transcribe(
+                samples,
+                language or self.language,
+                task,
+                prompt=prompt or None,
+                word_timestamps=True if words else None,
+                progress=progress,
             )
-        except APIError:
+            return result, len(samples) / SAMPLE_RATE
+        except (APIError, _ClientLeft):
             raise
         except Exception as e:  # decoding, model, disk and out-of-memory errors come in many types
+            if any(isinstance(cause, _ClientLeft) for cause in _error_chain(e)):  # a backend wrapped it
+                raise _ClientLeft() from e
             raise _api_error(e, path) from e
         finally:
             path.unlink(missing_ok=True)
@@ -429,6 +563,177 @@ async def _disconnected(receive: Receive) -> None:
         message = await receive()
 
 
+class _ClientLeft(Exception):
+    """Raised in the worker thread, from the progress callback, to stop a streamed transcription whose client left."""
+
+
+# What a stream's job sends before its first event: the response can start.
+_STARTED = object()
+
+
+class _TranscriptStream:
+    """A streamed transcription's server-sent events, carried from the worker thread to the response on the event
+    loop: a queue of the loop's, which the worker thread fills through ``call_soon_threadsafe``.
+
+    The worker never waits on the queue, so a client that reads slowly or leaves can't hold the model up. Once the
+    client has left (stop()), the worker's job stops at its next segment, and what it sends is dropped.
+
+    The job sends _STARTED with its first event, then the events (SSE bytes), then None for the end; or an APIError,
+    before any event, for an error that gets an HTTP status (see _Service.start_stream).
+    """
+
+    done: "asyncio.Future[Any]"  # the job in the worker thread, set by _Service.start_stream
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._items: "asyncio.Queue[Any]" = asyncio.Queue()
+        self._stop = threading.Event()
+        self._started = False
+
+    # In the worker thread.
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    def stop(self) -> None:
+        """Stop the transcription at its next segment: the client has left. Called from either side."""
+        self._stop.set()
+
+    def send(self, event: bytes) -> None:
+        """Send *event*; the first one starts the response."""
+        if not self._started:
+            self._started = True
+            self._put(_STARTED)
+        self._put(event)
+
+    def fail(self, error: APIError) -> None:
+        """Send *error*: as the request's HTTP error before the response has started, else as an error event, the
+        shape OpenAI's SDKs raise as an APIError."""
+        self._put(_sse({"type": "error", **error.body}) if self._started else error)
+
+    def end(self) -> None:
+        self._put(None)
+
+    def _put(self, item: Any) -> None:
+        if self.stopped:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._items.put_nowait, item)
+        except RuntimeError:  # the event loop has closed: the server stopped
+            self.stop()
+
+    # On the event loop.
+
+    async def next(self) -> Any:
+        return await self._items.get()
+
+    async def serve(self, receive: Receive, send: Send, headers: List[Tuple[bytes, bytes]]) -> None:
+        """Send the response: the events as they come, until the end, with a comment after KEEPALIVE_SECONDS without
+        one. If the client leaves first, the transcription stops at its next segment.
+
+        Either way it returns once the job is done, so that the request keeps its place in the queue until the model
+        is free, as run() does.
+        """
+        left = asyncio.ensure_future(_disconnected(receive))
+        item = asyncio.ensure_future(self.next())
+        try:
+            await send({"type": "http.response.start", "status": 200, "headers": headers})
+            while True:
+                await asyncio.wait((item, left), timeout=KEEPALIVE_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+                if left.done():
+                    logger.info("A client disconnected from its streamed transcription; stopping it.")
+                    break
+                if not item.done():
+                    await send({"type": "http.response.body", "body": KEEPALIVE, "more_body": True})
+                    continue
+                event = item.result()
+                if event is None:
+                    await send({"type": "http.response.body", "body": b"", "more_body": False})
+                    break
+                await send({"type": "http.response.body", "body": event, "more_body": True})
+                item = asyncio.ensure_future(self.next())
+        except OSError:  # an ASGI server that raises when the client has gone (ASGI 2.4) rather than ignore the send
+            logger.info("A client disconnected from its streamed transcription; stopping it.")
+        finally:
+            left.cancel()
+            item.cancel()
+            self.stop()  # nothing if the job is done
+            await asyncio.wait((self.done,))
+
+
+@functools.lru_cache(maxsize=None)
+def _event_stream_response() -> Any:
+    """The Response class of a streamed transcription, which sends a _TranscriptStream's server-sent events as they
+    come. Built on first use, as Starlette is imported only with the app."""
+    from starlette.responses import Response
+
+    class EventStreamResponse(Response):
+        media_type = "text/event-stream"
+
+        def __init__(self, stream: _TranscriptStream) -> None:  # as StreamingResponse: no body, no Content-Length
+            self.stream = stream
+            self.status_code = 200
+            self.background = None
+            self.init_headers(STREAM_HEADERS)
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await self.stream.serve(receive, send, self.raw_headers)
+
+    return EventStreamResponse
+
+
+class _StreamEvents:
+    """The server-sent events of a streamed transcription, as OpenAI's API has them (``TranscriptionStreamEvent`` in
+    OpenAI's SDKs): a ``transcript.text.delta`` per segment, with diarized_json a ``transcript.text.segment`` per
+    speaker turn once diarization is done, then ``transcript.text.done``.
+
+    The deltas add up to the transcript (see _delta). With speaker labels they come before the labels are known: the
+    done event's text has them, as the text of the other formats has.
+    """
+
+    def __init__(self) -> None:
+        self.text = ""  # the deltas so far
+
+    def delta(self, segment: Mapping[str, Any]) -> bytes:
+        """The delta of a new *segment*, or b"" for one without text."""
+        piece = _delta(self.text, str(segment.get("text") or ""))
+        self.text += piece
+        return _sse({"type": "transcript.text.delta", "delta": piece}) if piece else b""
+
+    def finish(self, result: TranscriptionResult, response_format: str) -> List[bytes]:
+        """The events after the deltas, once the transcription (and diarization) is done."""
+        segments = _diarized_segments(result) if response_format == "diarized_json" else []
+        return [*map(_sse, segments), _sse({"type": "transcript.text.done", "text": _transcript(result)})]
+
+
+def _sse(data: Mapping[str, Any]) -> bytes:
+    """*data* as a server-sent event: a ``data:`` line of JSON, which has no line breaks, and a blank line."""
+    return b"data: " + json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode() + b"\n\n"
+
+
+def _delta(previous: str, text: str) -> str:
+    """A new segment's *text* as the delta that follows the deltas so far (*previous*), so they add up to the
+    transcript: "" for a segment without text, the first one without leading whitespace, as the transcript has it.
+
+    Later segments keep their own leading space, as Whisper's have; text without one gets a space, as the backends
+    that cut audio into chunks join their text with spaces, unless it or the text before it is CJK (wide characters),
+    which Whisper writes without spaces between segments.
+    """
+    if not text.strip():
+        return ""
+    if not previous:
+        return text.lstrip()
+    if text[0].isspace() or previous[-1].isspace() or _wide(text[0]) or _wide(previous[-1]):
+        return text
+    return " " + text
+
+
+def _wide(character: str) -> bool:
+    """Whether *character* is a wide (CJK) one, of the scripts written without spaces between words."""
+    return unicodedata.east_asian_width(character) in ("W", "F")
+
+
 def _route_path(scope: Scope) -> str:
     """The request's path in the app, without the root path the app may be served under."""
     path: str = scope["path"]
@@ -529,12 +834,14 @@ def create_app(
     max_audio_seconds: Optional[float] = DEFAULT_MAX_AUDIO_SECONDS,
     cors_origins: Sequence[str] = (),
     docs: Optional[bool] = None,
+    language: Optional[str] = None,
 ) -> Any:
     """Build the FastAPI app around a loaded :class:`Transcriber`; requests take turns on the model.
 
     Args:
         transcriber: The loaded model (and diarization pipeline, if any) to serve.
-        api_key: If set, every request except ``/health`` needs ``Authorization: Bearer <api_key>``.
+        api_key: If set, every request except ``/health`` needs ``Authorization: Bearer <api_key>``. An empty key
+            is no key, as None is.
         max_upload_mb: Larger uploads are refused with HTTP 413, before they are read when they declare their size.
         max_queue: How many transcription requests may wait while the model transcribes another; more are refused
             with HTTP 503 and ``Retry-After``, before they are read. 0 refuses every request while the model is busy.
@@ -544,6 +851,8 @@ def create_app(
             API from the browser.
         docs: Serve the API docs (``/docs``, ``/redoc`` and ``/openapi.json``). The default (None) serves them
             only without an API key; with one, they too need the key.
+        language: The language of the audio of requests that don't give one, such as ``"de"``, for transcriptions
+            and translations alike (the language translated from). None to detect it, with backends that can.
 
     Raises:
         ValueError: If *max_queue* is negative, or *max_audio_seconds* isn't a positive number.
@@ -554,6 +863,7 @@ def create_app(
     from fastapi.responses import JSONResponse
     from starlette.exceptions import HTTPException
 
+    api_key = api_key or None
     # By default no docs with a key: the docs pages can't send it, and would show the API to anyone.
     docs = api_key is None if docs is None else docs
     app = FastAPI(
@@ -563,7 +873,14 @@ def create_app(
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
     )
-    service = _Service(transcriber, api_key, max_upload_mb, max_queue=max_queue, max_audio_seconds=max_audio_seconds)
+    service = _Service(
+        transcriber,
+        api_key,
+        max_upload_mb,
+        max_queue=max_queue,
+        max_audio_seconds=max_audio_seconds,
+        language=language,
+    )
     app.add_middleware(_RequestGuard, service=service)
     _allow_origins(app, cors_origins)  # after the guard, so it runs first
 
@@ -596,8 +913,9 @@ def create_app(
         response_format: str = Form("json"),
         temperature: float = Form(0.0),  # accepted for compatibility, not used
         timestamp_granularities: List[str] = Form([], alias="timestamp_granularities[]"),
-        stream: bool = Form(False),
+        stream: bool = Form(False),  # server-sent events, for any model but whisper-1 (as OpenAI)
     ) -> Any:
+        stream = stream and model != WHISPER_1
         return await service.handle(
             request.receive, "transcribe", file, language, prompt, response_format, timestamp_granularities, stream
         )
@@ -607,11 +925,12 @@ def create_app(
         request: Request,
         file: UploadFile = File(...),
         model: str = Form("whisper-1"),
+        language: Optional[str] = Form(None),  # the language translated from: an extension to OpenAI's API
         prompt: Optional[str] = Form(None),
         response_format: str = Form("json"),
         temperature: float = Form(0.0),
     ) -> Any:
-        return await service.handle(request.receive, "translate", file, None, prompt, response_format, [], False)
+        return await service.handle(request.receive, "translate", file, language, prompt, response_format, [], False)
 
     @app.get("/v1/models")
     async def models() -> Dict[str, Any]:
@@ -669,26 +988,50 @@ def _validation_error(errors: Sequence[Any]) -> APIError:
     return APIError(400, message, param=param)
 
 
-def _response_body(result: TranscriptionResult, response_format: str, task: str, words: bool) -> Any:
-    """A dict for the JSON formats, or the text of txt/srt/vtt."""
+def _response_body(result: TranscriptionResult, response_format: str, task: str, words: bool, seconds: float) -> Any:
+    """A dict for the JSON formats, with ``usage`` for the audio's *seconds*; or the text of text/srt/vtt."""
+    if response_format in ("srt", "vtt"):
+        return result.render(response_format)
+    if response_format == "text":
+        return _transcript(result)
+    body: Dict[str, Any]
     if response_format == "json":
-        return {"text": result.text.strip()}
-    if response_format == "verbose_json":
-        return verbose_json(result, task, words)
-    return result.render("txt" if response_format == "text" else response_format)
+        body = {"text": _transcript(result)}
+    elif response_format == "verbose_json":
+        body = verbose_json(result, task, words, duration=seconds)
+    else:
+        body = diarized_json(result, seconds)
+    return {**body, "usage": _usage(seconds)}
 
 
-def verbose_json(result: TranscriptionResult, task: str, words: bool = False) -> Dict[str, Any]:
-    """The result as OpenAI's ``verbose_json``: its segment fields, and top-level ``words`` when asked for."""
+def _transcript(result: TranscriptionResult) -> str:
+    """The transcript, as response_format=text gives it and every format's ``text`` has it: with speaker labels
+    (``[SPEAKER_00] ...``, a line per speaker turn) when the server diarizes."""
+    return result.render("txt")
+
+
+def _usage(seconds: float) -> Dict[str, Any]:
+    """OpenAI's ``usage`` for models billed by the audio's duration: in whole seconds, rounded up, as OpenAI's are."""
+    return {"type": "duration", "seconds": math.ceil(seconds)}
+
+
+def verbose_json(
+    result: TranscriptionResult, task: str, words: bool = False, *, duration: Optional[float] = None
+) -> Dict[str, Any]:
+    """The result as OpenAI's ``verbose_json``: its segment fields, and top-level ``words`` when asked for.
+
+    *duration* is the audio's, if known (the server decodes the audio itself); else the result's.
+    """
     segments = result.speaker_segments or result.segments
-    duration = result.duration
+    if duration is None:
+        duration = result.duration
     if duration is None:  # not reported: a duration in raw (as some backends give), else the last segment's end
         duration = result.raw.get("duration") or (segments[-1].get("end", 0.0) if segments else 0.0)
     body: Dict[str, Any] = {
         "task": task,
         "language": result.language,
         "duration": duration,
-        "text": result.text.strip(),
+        "text": _transcript(result),
         "segments": [_openai_segment(i, seg) for i, seg in enumerate(segments)],
     }
     if words:
@@ -719,6 +1062,33 @@ def _openai_segment(index: int, seg: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def diarized_json(result: TranscriptionResult, duration: float) -> Dict[str, Any]:
+    """The diarized result as OpenAI's ``diarized_json`` (``TranscriptionDiarized`` in OpenAI's SDKs), without
+    ``usage``: a segment per speaker turn, labelled as the other formats label them (``SPEAKER_00``)."""
+    return {
+        "task": "transcribe",
+        "duration": duration,
+        "text": _transcript(result),
+        "segments": _diarized_segments(result),
+    }
+
+
+def _diarized_segments(result: TranscriptionResult) -> List[Dict[str, Any]]:
+    """The speaker segments as OpenAI's ``transcript.text.segment``: the segments of ``diarized_json``, and the
+    events that a streamed one sends."""
+    return [
+        {
+            "type": "transcript.text.segment",
+            "id": f"seg_{index}",
+            "start": seg.get("start", 0.0),
+            "end": seg.get("end", 0.0),
+            "text": str(seg.get("text") or "").strip(),
+            "speaker": str(seg.get("speaker") or "unknown"),  # as merge_diarization() labels a segment without one
+        }
+        for index, seg in enumerate(result.speaker_segments or [])
+    ]
+
+
 def _is_loopback(host: str) -> bool:
     if host == "localhost":
         return True
@@ -737,12 +1107,20 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="Address to listen on (default: 127.0.0.1, this machine).")
     parser.add_argument("--port", type=positive_int, default=8000, help="Port to listen on (default: 8000).")
     add_model_options(parser)  # --backend, --model and --device, as for transcribe
+    parser.add_argument(
+        "-l",
+        "--language",
+        default=None,
+        help="Language code of the audio, e.g. 'de', for requests that don't send one, translations included "
+        "(default: auto-detect).",
+    )
     parser.add_argument("--diarize", action="store_true", help="Label speakers (needs the diarize extra and HF_TOKEN).")
     parser.add_argument("--hf-token", metavar="TOKEN", help="Hugging Face token (default: HF_TOKEN env var).")
     parser.add_argument(
         "--api-key",
-        default=os.getenv("TRANSCRIBE_API_KEY"),
-        help="Require 'Authorization: Bearer KEY' (default: the TRANSCRIBE_API_KEY env var; unset means no key).",
+        default=os.getenv("TRANSCRIBE_API_KEY") or None,
+        help="Require 'Authorization: Bearer KEY' (default: the TRANSCRIBE_API_KEY env var; unset or empty means no "
+        "key).",
     )
     parser.add_argument(
         "--max-upload-mb", type=positive_int, default=100, help="Refuse larger uploads (default: 100 MB)."
@@ -805,6 +1183,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     except ImportError as e:
         sys.exit(f"Error: {INSTALL_HINT} ({e})")
 
+    args.api_key = args.api_key or None  # --api-key "" is no key, as an empty TRANSCRIBE_API_KEY is
     if args.api_key is None and not _is_loopback(args.host):
         print(
             f"Warning: listening on {args.host} without --api-key; anyone who can reach this port can use it.",
@@ -824,6 +1203,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             max_audio_seconds=args.max_audio_seconds or None,  # 0: no limit
             cors_origins=args.cors_origin,
             docs=args.docs,
+            language=args.language,
         )
         uvicorn.run(app, host=args.host, port=args.port)
 

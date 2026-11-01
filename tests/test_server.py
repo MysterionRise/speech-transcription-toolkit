@@ -40,8 +40,9 @@ class TestResponseFormats:
         response = client.post(URL, files=upload(), data={"model": "whisper-1"})
 
         assert response.status_code == 200
-        assert list(response.json()) == ["text"]
+        assert list(response.json()) == ["text", "usage"]
         assert response.json()["text"].startswith("Hello from ")
+        assert response.json()["usage"] == {"type": "duration", "seconds": 2}  # 1.5 s, in whole seconds rounded up
         assert list(temp_dir.iterdir()) == []  # the upload is deleted afterwards
 
     @pytest.mark.parametrize("fmt, start", [("text", "Hello from "), ("srt", "1\n00:00:00,000 --> 00:00:01,500\n")])
@@ -110,8 +111,9 @@ class TestErrors:
     @pytest.mark.parametrize(
         "data, param",
         [
-            ({"stream": "true"}, "stream"),
+            ({"model": "gpt-4o-transcribe", "stream": "true", "response_format": "srt"}, "response_format"),
             ({"response_format": "docx"}, "response_format"),
+            ({"response_format": "diarized_json"}, "response_format"),  # needs --diarize
             ({"timestamp_granularities[]": "char"}, "timestamp_granularities[]"),
             ({"timestamp_granularities[]": "word"}, "timestamp_granularities[]"),  # needs verbose_json
         ],
