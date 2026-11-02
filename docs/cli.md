@@ -13,6 +13,7 @@ transcribe audio.mp3 -m large-v3 -l de         # another model, known language
 transcribe audio.mp3 -t translate -m large-v3  # translate to English (turbo can't translate)
 transcribe audio.mp3 -b whisper                # another backend: OpenAI's Whisper (the whisper extra)
 transcribe --list-backends                     # backends, their models and capabilities
+transcribe --detect-language recordings/       # each file's language, without transcribing
 ```
 
 Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` hides progress, see
@@ -83,6 +84,32 @@ transcribe - --outdir subs -f srt,json < talk.mp3    # subs/stdin.srt and subs/s
 stdout carries only the transcript. On Windows, a transcript redirected to a file or a pipe is written as UTF-8, so
 text in any language can be saved; set `PYTHONIOENCODING` to choose another encoding.
 
+### Language detection
+
+`--detect-language` prints the language spoken in each input, and exits without transcribing anything:
+
+```console
+$ transcribe --detect-language talk.mp3 interview.m4a
+talk.mp3	en	0.98
+interview.m4a	de	0.97
+$ transcribe --detect-language talk.mp3 -f json
+{"file": "talk.mp3", "language": "en", "probability": 0.98, "candidates": [{"language": "en", "probability": 0.98}, ...]}
+```
+
+- **Output:** a line per input on stdout, as soon as it is detected: the file, the language code and its probability
+  (from 0 to 1, with two decimals), separated by tabs. With `-f json`, a JSON object per line instead, with the five
+  most likely languages in `candidates`, most likely first. Standard input is the file `-`.
+- **Only the first 30 seconds** of each input are decoded. The Whisper models look at no more, also when they detect the
+  language to transcribe. A recording that starts with music or a long silence may be misdetected: give its language
+  with `-l` to transcribe it.
+- **Backends:** whisper and faster-whisper. Another backend is an error, reported before the model loads. `-m`,
+  `--device`, `--compute-type` and `-O` choose the model as usual: smaller models are faster, larger ones more accurate.
+- **Inputs** are found as for transcription: files, folders (searched for audio and video files) or `-`.
+- **Transcription options,** such as `--language`, `--diarize` or `--output`, are an error with `--detect-language`.
+  To keep the lines, redirect stdout: `transcribe --detect-language recordings/ > languages.tsv`.
+- **Errors:** a file that fails is reported on stderr and the others carry on. The exit status is non-zero if any file
+  failed.
+
 ### Options
 
 | Option | Description |
@@ -119,6 +146,7 @@ text in any language can be saved; set `PYTHONIOENCODING` to choose another enco
 | `--min-speakers N`, `--max-speakers N` | Bounds on the number of speakers (needs `--diarize`). |
 | `--list-backends` | List the backends with their models, capabilities, devices and options, and whether their packages are installed, then exit. |
 | `--list-models` | List the models of `--backend`, and the custom models it takes, then exit. |
+| `--detect-language` | Print the language of each input and its probability, from its first 30 seconds, then exit without transcribing (whisper, faster-whisper); `-f json` prints JSON. See [Language detection](#language-detection). |
 | `--version` | Print the version. |
 
 ### Messages
