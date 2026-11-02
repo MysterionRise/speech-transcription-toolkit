@@ -39,8 +39,12 @@ Every format shows the speaker labels:
 - **vtt:** labels are voice tags (`<v SPEAKER_00>`).
 - **json:** `speaker_segments` holds the segments, each with a `speaker` field. Their `id` numbers them from 0, and
   `segment_id` is the `id` of the segment in `segments` each one comes from.
+- **tsv:** a `speaker` column.
+- **rttm:** one line per speaker turn, the format diarization tools read and write (`-f rttm`; `-f all` with
+  `--diarize` writes it too).
 
-See [Output formats](formats.md).
+`--speaker-names "Alice,Bob"` puts names in place of the labels, in the order the speakers first speak. See
+[Output formats](formats.md).
 
 ## How speakers are matched to text
 

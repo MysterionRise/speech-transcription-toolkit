@@ -169,6 +169,36 @@ class FasterWhisperBackend(TranscriptionBackend):
         self._device = kind if target.index is None else f"{kind}:{target.index}"
         self._options = {**settings, "compute_type": arguments["compute_type"]}
 
+    def detect_language(self, audio: Union[Path, "np.ndarray"]) -> List[Tuple[str, float]]:
+        """The languages spoken in the first 30 seconds of *audio*, with their probabilities, most likely first.
+
+        It uses faster-whisper's ``detect_language()``, which looks at the same 30 seconds as when it detects the
+        language to transcribe.
+
+        Args:
+            audio: A path, of which only the first 30 seconds are decoded, or the samples (mono float32 at 16 kHz).
+
+        Returns:
+            Every language the model knows, with its probability: ``[("de", 0.97), ("en", 0.01), ...]``. An
+            English-only model gives ``[("en", 1.0)]``.
+
+        Raises:
+            ModelLoadError: If no model is loaded.
+            FileNotFoundError: If the audio file doesn't exist.
+        """
+        if self._model is None:
+            raise ModelLoadError("No model loaded. Call load_model() first.")
+        if not self._model.model.is_multilingual:  # as faster-whisper's transcribe() treats it: English, for sure
+            return [("en", 1.0)]
+        if isinstance(audio, Path):
+            from ..media import load_audio
+
+            if not audio.exists():
+                raise FileNotFoundError(f"Audio file not found: {audio}")
+            audio = load_audio(audio, max_seconds=self._model.feature_extractor.chunk_length)
+        _, _, probabilities = self._model.detect_language(audio)  # it takes the first 30 s of the samples
+        return [(code, float(chance)) for code, chance in probabilities]
+
     def transcribe(
         self,
         audio_path: Union[Path, "np.ndarray"],
