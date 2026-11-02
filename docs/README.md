@@ -7,7 +7,7 @@
   - [API reference](reference/README.md): every public class and function, from the docstrings.
 - [Backends](backends.md): Whisper, faster-whisper, Voxtral, Parakeet and Canary compared.
 - [Speaker labels](diarization.md): who said what, with pyannote.audio.
-- [Output formats](formats.md): txt, srt, vtt and json.
+- [Output formats](formats.md): txt, srt, vtt, json, tsv and rttm.
 - [OpenAI-compatible server](server.md): `transcribe-server`.
 - [Docker](docker.md): CPU and CUDA images for the server and the command line.
 - [Troubleshooting](troubleshooting.md)
