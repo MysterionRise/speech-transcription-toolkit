@@ -816,7 +816,13 @@ DETECTION_REFUSES = (
     ("outdir", "--outdir"),
     ("json", "--json"),
     ("skip_existing", "--skip-existing"),
+    ("from_json", "--from-json"),
     ("max_line_width", "--max-line-width"),
+    ("max_lines", "--max-lines"),
+    ("max_cue_duration", "--max-cue-duration"),
+    ("speaker_names", "--speaker-names"),
+    ("timestamps", "--timestamps"),
+    ("word_level", "--word-level"),
 )
 # What -f takes with --detect-language: txt, tab-separated lines (the default), or json, a JSON object per line.
 DETECTION_FORMATS = ("txt", "json")

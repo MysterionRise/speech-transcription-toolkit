@@ -589,7 +589,13 @@ class TestCommand:
             (["--outdir", "out"], "--outdir"),
             (["--json", "talk.json"], "--json"),
             (["--skip-existing"], "--skip-existing"),
+            (["--from-json"], "--from-json"),
             (["--max-line-width", "42"], "--max-line-width"),
+            (["--max-line-width", "42", "--max-lines", "3"], "--max-line-width, --max-lines"),
+            (["--max-cue-duration", "6"], "--max-cue-duration"),
+            (["--speaker-names", "Alice,Bob"], "--speaker-names"),
+            (["--timestamps"], "--timestamps"),
+            (["--word-level"], "--word-level"),
         ],
     )
     def test_refuses_the_transcription_options(self, detectors, audio, capsys, options, flags):
