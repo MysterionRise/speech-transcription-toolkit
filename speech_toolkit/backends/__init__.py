@@ -8,6 +8,7 @@ for loading and using them. Supported backends:
 - **voxtral**: Mistral Voxtral Mini/Small - strong multilingual support
 - **parakeet**: NVIDIA Parakeet TDT - fast and accurate, with word timestamps
 - **canary**: NVIDIA Canary - multilingual transcription and translation
+- **transformers**: most speech recognition models on the Hugging Face Hub, through transformers' pipeline
 
 Heavy libraries (torch, transformers, ...) are imported only when a model is loaded,
 so importing this package and listing backends/models stays fast.
@@ -47,6 +48,7 @@ from .base import (
 from .config import BackendOption, Device, parse_device
 from .faster_whisper_backend import FasterWhisperBackend
 from .nvidia_backend import CanaryBackend, ParakeetBackend
+from .transformers_backend import TransformersBackend
 from .voxtral_backend import VoxtralBackend
 from .whisper_backend import WhisperBackend
 
@@ -57,6 +59,7 @@ _BACKENDS: Dict[str, Type[TranscriptionBackend]] = {
     "voxtral": VoxtralBackend,
     "parakeet": ParakeetBackend,
     "canary": CanaryBackend,
+    "transformers": TransformersBackend,
 }
 
 # Default backend: faster-whisper is the one a plain install includes (no torch).
@@ -154,6 +157,7 @@ __all__ = [
     "VoxtralBackend",
     "ParakeetBackend",
     "CanaryBackend",
+    "TransformersBackend",
     "list_backends",
     "backends_with",
     "backends_with_option",

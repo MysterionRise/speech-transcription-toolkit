@@ -40,6 +40,7 @@ PACKAGES: Dict[str, Tuple[Tuple[str, ...], str]] = {
     "server": (("fastapi", "uvicorn", "python_multipart", "openai"), '-e ".[server]" openai'),
     "diarize": (("torch", "pyannote.audio"), '-e ".[diarize]"'),
     "voxtral": (("torch", "transformers", "mistral_common"), '-e ".[voxtral]"'),
+    "transformers": (("torch", "transformers"), '-e ".[transformers]"'),
 }
 
 # The transcribe options that select each backend and its model.
@@ -48,6 +49,7 @@ BACKEND_ARGS: Dict[str, Tuple[str, ...]] = {
     "faster-whisper": ("-b", "faster-whisper", "-m", "tiny"),
     "parakeet": ("-b", "parakeet"),
     "canary": ("-b", "canary", "-l", "en"),  # Canary can't detect the language
+    "transformers": ("-b", "transformers", "-m", "openai/whisper-tiny"),
 }
 
 # The larger models of the full tier (INTEGRATION_TIER=full), as (backend, model); devices.MEMORY_GB has their needs.
@@ -71,6 +73,7 @@ MAX_WER: Dict[str, float] = {
     "parakeet": 0.15,
     "canary": 0.15,
     "voxtral": 0.15,  # full tier only
+    "transformers": 0.25,  # openai/whisper-tiny
 }
 
 COMMAND_TIMEOUT = 900  # seconds, model download included

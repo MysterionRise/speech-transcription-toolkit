@@ -402,8 +402,8 @@ class TestParseDevice:
             check_device("cuda:3", {"cpu"}, "x")
 
     def test_backends_on(self):
-        assert backends_on("mps") == ["whisper", "voxtral", "parakeet", "canary"]
-        assert backends_on("cuda") == ["whisper", "faster-whisper", "voxtral", "parakeet", "canary"]
+        assert backends_on("mps") == ["whisper", "voxtral", "parakeet", "canary", "transformers"]
+        assert backends_on("cuda") == ["whisper", "faster-whisper", "voxtral", "parakeet", "canary", "transformers"]
 
 
 class TestFasterWhisperDevices:
@@ -841,7 +841,13 @@ class TestOptions:
         assert check_load_arguments(FasterWhisperBackend, "tiny") == (None, {})
 
     def test_backends_with_option(self):
-        assert backends_with_option("compute_type") == ["faster-whisper", "voxtral", "parakeet", "canary"]
+        assert backends_with_option("compute_type") == [
+            "faster-whisper",
+            "voxtral",
+            "parakeet",
+            "canary",
+            "transformers",
+        ]
         assert backends_with_option("max_new_tokens") == ["voxtral", "canary"]
         assert backends_with_option("batch_size") == ["faster-whisper", "voxtral", "parakeet", "canary"]
         assert backends_with_option("beam_size") == ["whisper", "faster-whisper"]
@@ -871,9 +877,9 @@ class TestCommandLine:
         model_group = capsys.readouterr().out.split("\nmodel:\n", 1)[1].split("\n\n", 1)[0]
 
         assert "--device DEVICE " in model_group
-        assert "or mps for an Apple GPU (whisper, voxtral, parakeet, canary)." in model_group
+        assert "or mps for an Apple GPU (whisper, voxtral, parakeet, canary, transformers)." in model_group
         assert "--compute-type TYPE " in model_group
-        assert "such as int8 or float16 (faster-whisper, voxtral, parakeet, canary)." in model_group
+        assert "such as int8 or float16 (faster-whisper, voxtral, parakeet, canary, transformers)." in model_group
         assert "--option KEY=VALUE\n" in model_group  # "-O KEY=VALUE, --option KEY=VALUE" before Python 3.13
 
     def test_server_takes_them_too(self):

@@ -1,6 +1,6 @@
 # Installation
 
-You need Python 3.10 or newer, and [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`
+You need Python 3.11 or newer, and [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`
 (`apt install ffmpeg` / `brew install ffmpeg`). Every backend, speaker diarization and `ogg2wav` use ffmpeg to decode audio.
 
 ```bash
@@ -17,8 +17,8 @@ pip install "speech-transcription-toolkit @ git+https://github.com/MysterionRise
 ```
 
 The default backend, faster-whisper, runs on [CTranslate2](https://github.com/OpenNMT/CTranslate2) instead of PyTorch,
-so a plain install is light: no torch, which takes several GB on Linux. The `whisper`, `voxtral`, `nvidia` and `diarize`
-extras install PyTorch.
+so a plain install is light: no torch, which takes several GB on Linux. The `whisper`, `voxtral`, `nvidia`,
+`transformers` and `diarize` extras install PyTorch.
 
 ## Extras
 
@@ -27,6 +27,7 @@ extras install PyTorch.
 | `whisper` | OpenAI Whisper, `-b whisper` (openai-whisper, PyTorch) |
 | `voxtral` | Mistral Voxtral (PyTorch, transformers, mistral-common) |
 | `nvidia` | NVIDIA Parakeet and Canary (PyTorch, transformers 5.18+, librosa) |
+| `transformers` | Most speech recognition models on the Hugging Face Hub, `-b transformers -m <repo id>` (PyTorch, transformers); see [Backends](backends.md#any-hugging-face-model-transformers) |
 | `diarize` | Speaker labels with pyannote.audio (see [Speaker labels](diarization.md)) |
 | `server` | `transcribe-server`, the OpenAI-compatible API (FastAPI, uvicorn) |
 | `all` | All of the above |
