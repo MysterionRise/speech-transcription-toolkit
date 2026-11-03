@@ -100,12 +100,13 @@ def detectors(monkeypatch):
 @pytest.fixture
 def decoded(monkeypatch) -> List[Tuple[Any, Any]]:
     """speech_toolkit.api's load_audio(), which records (source, max_seconds) and returns that many seconds of a tone
-    (a minute without max_seconds); a source with "bad" in its name fails to decode."""
+    (a minute without max_seconds); a path with "bad" in its name fails to decode."""
     calls: List[Tuple[Any, Any]] = []
 
     def load_audio(source, sr=RATE, *, max_seconds=None, **options):
         calls.append((source, max_seconds))
-        if "bad" in str(source):
+        # Only paths: str() of a file object holds its memory address, whose hex digits can spell "bad".
+        if isinstance(source, (str, pathlib.PurePath)) and "bad" in str(source):
             raise AudioDecodeError("Failed to load audio: Invalid data found when processing input")
         return np.full(int((60 if max_seconds is None else max_seconds) * RATE), 0.1, np.float32)
 
