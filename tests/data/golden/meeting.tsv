@@ -1,0 +1,8 @@
+start	end	text	speaker
+0	1500	Good morning, everyone.	SPEAKER_01
+1500	3000	Let's get started.	SPEAKER_01
+3200	5000	Thanks. The numbers are up.	SPEAKER_00
+5000	5400	Hmm.	unknown
+5600	7000	我同意。	SPEAKER_02
+7000	8000	我们走吧。	SPEAKER_02
+7800	9000	Great, see you.	SPEAKER_00
