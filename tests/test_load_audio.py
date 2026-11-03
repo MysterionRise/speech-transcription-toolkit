@@ -349,6 +349,19 @@ class TestErrors:
                 id="strict refuses a playlist",
             ),
             pytest.param(
+                b"[in#0 @ 0x55fe8bc1dfc0] Format not on whitelist 'aac,ac3,aiff,amr,asf,au,avi,caf,eac3,flac'\n"
+                b"[in#0 @ 0x55fe8bc1dcc0] Error opening input: Invalid argument\n"
+                b"Error opening input file file:/tmp/tmpk2j3x9.wav.\n"
+                b"Error opening input files: Invalid argument\n",
+                "the input's format isn't allowed in strict mode",
+                id="strict refuses a playlist, ffmpeg 9",
+            ),
+            pytest.param(
+                b"[in#0/concat @ 0x55fe8bc1dfc0] Format not on whitelist 'aac,ac3,aiff,amr,flac'\n",
+                "the input's format (concat) isn't allowed in strict mode",
+                id="strict refuses a playlist, input context with its format",
+            ),
+            pytest.param(
                 b"[out#0/s16le @ 0x562bed2defc0] Output file does not contain any stream\n"
                 b"Error opening output file -.\n"
                 b"Error opening output files: Invalid argument\n",
@@ -519,9 +532,10 @@ class TestWithFfmpeg:
         concat = tone.with_name("list.ffconcat")
         concat.write_text(f"ffconcat version 1.0\nfile '{tone.name}'\n", encoding="utf-8")
 
-        with pytest.raises(AudioDecodeError, match=r"format \(concat\) isn't allowed in strict mode"):
+        refused = r"format (\(concat\) )?isn't allowed in strict mode"  # ffmpeg 9 doesn't name the format
+        with pytest.raises(AudioDecodeError, match=refused):
             load_audio(concat.read_bytes(), strict=True)
-        with pytest.raises(AudioDecodeError, match=r"format \(concat\) isn't allowed in strict mode"):
+        with pytest.raises(AudioDecodeError, match=refused):
             load_audio(concat, strict=True)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="ffmpeg resolves the list's entries as URLs, with '/'")
