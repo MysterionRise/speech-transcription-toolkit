@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (faster-whisper by default, Whisper, Voxtral, Parakeet, Canary), optional speaker diarization (pyannote.audio) and txt/srt/vtt/json output. No cloud APIs.
+Offline speech-to-text library and CLI (`pip install speech-transcription-toolkit`, import name `speech_toolkit`) with pluggable backends (faster-whisper by default, Whisper, Voxtral, Parakeet, Canary, and any Hugging Face speech model through transformers), voice activity detection, optional speaker diarization (pyannote.audio) and txt/srt/vtt/json/tsv/rttm output. No cloud APIs.
 
 ## Common Commands
 
@@ -31,12 +31,12 @@ mkdocs build --strict                            # docs site (pip install -r req
 speech_toolkit/
 ├── __init__.py     public API: Transcriber, transcribe, TranscriptionResult, list/register_backend, __version__
 ├── api.py          Transcriber (loads diarization, then the model, once) and the one-shot transcribe()
-├── cli.py          `transcribe` command: parse_args → plan_outputs → run_jobs (load_transcriber, write_output)
+├── cli.py          `transcribe` command: parse_args → plan_outputs → run_jobs (load_transcriber, write_output); --detect-language, --from-json
 ├── diarization.py  load_diarization_pipeline, diarize_audio, merge_diarization (max-overlap)
 ├── errors.py       SpeechToolkitError and its subclasses (each also the built-in error it replaced), SpeechToolkitWarning
-├── formats.py      render(result, fmt, max_line_width) for txt/srt/vtt/json; split_cues, format_for_path, write_text
+├── formats.py      render(result, fmt, …) for txt/srt/vtt/json/tsv/rttm; split_cues, format_for_path, write_text
 ├── media.py        collect_files() for folders; load_audio() (ffmpeg → 16 kHz float32), split_audio() (cuts in pauses)
-├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations} (FastAPI, lazy import)
+├── server.py       `transcribe-server`: OpenAI-compatible /v1/audio/{transcriptions,translations}, streaming (FastAPI, lazy import)
 ├── types.py        Segment / Word TypedDicts and SCHEMA_VERSION for JSON results
 ├── vad.py          --vad for every backend: detect_speech() (faster-whisper's Silero), SpeechMap, VAD_OPTIONS
 ├── convert.py      `ogg2wav` command: OGG/Opus → 16-bit WAV via load_audio (ffmpeg) and the stdlib `wave` module
@@ -44,7 +44,7 @@ speech_toolkit/
     ├── __init__.py                 registry: list_backends(), get_backend(), register_backend()
     ├── base.py                     TranscriptionBackend ABC, TranscriptionResult (render, save), ProgressEvent, report_progress()
     ├── config.py                   BackendOption (the -O options a backend declares in OPTIONS), parse_device()
-    ├── _transformers.py            shared loader for the transformers backends (device, dtype, max_new_tokens)
+    ├── _transformers.py            shared loader for the transformers backends (device, dtype, max_new_tokens, batch_size, vad)
     ├── whisper_backend.py          openai-whisper (the `whisper` extra, on PyTorch)
     ├── faster_whisper_backend.py   faster-whisper / CTranslate2 (default backend, a core dependency: no torch)
     ├── voxtral_backend.py          Mistral Voxtral via transformers (30 s chunks → segments)

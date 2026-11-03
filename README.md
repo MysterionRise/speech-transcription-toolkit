@@ -5,7 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/LICENSE)
 
 Offline speech-to-text from the command line or Python.
-- Pick a backend: faster-whisper (the default, no PyTorch needed), Whisper, Voxtral, or NVIDIA's Parakeet and Canary.
+- Pick a backend: faster-whisper (the default, no PyTorch needed), Whisper, Voxtral, NVIDIA's Parakeet and Canary, or
+  any Hugging Face speech model.
 - Optionally label speakers.
 - Get plain text, subtitles or JSON.
 
@@ -27,7 +28,7 @@ Other extras: `[nvidia]` (Parakeet, Canary), `[voxtral]`, `[diarize]` (speaker l
 
 ```bash
 transcribe audio.mp3                           # transcript to stdout
-transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json)
+transcribe audio.mp3 -o audio.srt              # subtitles; format from extension (txt, srt, vtt, json, tsv)
 transcribe recordings/ --outdir out -f vtt     # every audio file in a folder
 transcribe audio.mp3 -b whisper                # another backend: OpenAI's Whisper
 transcribe meeting.wav --diarize -o notes.txt  # label speakers (needs the diarize extra and HF_TOKEN)
