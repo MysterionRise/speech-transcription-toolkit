@@ -66,8 +66,10 @@ class TestFormatList:
         assert parse_args(["a.mp3", "-f", "srt,vtt,json"]).format == ("srt", "vtt", "json")
 
     def test_all(self):
-        assert parse_args(["a.mp3", "-f", "all"]).format == tuple(FORMATS)
-        assert parse_args(["a.mp3", "-f", "srt,all"]).format == tuple(FORMATS)
+        # rttm needs speaker labels: all has it only with --diarize (tests/test_formats_extra.py)
+        everything = tuple(fmt for fmt in FORMATS if fmt != "rttm")
+        assert parse_args(["a.mp3", "-f", "all"]).format == everything
+        assert parse_args(["a.mp3", "-f", "srt,all"]).format == everything
 
     def test_case_spaces_and_repeats(self):
         assert parse_args(["a.mp3", "-f", "SRT, json,srt,"]).format == ("srt", "json")
@@ -110,7 +112,7 @@ class TestSeveralFormats:
 
         run(tmp_path / "in", "-b", "counting", "-m", "small", "-q", "--outdir", tmp_path / "out", "-f", "all")
 
-        assert names(tmp_path / "out") == sorted(f"talk.{fmt}" for fmt in FORMATS)
+        assert names(tmp_path / "out") == sorted(f"talk.{fmt}" for fmt in FORMATS if fmt != "rttm")
         assert len(counting.calls) == 1
 
     def test_json_with_outdir(self, counting, tmp_path):
