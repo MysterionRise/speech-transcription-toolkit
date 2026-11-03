@@ -13,11 +13,11 @@ status is 1 when:
 - with ``--max-rtfx-drop``, a model's RTFx fell by more than that fraction. Off by default: on shared CI runners speed
   varies too much to gate on, so it is only reported;
 - the two can't be compared: another results format, a set measured on other clips or references (its fingerprint
-  differs), or a model (backend, model and device) measured on one side only.
+  differs), or a model (backend, model, device and backend options) measured on one side only.
 
-Models are matched by backend, model and the device they ran on. Other versions of the scoring tools, another
-precision or another machine are noted. Only the JSON files are read: no model library or benchmark dependency is
-needed.
+Models are matched by backend, model, the device they ran on and the backend options they ran with (``-O``; results
+written before the benchmark took options have none). Other versions of the scoring tools, another precision or
+another machine are noted. Only the JSON files are read: no model library or benchmark dependency is needed.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ SET_MAX_WER_INCREASE: Dict[str, float] = {"fleurs": 0.03}
 CHANGED_CLIPS = 5  # clips listed per regressed set
 _EPSILON = 1e-9  # WERs are rounded to 6 digits: a change of exactly the tolerance passes
 
-Key = Tuple[str, str, str]  # backend, model, device
+Key = Tuple[str, str, str, str]  # backend, model, device, and the backend options (options_label())
 
 
 @dataclasses.dataclass
@@ -55,6 +55,7 @@ class Line:
     rtfx_before: Optional[float]
     rtfx: Optional[float]
     verdict: str = "ok"  # "ok", "regressed" or "improved"
+    options: str = ""  # the backend options it ran with (options_label())
 
 
 @dataclasses.dataclass
@@ -76,12 +77,27 @@ class Comparison:
         return self.set_max_wer_increase.get(name, self.max_wer_increase)
 
 
+def options_label(options: Optional[Dict[str, Any]]) -> str:
+    """Backend options as results show them: ``"batch_size=8, beam_size=1"``, sorted, or ``""`` for none (as in results
+    written before the benchmark took options)."""
+    return ", ".join(f"{name}={_text(value)}" for name, value in sorted((options or {}).items()))
+
+
+def _text(value: Any) -> str:
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def model_label(model: str, options: str) -> str:
+    """A model and the backend options it ran with: ``"tiny (beam_size=1)"``, or ``"tiny"`` without options."""
+    return f"{model} ({options})" if options else model
+
+
 def _key(entry: Dict[str, Any]) -> Key:
-    return entry["backend"], entry["model"], entry["device"]
+    return entry["backend"], entry["model"], entry["device"], options_label(entry.get("options"))
 
 
 def _label(key: Key) -> str:
-    return f"{key[0]} {key[1]} on {key[2]}"
+    return f"{key[0]} {model_label(key[1], key[3])} on {key[2]}"
 
 
 def compare(
@@ -150,7 +166,9 @@ def _compare_set(comparison: Comparison, key: Key, name: str, old: Dict[str, Any
             f"(fingerprint {new_set['fingerprint']}, not {old_set['fingerprint']}); measure the baseline again"
         )
         return
-    line = Line(*key, name, old_set["wer"], new_set["wer"], old_set.get("rtfx"), new_set.get("rtfx"))
+    backend, model, device, options = key
+    rtfx = old_set.get("rtfx"), new_set.get("rtfx")
+    line = Line(backend, model, device, name, old_set["wer"], new_set["wer"], *rtfx, options=options)
     comparison.lines.append(line)
     change = new_set["wer"] - old_set["wer"]
     tolerance = comparison.tolerance(name)
@@ -237,7 +255,8 @@ def markdown(comparison: Comparison) -> str:
             "|---|---|---|---|--:|--:|--:|--:|--:|--:|---|",
         ]
         for line in comparison.lines:
-            cells = [line.backend, line.model, line.device, line.set, _number(line.wer_before, 4), _number(line.wer, 4)]
+            cells = [line.backend, model_label(line.model, line.options), line.device, line.set]
+            cells += [_number(line.wer_before, 4), _number(line.wer, 4)]
             cells += [_change(line.wer_before, line.wer), _number(line.rtfx_before, 1), _number(line.rtfx, 1)]
             cells += [_ratio(line.rtfx_before, line.rtfx), line.verdict]
             lines.append("| " + " | ".join(cells) + " |")

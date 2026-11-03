@@ -1,22 +1,27 @@
-"""Loading shared by the backends that run a Hugging Face transformers model: Voxtral, Parakeet and Canary.
+"""Loading shared by the backends that run a Hugging Face transformers model: Voxtral, Parakeet, Canary and the
+generic transformers backend.
 
 :class:`_TransformersBackend` loads a model class with its ``AutoProcessor``, from a name in ``MODELS`` (a repo id),
 another repo id or a local folder. torch and transformers are imported when a model loads, never before, so listing
 backends stays instant. :func:`torch_device` and :func:`torch_dtype` pick the torch device and precision from what the
 backend was given, for other backends on torch to reuse.
+
+The helpers at the end are shared too: :func:`_segments_from_words` groups word timings into segments, and
+:func:`_rows_at_limit` and :func:`_cut_off_warning` find and report text cut off at the ``max_new_tokens`` limit.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError
 from ..vad import VAD_OPTIONS, SpeechRegion, detect_speech
 from ..vad import settings as vad_settings
-from .base import TranscriptionBackend
+from .base import TranscriptionBackend, recording_name
 from .config import BackendOption, Device
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -40,6 +45,12 @@ MAX_NEW_TOKENS_OPTION = BackendOption(
     MAX_NEW_TOKENS,
     "Most tokens of text per ~30 s chunk; a chunk that reaches it may be cut off, with a warning",
     minimum=1,
+)
+# Canary and Voxtral transcribe this many of their ~30 s chunks at a time (the batch_size option): more is faster on a
+# GPU and takes more memory. Parakeet, whose chunks are four times as long, takes the same option with its own default.
+BATCH_SIZE = 8
+BATCH_SIZE_OPTION = BackendOption(
+    int, BATCH_SIZE, "Chunks transcribed at a time; more is faster on a GPU and takes more memory", minimum=1
 )
 
 
@@ -158,3 +169,96 @@ class _TransformersBackend(TranscriptionBackend):
             raise ModelLoadError("No model loaded. Call load_model() first.")
         if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+
+###############################################################################
+# Helpers the transformers backends share: segments from word timings, and text cut off at the token limit
+###############################################################################
+
+# Word timings are grouped into segments that end at a sentence, a pause or this length (_segments_from_words(), for
+# Parakeet and the transformers backend).
+MAX_SEGMENT_SECONDS = 30.0
+PAUSE_SECONDS = 1.0
+# A "." after these words (lowercased) doesn't end a sentence when more text follows: "Dr. Smith", "Madrid vs. Milan".
+# _ends_sentence() also skips initials ("J.", "U.S.", "e.g.", "i.e."), decimal points ("3." then "5") and a "."
+# followed by a lowercase word ("etc. and so on"), so "etc." still ends a sentence before a capital letter.
+ABBREVIATIONS = frozenset({"dr", "mr", "mrs", "ms", "st", "vs"})
+
+
+def _segments_from_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group words into segments that end after a sentence, before a pause, or at MAX_SEGMENT_SECONDS."""
+    groups: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    for index, word in enumerate(words):
+        if current and (
+            word["start"] - current[-1]["end"] > PAUSE_SECONDS
+            or word["end"] - current[0]["start"] > MAX_SEGMENT_SECONDS
+        ):
+            groups.append(current)
+            current = []
+        current.append(word)
+        following = words[index + 1]["word"] if index + 1 < len(words) else ""
+        if _ends_sentence(word["word"], following):
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return [
+        {"id": i, "start": g[0]["start"], "end": g[-1]["end"], "text": "".join(w["word"] for w in g), "words": g}
+        for i, g in enumerate(groups)
+    ]
+
+
+def _ends_sentence(word: str, following: str) -> bool:
+    """Whether *word* ends a sentence, given the *following* word ("" after the last one).
+
+    "?" and "!" do, and so does "." unless the following word continues the sentence: it starts in lowercase ("etc.
+    and so on"), or *word* is in ABBREVIATIONS ("Dr."), initials ("J.", "U.S.", "e.g.", but not the pronoun "I.") or a
+    number cut at its decimal point ("3." then "5").
+    """
+    word, following = word.strip(), following.strip()
+    if not word.endswith("."):
+        return word.endswith(("?", "!"))
+    if not following:
+        return True
+    stem = re.sub(r"^\W+", "", word[:-1])  # without the "." and any leading punctuation, as in "¿Dr."
+    initials = stem != "I" and all(len(letter) == 1 and letter.isalpha() for letter in stem.split("."))
+    if following[0].islower() or stem.lower() in ABBREVIATIONS or initials:
+        return False
+    return not (stem[-1:].isdigit() and following[0].isdigit())
+
+
+def _rows_at_limit(generated: Any, generation_config: Any, limit: int) -> List[int]:
+    """The rows of a batch of generated tokens (prompt removed) that reached *limit* tokens without ending.
+
+    generate() stops once every row has ended or *limit* tokens are generated, and pads the rows that ended earlier: a
+    row that is *limit* tokens long and doesn't end in an end-of-text or padding token was cut off.
+    """
+    eos = generation_config.eos_token_id
+    stops = {generation_config.pad_token_id, *(eos if isinstance(eos, (list, tuple)) else [eos])}
+    return [row for row, tokens in enumerate(generated.tolist()) if len(tokens) >= limit and tokens[-1] not in stops]
+
+
+def _cut_off_warning(
+    audio_path: Union[Path, "np.ndarray"], backend: str, limit: int, segments: List[Dict[str, Any]]
+) -> str:
+    """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens.
+
+    It names the recording: the file given to Transcriber.transcribe(), also when the backend got its samples, or "audio"
+    for in-memory input (see recording_name()).
+    """
+    first = f"from {_clock(segments[0]['start'])} to {_clock(segments[0]['end'])}"
+    chunks = f"the chunk {first}" if len(segments) == 1 else f"{len(segments)} chunks, the first {first}"
+    # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
+    source = recording_name(audio_path)
+    return (
+        f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off. "
+        f"Raise the limit with the max_new_tokens option (-O max_new_tokens={2 * limit})."
+    )
+
+
+def _clock(seconds: float) -> str:
+    """*seconds* as M:SS, or H:MM:SS from an hour on."""
+    minutes, secs = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"

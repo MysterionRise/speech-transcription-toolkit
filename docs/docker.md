@@ -56,7 +56,8 @@ docker run -d --name transcribe -p 8000:8000 --env-file transcribe.env -v speech
 
 - Clients send it as `Authorization: Bearer <key>`; with the OpenAI SDK, `api_key="<key>"`.
 - `/health` needs no key, so the health check works with one set.
-- For no key, leave the variable out: `TRANSCRIBE_API_KEY=` with no value sets an empty key.
+- For no key, leave the variable out or empty: `TRANSCRIBE_API_KEY=` with no value means no key too, and the server
+  warns that it is open.
 - [Security](server.md#security) has the rest: upload limits, and the API docs, which a key turns off.
 
 ## Transcribe files

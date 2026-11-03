@@ -1,7 +1,7 @@
 # speech-transcription-toolkit
 
 [![CI](https://github.com/MysterionRise/speech-transcription-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/LICENSE)
 
 Offline speech-to-text from the command line or Python.
@@ -13,7 +13,7 @@ Your audio never leaves your machine; models download once, on first use.
 
 ## Install
 
-Needs Python 3.10+ and [ffmpeg](https://ffmpeg.org/download.html) (`apt install ffmpeg` / `brew install ffmpeg`).
+Needs Python 3.11+ and [ffmpeg](https://ffmpeg.org/download.html) (`apt install ffmpeg` / `brew install ffmpeg`).
 
 ```bash
 pip install speech-transcription-toolkit             # faster-whisper, the default backend; no PyTorch

@@ -86,11 +86,12 @@ you are releasing. The installed wheel itself is checked by the clean installs a
    ```powershell
    git clone https://github.com/MysterionRise/speech-transcription-toolkit.git
    cd speech-transcription-toolkit
+   git switch --detach RELEASE_COMMIT   # the commit the dry run built: its SHA is on the run's page
    py -3.12 -m venv .venv
    .venv\Scripts\Activate.ps1
    python -m pip install -U pip
    pip download --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ --dest dist `
-       speech-transcription-toolkit==0.4.0
+       speech-transcription-toolkit==0.5.0
    $wheel = (Get-ChildItem dist\*.whl).FullName
    ```
    If PowerShell refuses to run `Activate.ps1`, allow local scripts once with
@@ -104,9 +105,10 @@ you are releasing. The installed wheel itself is checked by the clean installs a
 brew install ffmpeg python@3.12
 git clone https://github.com/MysterionRise/speech-transcription-toolkit.git
 cd speech-transcription-toolkit
+git switch --detach RELEASE_COMMIT   # the commit the dry run built: its SHA is on the run's page
 python3.12 -m venv .venv && . .venv/bin/activate
 pip download --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ --dest dist \
-    speech-transcription-toolkit==0.4.0
+    speech-transcription-toolkit==0.5.0
 wheel=$(ls dist/*.whl)
 ```
 

@@ -9,6 +9,7 @@
 Besides a path, ``transcribe()`` takes the file's content as ``bytes``, a binary file object, or the samples as a
 NumPy array. Each recording is decoded at most once, also with speaker labels. ``progress=`` gets a
 :class:`~speech_toolkit.ProgressEvent` as the work advances, with each segment as it is transcribed.
+``detect_language()`` identifies the language spoken in a recording from its first 30 seconds, without transcribing.
 
 Nothing is printed: messages go to the ``speech_toolkit`` logger, which shows them only once you configure logging.
 
@@ -21,6 +22,7 @@ for a missing optional package, ``RuntimeError`` for audio or model problems. A 
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import os
 import pathlib
@@ -37,8 +39,11 @@ from typing import (
     Callable,
     Dict,
     Iterator,
+    List,
     Mapping,
     Optional,
+    Protocol,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -56,7 +61,7 @@ from .backends import (
 )
 from .backends.base import _Call, _transcription_call, report_stage
 from .diarization import check_speaker_hints, diarize_audio, load_diarization_pipeline, merge_diarization
-from .errors import SpeechToolkitWarning, UnsupportedOptionError
+from .errors import AudioDecodeError, SpeechToolkitWarning, UnsupportedOptionError
 from .media import SAMPLE_RATE, load_audio
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -77,6 +82,10 @@ _Source = Union[pathlib.Path, "np.ndarray"]
 _MP4_FIRST_BOXES = frozenset({b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"pnot"})
 _HEAD_BYTES = 64 * 1024  # how much of a file object is looked at to tell whether it is such a file
 _WAV_PART_SAMPLES = 1024 * 1024  # how many samples are converted at a time when writing a temporary WAV file
+
+LANGUAGE_DETECTION_SECONDS = 30.0
+"""How much of a recording :meth:`Transcriber.detect_language` decodes: its start, one window of the Whisper models,
+which is all they look at to detect the language."""
 
 
 def configure_hf_token(token: Optional[str] = None) -> None:
@@ -117,6 +126,44 @@ def _check_task(task: str, backend: str, capabilities: AbstractSet[str]) -> None
     if task == "translate" and "translate" not in capabilities:
         translators = ", ".join(backends_with("translate"))
         raise UnsupportedOptionError(f"the {backend} backend can't translate; backends that translate: {translators}")
+
+
+class _LanguageDetector(Protocol):
+    """A backend that detects languages on its own; see Transcriber.detect_language()."""
+
+    def detect_language(self, audio: _Source) -> Sequence[Tuple[str, float]]:
+        """``(language, probability)`` pairs for the start of *audio*."""
+
+
+def language_detectors() -> List[str]:
+    """The registered backends that :meth:`Transcriber.detect_language` works with, in registry order: the ones with
+    the ``"language_detection"`` capability and a ``detect_language()`` method, such as whisper and faster-whisper."""
+    return [name for name in backends_with("language_detection") if _detects_language(get_backend_class(name))]
+
+
+def check_language_detection(backend: str) -> None:
+    """Check that the backend named *backend* detects languages (:meth:`Transcriber.detect_language`). Nothing loads,
+    so call it before loading a model.
+
+    Raises:
+        BackendNotFoundError: If no backend is registered as *backend*.
+        UnsupportedOptionError: If it can't detect languages; the message names the backends that can.
+    """
+    _check_language_detection(backend, get_backend_class(backend))
+
+
+def _check_language_detection(backend: str, backend_class: Type[TranscriptionBackend]) -> None:
+    if not _detects_language(backend_class):
+        detectors = ", ".join(language_detectors()) or "none"
+        raise UnsupportedOptionError(
+            f"the {backend} backend can't detect the language on its own; backends that can: {detectors}"
+        )
+
+
+def _detects_language(backend_class: Type[TranscriptionBackend]) -> bool:
+    """Whether *backend_class* has the "language_detection" capability and a detect_language() method."""
+    method = getattr(backend_class, "detect_language", None)
+    return "language_detection" in backend_class.capabilities and callable(method)
 
 
 class Transcriber:
@@ -324,6 +371,57 @@ class Transcriber:
                 )
         return options
 
+    def detect_language(self, audio: AudioInput, *, top: Optional[int] = 5) -> Dict[str, Any]:
+        """Identify the language spoken in a recording from its first 30 seconds, without transcribing it.
+
+        It gives the most likely language, its probability from 0 to 1, and the *top* candidates, most likely first::
+
+            {"language": "de", "probability": 0.97,
+             "candidates": [{"language": "de", "probability": 0.97}, {"language": "en", "probability": 0.01}]}
+
+        An English-only model, such as ``tiny.en``, gives ``"en"`` with probability 1.
+
+        Args:
+            audio: What :meth:`transcribe` takes: a path, the file's content as ``bytes``, a binary file object or the
+                samples. Only the first 30 seconds are decoded (of samples, used): the Whisper models look at no more
+                to detect the language, when they transcribe too.
+            top: How many of the most likely languages ``candidates`` lists; None lists every language the model
+                knows.
+
+        Returns:
+            A dict of the ``language``, its ``probability`` and the ``candidates``, as above.
+
+        Raises:
+            UnsupportedOptionError: If the backend can't detect languages (whisper and faster-whisper can), before
+                any audio is decoded; :func:`~speech_toolkit.api.language_detectors` names the backends that can.
+            FileNotFoundError: If *audio* is a path that doesn't exist.
+            AudioDecodeError: If the audio can't be decoded, or holds no sound at all.
+            TypeError: For *audio* of a type :meth:`transcribe` doesn't take.
+            ValueError: For an array that isn't 1-D float32 samples, or a *top* below 1.
+
+        A backend detects languages when it has the ``"language_detection"`` capability and a
+        ``detect_language(audio)`` method. That gets the samples (a temporary WAV file of them, without the
+        ``"waveform"`` capability) and returns ``(language, probability)`` pairs: ``[("de", 0.97), ("en", 0.01)]``.
+        """
+        _check_language_detection(self.backend_name, type(self.backend))
+        if top is not None and (isinstance(top, bool) or not isinstance(top, int) or top < 1):
+            raise ValueError(f"top must be a whole number from 1 up, or None, not {top!r}")
+        _check_audio(audio)
+        name = _name(audio) or "the audio"
+        started = time.perf_counter()
+        samples = _decode_start(audio, LANGUAGE_DETECTION_SECONDS)
+        if not len(samples):
+            raise AudioDecodeError(f"{name} holds no sound to detect the language of")
+        with self._backend_input(samples) as backend_audio:
+            found = cast(_LanguageDetector, self.backend).detect_language(backend_audio)
+        ranked = sorted(((str(code), float(chance)) for code, chance in found), key=lambda pair: pair[1], reverse=True)
+        if not ranked:
+            raise RuntimeError(f"the {self.backend_name} backend found no language in {name}")
+        language, probability = ranked[0]
+        logger.debug("Detected %s (%.2f) in %s in %.1f s", language, probability, name, time.perf_counter() - started)
+        candidates = [{"language": code, "probability": chance} for code, chance in ranked[:top]]
+        return {"language": language, "probability": probability, "candidates": candidates}
+
 
 def transcribe(
     audio: AudioInput,
@@ -426,24 +524,46 @@ def _check_audio(audio: object) -> None:
         )
 
 
-def _decode(audio: Union[bytes, bytearray, memoryview, IO[bytes], "np.ndarray"]) -> "np.ndarray":
-    """The samples of in-memory *audio*: bytes or a file object decoded with ffmpeg, or the array given.
+def _decode(
+    audio: Union[bytes, bytearray, memoryview, IO[bytes], "np.ndarray"], max_seconds: Optional[float] = None
+) -> "np.ndarray":
+    """The samples of in-memory *audio*: bytes or a file object decoded with ffmpeg, or the array given; with
+    *max_seconds*, only that many seconds from the start.
 
     ffmpeg reads bytes and file objects through a pipe, which can't seek: an MP4 whose index comes after its audio
     can't be decoded that way, so it is copied to a temporary file and decoded from there.
     """
+    decode = _decoder(max_seconds)
     if isinstance(audio, (bytes, bytearray, memoryview)):
         data = memoryview(audio).cast("B")
-        return _load_from_temporary_file(data) if _index_at_end(data) else load_audio(audio)
+        return _load_from_temporary_file(data, decode=decode) if _index_at_end(data) else decode(audio)
     if callable(getattr(audio, "read", None)):
         stream = cast(IO[bytes], audio)
         head = _read_head(stream)
         if _index_at_end(head):
-            return _load_from_temporary_file(head, stream)
-        return load_audio(cast(IO[bytes], _Rewound(head, stream)))  # load_audio() only calls read()
+            return _load_from_temporary_file(head, stream, decode=decode)
+        return decode(cast(IO[bytes], _Rewound(head, stream)))  # load_audio() only calls read()
     import numpy as np
 
-    return np.ascontiguousarray(audio)  # checked by _check_audio(); torch can't take negative strides
+    samples = cast("np.ndarray", audio)
+    if max_seconds is not None:
+        samples = samples[: int(max_seconds * SAMPLE_RATE)]
+    return np.ascontiguousarray(samples)  # checked by _check_audio(); torch can't take negative strides
+
+
+def _decoder(max_seconds: Optional[float]) -> Callable[[Any], "np.ndarray"]:
+    """load_audio(), or with *max_seconds* load_audio() decoding only that many seconds from the start."""
+    return load_audio if max_seconds is None else functools.partial(load_audio, max_seconds=max_seconds)
+
+
+def _decode_start(audio: AudioInput, seconds: float) -> "np.ndarray":
+    """The samples of the first *seconds* of *audio*, any input transcribe() takes: no more of it is decoded."""
+    if isinstance(audio, (str, os.PathLike)):
+        path = pathlib.Path(audio)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {path}")
+        return load_audio(path, max_seconds=seconds)
+    return _decode(audio, max_seconds=seconds)
 
 
 def _read_head(stream: IO[bytes]) -> bytes:
@@ -498,14 +618,20 @@ def _index_at_end(head: Union[bytes, memoryview]) -> bool:
     return offset > 0
 
 
-def _load_from_temporary_file(head: Union[bytes, memoryview], rest: Optional[IO[bytes]] = None) -> "np.ndarray":
-    """Decode *head* and then the *rest* of a file object from a temporary file, deleted afterwards."""
+def _load_from_temporary_file(
+    head: Union[bytes, memoryview],
+    rest: Optional[IO[bytes]] = None,
+    *,
+    decode: Optional[Callable[[Any], "np.ndarray"]] = None,
+) -> "np.ndarray":
+    """Decode *head* and then the *rest* of a file object from a temporary file, deleted afterwards, with *decode*
+    (default: load_audio())."""
     with _temporary_file(".mp4") as path:
         with open(path, "wb") as file:
             file.write(head)
             if rest is not None:
                 shutil.copyfileobj(rest, file)
-        return load_audio(path)
+        return (decode or load_audio)(path)
 
 
 @contextlib.contextmanager

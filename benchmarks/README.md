@@ -13,10 +13,14 @@ python -m benchmarks.run -b faster-whisper -m tiny
 python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny   # several models
 python -m benchmarks.run -b parakeet                     # a backend's default model
 python -m benchmarks.run -b faster-whisper -m tiny --sets librispeech --limit 10   # a quick look
+python -m benchmarks.run -b faster-whisper -m tiny -b faster-whisper -m tiny -O beam_size=1   # two settings
 ```
 
 - **Models:** each `-m` names a model of the `-b` before it; a `-b` without `-m` measures the backend's default model.
   Any registered backend works, so a new backend needs nothing here.
+- **Backend options:** each `-O KEY=VALUE` sets an option for the models of the `-b` before it, as `transcribe -O`
+  does (`transcribe --list-backends` lists them), so one run measures a model with several settings. An option the
+  backend doesn't have fails before anything is downloaded. Each result keeps its options.
 - **Output:** a Markdown table on stdout (progress goes to stderr), and the results as JSON in
   `benchmarks/results/<time>.json` (ignored by git), or where `--json` says.
 - **Device:** `--device cpu` or `--device cuda`; by default each backend picks, as `transcribe` does.
@@ -137,6 +141,7 @@ For example, from [`baseline.json`](baseline.json), shortened:
   "results": [                      // one per backend and model, in the order measured
     {
       "backend": "faster-whisper", "model": "tiny",
+      "options": {},                // the -O options it ran with, such as {"beam_size": 1}; older files have none
       "device": "cpu", "precision": "int8_float32", "gpu": null,   // where the model actually ran
       "load_seconds": 1.861,
       "audio_seconds": 1132.225, "seconds": 88.983, "rtfx": 12.72,  // over all clips
@@ -174,8 +179,9 @@ It prints a Markdown table of each model's WER and RTFx on each set, before and 
   one CPU to another (see Reproducibility). `--max-wer-increase WER` changes the default, and `--max-wer-increase
   SET=WER` one set's. The clips whose errors rose most are listed;
 - with `--max-rtfx-drop FRACTION`, a model's RTFx fell by more than that fraction (off by default);
-- the two can't be compared: a model (backend, model and device) measured on one side only, a set measured on other
-  clips or references (another fingerprint), or another `schema`.
+- the two can't be compared: a model (backend, model, `-O` options and device) measured on one side only, a set
+  measured on other clips or references (another fingerprint), or another `schema`. Results written before `-O`
+  existed have no options.
 
 Other versions of jiwer or whisper-normalizer, another precision and another machine are noted, not failed.
 

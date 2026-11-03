@@ -31,12 +31,14 @@ from speech_toolkit.backends import (
     CanaryBackend,
     FasterWhisperBackend,
     ParakeetBackend,
+    TransformersBackend,
     VoxtralBackend,
     WhisperBackend,
     backends_with,
     get_backend_class,
     list_backends,
 )
+from speech_toolkit.backends.transformers_backend import ModelTraits
 from speech_toolkit.media import SAMPLE_RATE, split_audio
 from speech_toolkit.vad import (
     MIN_SILENCE,
@@ -497,6 +499,27 @@ class TestFasterWhisper:
         assert (result.text, result.segments, result.language, result.duration) == ("", [], None, 30.0)
         assert result.to_dict()["language_probability"] is None
 
+    def test_the_batched_pipeline_filters_with_the_settings(self, silero, backend):
+        """With a batch_size above 1 the pipeline always filters, with the vad_ settings; --vad still keeps silent
+        audio from it."""
+        pipeline = MagicMock()
+        pipeline.transcribe.return_value = backend._model.transcribe.return_value
+        backend._batched_pipeline = lambda: pipeline  # in place of faster-whisper's BatchedInferencePipeline
+        backend._options = {**backend.options, "batch_size": 4, "vad_min_silence": 0.5}
+
+        backend.transcribe(speech_audio())  # without --vad
+
+        kwargs = pipeline.transcribe.call_args[1]
+        assert kwargs["vad_filter"] is True
+        assert kwargs["vad_parameters"] == {"threshold": 0.5, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
+        backend._model.transcribe.assert_not_called()
+
+        pipeline.reset_mock()
+        result = backend.transcribe(SILENCE, vad=True)
+
+        pipeline.transcribe.assert_not_called()
+        assert (result.text, result.segments) == ("", [])
+
     def test_a_path_is_decoded_with_load_audio(self, silero, backend, tmp_path, monkeypatch):
         """Through load_audio's hardened ffmpeg call rather than PyAV."""
         path = tmp_path / "talk.mp3"
@@ -519,7 +542,7 @@ class TestFasterWhisper:
 
 
 class TestChunkedBackends:
-    """Voxtral, Parakeet and Canary: chunks cut at the edges of the speech, silent audio in none."""
+    """Voxtral, Parakeet, Canary and transformers: chunks cut at the edges of the speech, silent audio in none."""
 
     @staticmethod
     def loaded(backend_class: type) -> Any:
@@ -569,11 +592,14 @@ class TestChunkedBackends:
     def test_parakeet(self, silero, monkeypatch):
         chunks: List[Tuple[float, int]] = []
 
-        def transcribe_chunk(self: Any, samples: np.ndarray, offset: float) -> List[Dict[str, Any]]:
-            chunks.append((offset, len(samples)))
-            return [{"word": " Hi.", "start": round(offset + 0.4, 3), "end": round(offset + 1.0, 3)}]
+        def transcribe_batch(self: Any, batch: List[Tuple[float, np.ndarray]]) -> List[Dict[str, Any]]:
+            words = []
+            for offset, samples in batch:
+                chunks.append((offset, len(samples)))
+                words.append({"word": " Hi.", "start": round(offset + 0.4, 3), "end": round(offset + 1.0, 3)})
+            return words
 
-        monkeypatch.setattr(ParakeetBackend, "_transcribe_chunk", transcribe_chunk)
+        monkeypatch.setattr(ParakeetBackend, "_transcribe_batch", transcribe_batch)
         backend = self.loaded(ParakeetBackend)
         backend._options = {**backend.options, "vad_padding": 0.1}
 
@@ -601,10 +627,35 @@ class TestChunkedBackends:
         assert all(length <= 30 * RATE for length in batches[0])
         assert sum(batches[0]) == round(70.8 * RATE)
 
+    ###############################################################################
+    # Transcriber: the VAD step
+    ###############################################################################
 
-###############################################################################
-# Transcriber: the VAD step
-###############################################################################
+    def test_transformers(self, silero, monkeypatch):
+        chunks: List[Tuple[float, int]] = []
+
+        def transcribe_chunk(self: Any, samples: np.ndarray, offset: float, *args: Any) -> List[Dict[str, Any]]:
+            chunks.append((offset, len(samples)))
+            return [{"start": offset, "end": offset + len(samples) / RATE, "text": " Hi."}]
+
+        detect = MagicMock(return_value="en")
+        monkeypatch.setattr(TransformersBackend, "_transcribe_chunk", transcribe_chunk)
+        monkeypatch.setattr(TransformersBackend, "_detect_language", detect)
+        backend = TransformersBackend()
+        backend._pipeline, backend._traits = MagicMock(), ModelTraits("whisper", detects_language=True)
+
+        result = backend.transcribe(speech_audio(), vad=True, verbose=False)
+
+        assert chunks == [(4.6, round(2.8 * RATE)), (19.6, round(2.3 * RATE))]
+        assert [(s["id"], s["start"]) for s in result.segments] == [(0, 4.6), (1, 19.6)]
+        assert (result.language, detect.call_count) == ("en", 1)  # detected in the first stretch of speech
+
+        chunks.clear()
+        detect.reset_mock()
+        result = backend.transcribe(SILENCE, vad=True, verbose=False)
+
+        assert (chunks, result.text, result.segments, result.duration) == ([], "", [], 30.0)
+        detect.assert_not_called()  # nor does its language detection
 
 
 class FakeVadBackend(FakeBackend):

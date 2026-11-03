@@ -28,7 +28,7 @@ a missing package or token fails before a large model download.
 ```python
 transcriber = Transcriber("faster-whisper", "Systran/faster-whisper-small", device="cuda:1", compute_type="int8")
 transcriber = Transcriber("canary", options={"max_new_tokens": 1000})
-transcriber.backend.options  # the options in effect: {"compute_type": "auto", "max_new_tokens": 1000}
+transcriber.backend.options  # the options in effect: {"compute_type": "auto", "max_new_tokens": 1000, "batch_size": 8}
 ```
 
 The model name, device and options are checked before anything loads: one the backend can't take raises
@@ -123,6 +123,31 @@ transcriber.transcribe(int16_samples.astype(np.float32) / 32768)
   `load_audio(data, strict=True, max_seconds=..., timeout=...)` first and pass the samples; see
   [Decoding audio](#decoding-audio).
 
+### Language detection
+
+`transcriber.detect_language(audio, *, top=5)` identifies the language spoken in a recording, without transcribing it.
+It takes the same [audio input](#audio-input) as `transcribe()`, and decodes only its first 30 seconds:
+
+```python
+transcriber = Transcriber("faster-whisper", "small")
+transcriber.detect_language("talk.mp3")
+# {"language": "de", "probability": 0.97,
+#  "candidates": [{"language": "de", "probability": 0.97}, {"language": "en", "probability": 0.01}, ...]}
+```
+
+- **Candidates:** the `top` most likely languages, most likely first. `top=None` lists every language the model knows,
+  to choose between a few languages you expect, say.
+- **The same detection** as a transcription's: the Whisper models look at the first 30 seconds then too, and report
+  the probability in `result.language_probability`.
+- **English-only models,** such as `tiny.en`, give `"en"` with probability 1.
+- **Backends:** whisper and faster-whisper. Another backend raises `UnsupportedOptionError` before any audio is
+  decoded. In `speech_toolkit.api`, `language_detectors()` names the backends that can, and
+  `check_language_detection(backend)` checks one without loading it.
+- **Errors:** a missing file raises `FileNotFoundError`, and audio that can't be decoded, or has no sound at all,
+  `AudioDecodeError`.
+
+`transcribe --detect-language` does this from the command line; see [Language detection](cli.md#language-detection).
+
 ## Results
 
 `TranscriptionResult` has:
@@ -134,13 +159,16 @@ transcriber.transcribe(int16_samples.astype(np.float32) / 32768)
 - `duration`: the audio's length in seconds. The faster-whisper, Parakeet, Canary and Voxtral backends report it, and
   otherwise it comes from the decoded samples: for in-memory input, and with diarization. It is `None` only when a
   backend that doesn't report it, such as whisper, transcribes a path without diarization.
-- `language_probability`: how likely the detected language is, from 0 to 1, if the backend reports it (faster-whisper
-  does); otherwise `None`.
+- `language_probability`: how likely the detected language is, from 0 to 1, if the backend reports it (whisper and
+  faster-whisper do, with 1 for a language given); otherwise `None`.
 - `speaker_segments`: with diarization, the segments with a `speaker` label each, and a `segment_id`: the `id` of
   the segment in `segments` each one comes from. Otherwise `None`.
 - `raw`: other backend output. faster-whisper also keeps `duration` and `language_probability` here, as before.
-- `render(fmt="txt", max_line_width=None)`: the result as txt, srt, vtt or json text.
-- `save(path, fmt=None, max_line_width=None)`: writes the rendered result, taking the format from the extension.
+- `render(fmt="txt", max_line_width=None, *, ...)`: the result as txt, srt, vtt, json, tsv or rttm text. The
+  keyword-only options are `max_lines`, `max_cue_duration`, `speaker_names`, `timestamps`, `word_level` and
+  `file_id`; see [Output options](formats.md#output-options).
+- `save(path, fmt=None, max_line_width=None, *, ...)`: writes the rendered result, taking the format from the
+  extension.
 - `to_dict()`: the result as a dict, as the JSON output has it.
 
 See [Output formats](formats.md) for what each format contains.
@@ -193,7 +221,7 @@ built-in error the library raised before, so `except ValueError` and the like ke
 |---|---|---|
 | `BackendNotFoundError` | `ValueError` | No backend has that name. |
 | `ModelNotFoundError` | `ValueError` | The backend has no model of that name, and it isn't a custom model the backend loads (a repo id or local path of the right kind). |
-| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, a `task` other than `transcribe` or `translate`, speaker hints without `diarize=True`, a device the backend can't run on, or an option or value it doesn't take. |
+| `UnsupportedOptionError` | `ValueError` | The request can't be honoured: translating with a backend that only transcribes, detecting the language with one that can't, a `task` other than `transcribe` or `translate`, speaker hints without `diarize=True`, a device the backend can't run on, or an option or value it doesn't take. |
 | `BackendUnavailableError` | `ImportError` | An optional package is missing, for the backend or for diarization; the message names the extra to install. |
 | `ModelLoadError` | `RuntimeError` | The model can't be downloaded or loaded. |
 | `AudioDecodeError` | `RuntimeError` | The audio can't be decoded. |
@@ -344,3 +372,16 @@ class MyBackend(TranscriptionBackend):
 
 A backend with `OPTIONS` takes them keyword-only: `Transcriber` passes `options` only when the user gave some, so a
 backend without them keeps the old signature. See [Adding a backend](backends.md#adding-a-backend) for the details.
+
+**Language detection:** for [`detect_language()`](#language-detection) and `transcribe --detect-language`, declare the
+`language_detection` capability and add a `detect_language(audio)` method. It gets the first 30 seconds of the
+recording, as samples (or, without the `waveform` capability, a temporary WAV file of them), and returns
+`(language, probability)` pairs in any order, such as `[("de", 0.97), ("en", 0.01)]`.
+
+```python
+class MyBackend(TranscriptionBackend):
+    capabilities = frozenset({"language_detection", "waveform"})
+
+    def detect_language(self, audio):
+        return [("de", 0.97), ("en", 0.01)]
+```

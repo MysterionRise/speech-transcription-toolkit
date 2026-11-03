@@ -8,30 +8,31 @@ first use. Loading is shared with Voxtral, in ``_transformers.py``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-import re
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..errors import SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from ._transformers import MAX_NEW_TOKENS, MAX_NEW_TOKENS_OPTION, _TransformersBackend
-from .base import TranscriptionResult, recording_name, report_progress
+from ._transformers import _clock  # noqa: F401  (moved to _transformers.py; still importable from here)
+from ._transformers import (
+    BATCH_SIZE_OPTION,
+    MAX_NEW_TOKENS,
+    MAX_NEW_TOKENS_OPTION,
+    _cut_off_warning,
+    _rows_at_limit,
+    _segments_from_words,
+    _TransformersBackend,
+)
+from .base import TranscriptionResult, report_progress
 from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
 
 logger = logging.getLogger(__name__)
-
-# Parakeet word timings are grouped into segments that end at a sentence, a pause or this length.
-MAX_SEGMENT_SECONDS = 30.0
-PAUSE_SECONDS = 1.0
-# A "." after these words (lowercased) doesn't end a sentence when more text follows: "Dr. Smith", "Madrid vs. Milan".
-# _ends_sentence() also skips initials ("J.", "U.S.", "e.g.", "i.e."), decimal points ("3." then "5") and a "."
-# followed by a lowercase word ("etc. and so on"), so "etc." still ends a sentence before a capital letter.
-ABBREVIATIONS = frozenset({"dr", "mr", "mrs", "ms", "st", "vs"})
 
 
 class _NvidiaBackend(_TransformersBackend):
@@ -57,6 +58,11 @@ class ParakeetBackend(_NvidiaBackend):
     MODEL_CLASS = "ParakeetForTDT"
     # The encoder attends over the whole chunk, so memory grows quickly with chunk length.
     CHUNK_SECONDS = 120
+    OPTIONS: Mapping[str, BackendOption] = {
+        **_NvidiaBackend.OPTIONS,
+        # Two 120 s chunks at a time by default: the 4 minutes of audio of Canary's and Voxtral's eight 30 s chunks.
+        "batch_size": dataclasses.replace(BATCH_SIZE_OPTION, default=2),
+    }
 
     def transcribe(
         self,
@@ -76,10 +82,13 @@ class ParakeetBackend(_NvidiaBackend):
                 language is None, as Parakeet can't report the one it detected.
             task: Only 'transcribe' is supported.
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. How far it got is also passed to
-                report_progress() after each chunk, whatever *verbose* is.
+                report_progress() after each batch of chunks, whatever *verbose* is.
             vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
                 chunks are cut at its edges, and audio without speech reaches no model.
             word_timestamps: Keep each segment's per-word timings ("words").
+
+        The audio is cut into chunks of up to 120 s, which the model transcribes ``batch_size`` (an option, 2 by
+        default) at a time.
 
         Raises:
             ModelLoadError: If no model is loaded.
@@ -99,13 +108,16 @@ class ParakeetBackend(_NvidiaBackend):
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
         chunks = split_audio(audio, self.CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
+        batch_size = self._options["batch_size"]
         words: List[Dict[str, Any]] = []
-        for number, (offset, samples) in enumerate(chunks, start=1):
-            words += self._transcribe_chunk(samples, offset)
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
+            words += self._transcribe_batch(batch)
             # A segment can go on into the next chunk, so segments are made, and reported, once every chunk is done.
+            offset, samples = batch[-1]
             report_progress(offset + len(samples) / SAMPLE_RATE, duration)
             level = logging.INFO if verbose else logging.DEBUG
-            logger.log(level, "Parakeet: transcribed %d/%d chunks", number, len(chunks))
+            logger.log(level, "Parakeet: transcribed %d/%d chunks", first + len(batch), len(chunks))
 
         segments = _segments_from_words(words)
         if not word_timestamps:
@@ -118,16 +130,35 @@ class ParakeetBackend(_NvidiaBackend):
             duration=duration,
         )
 
-    def _transcribe_chunk(self, samples: Any, offset: float) -> List[Dict[str, Any]]:
-        """Words of one chunk, with times shifted by the chunk's *offset* in seconds."""
-        inputs = self._processor(samples, sampling_rate=SAMPLE_RATE).to(self._device, dtype=self._model.dtype)
-        with warnings.catch_warnings():
-            # Parakeet sizes generation from the audio length, but transformers still warns about max_length.
-            warnings.filterwarnings("ignore", message="Using the model-agnostic default `max_length`")
-            outputs = self._model.generate(**inputs)
-        # The TDT decoder predicts how many frames each token lasts; decode() turns that into token times.
+    def _transcribe_batch(self, chunks: Sequence[Tuple[float, Any]]) -> List[Dict[str, Any]]:
+        """The words of a batch of *chunks*, (offset in seconds, samples) pairs, in order, with each chunk's times
+        shifted by its offset. The processor pads the shorter chunks, and generate() stops at the end of each."""
+        inputs = self._processor([samples for _, samples in chunks], sampling_rate=SAMPLE_RATE)
+        inputs = inputs.to(self._device, dtype=self._model.dtype)
+        longest = max(len(samples) for _, samples in chunks)
+        outputs = self._model.generate(**inputs, max_new_tokens=self._max_steps(longest))
+        # The TDT decoder predicts how many frames each token lasts; decode() turns that into token times, per chunk.
         _, timestamps = self._processor.decode(outputs.sequences, durations=outputs.durations)
-        return _words_from_tokens(timestamps[0], offset)
+        words: List[Dict[str, Any]] = []
+        for (offset, _), tokens in zip(chunks, timestamps):
+            words += _words_from_tokens(tokens, offset)
+        return words
+
+    def _max_steps(self, samples: int) -> int:
+        """The most decoding steps generate() may take for *samples* of audio: ``max_symbols_per_step`` for each
+        frame of the encoder, which makes one per ``hop_length`` samples ``subsampling_factor`` times fewer.
+
+        That is the limit Parakeet sets itself when it is given none. Giving it keeps transformers from warning about
+        its default ``max_length`` on every call. (Hiding that warning in a ``warnings.catch_warnings()`` block, as
+        before, made every other warning show again for each file: leaving the block resets Python's record of the
+        warnings shown.)
+        """
+        config = self._model.config
+        symbols = int(getattr(config, "max_symbols_per_step", 10))
+        subsampling = int(getattr(getattr(config, "encoder_config", None), "subsampling_factor", 8))
+        hop = int(getattr(getattr(self._processor, "feature_extractor", None), "hop_length", 160))
+        frames = samples // hop + 1
+        return symbols * -(-frames // subsampling)
 
 
 class CanaryBackend(_NvidiaBackend):
@@ -142,9 +173,12 @@ class CanaryBackend(_NvidiaBackend):
     MODEL_CLASS = "CanaryForConditionalGeneration"
     # Canary returns text without timestamps, so each chunk becomes one coarsely timestamped segment.
     CHUNK_SECONDS = 30
-    BATCH_SIZE = 8
     MAX_NEW_TOKENS = MAX_NEW_TOKENS  # the max_new_tokens option's default
-    OPTIONS: Mapping[str, BackendOption] = {**_NvidiaBackend.OPTIONS, "max_new_tokens": MAX_NEW_TOKENS_OPTION}
+    OPTIONS: Mapping[str, BackendOption] = {
+        **_NvidiaBackend.OPTIONS,
+        "max_new_tokens": MAX_NEW_TOKENS_OPTION,
+        "batch_size": BATCH_SIZE_OPTION,
+    }
 
     def transcribe(
         self,
@@ -168,7 +202,8 @@ class CanaryBackend(_NvidiaBackend):
                 speech reaches no model.
 
         Returns:
-            TranscriptionResult with one segment per chunk of up to 30 s. A chunk whose text reaches the
+            TranscriptionResult with one segment per chunk of up to 30 s; the model transcribes ``batch_size`` chunks
+            (an option, 8 by default) at a time. A chunk whose text reaches the
             max_new_tokens option's limit may be cut off: one warning per file gives the number of such chunks and the
             first one's times.
         """
@@ -184,8 +219,9 @@ class CanaryBackend(_NvidiaBackend):
         chunks = split_audio(audio, self.CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
-        for first in range(0, len(chunks), self.BATCH_SIZE):
-            batch = chunks[first : first + self.BATCH_SIZE]
+        batch_size = self._options["batch_size"]
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
             texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language or "en", task)
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})
@@ -247,82 +283,3 @@ def _words_from_tokens(tokens: Sequence[Dict[str, Any]], offset: float) -> List[
             words[-1]["end"] = max(words[-1]["end"], end)
         new_word = False
     return words
-
-
-def _segments_from_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Group words into segments that end after a sentence, before a pause, or at MAX_SEGMENT_SECONDS."""
-    groups: List[List[Dict[str, Any]]] = []
-    current: List[Dict[str, Any]] = []
-    for index, word in enumerate(words):
-        if current and (
-            word["start"] - current[-1]["end"] > PAUSE_SECONDS
-            or word["end"] - current[0]["start"] > MAX_SEGMENT_SECONDS
-        ):
-            groups.append(current)
-            current = []
-        current.append(word)
-        following = words[index + 1]["word"] if index + 1 < len(words) else ""
-        if _ends_sentence(word["word"], following):
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
-    return [
-        {"id": i, "start": g[0]["start"], "end": g[-1]["end"], "text": "".join(w["word"] for w in g), "words": g}
-        for i, g in enumerate(groups)
-    ]
-
-
-def _ends_sentence(word: str, following: str) -> bool:
-    """Whether *word* ends a sentence, given the *following* word ("" after the last one).
-
-    "?" and "!" do, and so does "." unless the following word continues the sentence: it starts in lowercase ("etc.
-    and so on"), or *word* is in ABBREVIATIONS ("Dr."), initials ("J.", "U.S.", "e.g.", but not the pronoun "I.") or a
-    number cut at its decimal point ("3." then "5").
-    """
-    word, following = word.strip(), following.strip()
-    if not word.endswith("."):
-        return word.endswith(("?", "!"))
-    if not following:
-        return True
-    stem = re.sub(r"^\W+", "", word[:-1])  # without the "." and any leading punctuation, as in "¿Dr."
-    initials = stem != "I" and all(len(letter) == 1 and letter.isalpha() for letter in stem.split("."))
-    if following[0].islower() or stem.lower() in ABBREVIATIONS or initials:
-        return False
-    return not (stem[-1:].isdigit() and following[0].isdigit())
-
-
-def _rows_at_limit(generated: Any, generation_config: Any, limit: int) -> List[int]:
-    """The rows of a batch of generated tokens (prompt removed) that reached *limit* tokens without ending.
-
-    generate() stops once every row has ended or *limit* tokens are generated, and pads the rows that ended earlier: a
-    row that is *limit* tokens long and doesn't end in an end-of-text or padding token was cut off.
-    """
-    eos = generation_config.eos_token_id
-    stops = {generation_config.pad_token_id, *(eos if isinstance(eos, (list, tuple)) else [eos])}
-    return [row for row, tokens in enumerate(generated.tolist()) if len(tokens) >= limit and tokens[-1] not in stops]
-
-
-def _cut_off_warning(
-    audio_path: Union[Path, "np.ndarray"], backend: str, limit: int, segments: List[Dict[str, Any]]
-) -> str:
-    """The warning about the chunks (their *segments*) whose text reached the *limit* of generated tokens.
-
-    It names the recording: the file given to Transcriber.transcribe(), also when the backend got its samples, or "audio"
-    for in-memory input (see recording_name()).
-    """
-    first = f"from {_clock(segments[0]['start'])} to {_clock(segments[0]['end'])}"
-    chunks = f"the chunk {first}" if len(segments) == 1 else f"{len(segments)} chunks, the first {first}"
-    # The file name also keeps Python from hiding the warning as a repeat when another file has the same chunk times.
-    source = recording_name(audio_path)
-    return (
-        f"{source}: {backend} reached its limit of {limit} tokens in {chunks}, so the text may be cut off. "
-        f"Raise the limit with the max_new_tokens option (-O max_new_tokens={2 * limit})."
-    )
-
-
-def _clock(seconds: float) -> str:
-    """*seconds* as M:SS, or H:MM:SS from an hour on."""
-    minutes, secs = divmod(round(seconds), 60)
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"

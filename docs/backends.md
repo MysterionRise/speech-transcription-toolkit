@@ -7,6 +7,7 @@
 | `voxtral` | **voxtral-mini**, voxtral-small | Mistral Voxtral (3B and 24B); transcription only, timestamps per ~30 s |
 | `parakeet` | **parakeet-tdt-0.6b-v3**, parakeet-tdt-0.6b-v2 | NVIDIA Parakeet: fast and accurate, word timestamps. v3: English + 24 European languages, detected automatically; v2: English only |
 | `canary` | **canary-1b-v2** | NVIDIA Canary: the same 25 languages; translates to English. Can't detect the language: give it with `-l` (default English). Timestamps per ~30 s |
+| `transformers` | **openai/whisper-large-v3-turbo**, or any speech recognition model on the Hugging Face Hub | Hugging Face transformers' pipeline: Whisper fine-tunes, distil-whisper, wav2vec2, MMS, Moonshine, ... What it can do depends on the model: see [Any Hugging Face model](#any-hugging-face-model-transformers) |
 
 `transcribe --list-backends` lists them with their models, capabilities, devices and [options](#backend-options), and
 says whether each one's packages are installed. `transcribe --list-models -b <backend>` lists one backend's models.
@@ -21,6 +22,7 @@ Besides the names in the table, `-m` (`model=` in Python) takes fine-tunes, othe
 | `faster-whisper` | A Hugging Face repo id (`org/name`) of a CTranslate2 model, or a local CTranslate2 model folder | `-m Systran/faster-whisper-small`, `-m deepdml/faster-whisper-large-v3-turbo-ct2`, `-m ./models/my-ct2-model` |
 | `whisper` | A local checkpoint file (`.pt`); openai-whisper loads no repo ids or folders | `-m ~/models/whisper-finetuned.pt` |
 | `voxtral`, `parakeet`, `canary` | A Hugging Face repo id (`org/name`), or a local model folder, of a model of the same kind | `-m nvidia/parakeet-tdt-0.6b-v2` |
+| `transformers` | The repo id (`org/name`), or a local folder, of any speech recognition model transformers' pipeline runs | `-m openai/whisper-small`, `-m facebook/wav2vec2-base-960h`, `-m ./models/my-fine-tune` |
 
 - **Offline:** a local folder or file loads without the network. A folder saved by `huggingface-cli download` or
   `faster_whisper.download_model()` works as is.
@@ -41,6 +43,8 @@ option.
 | `prompt`: `--prompt` | yes | yes | no | no | no |
 | `vad`: `--vad`, see [Voice activity detection](#voice-activity-detection) | yes | yes | yes | yes | yes |
 | `word_timestamps`: `--word-timestamps` | yes | yes | no | yes | no |
+
+The `transformers` backend's capabilities depend on the model it loads: see [Any Hugging Face model](#any-hugging-face-model-transformers).
 
 **Translation:**
 - `-t translate` with a backend that can't translate is an error, reported before the model loads.
@@ -63,7 +67,7 @@ The GPU is used when available. `--device` (`device=` in Python) picks one:
 | `cpu` | The CPU. | all |
 | `cuda` | The first NVIDIA GPU. | all |
 | `cuda:N` | The NVIDIA GPU numbered N, from 0: `cuda:1` is the second. | all |
-| `mps` | An Apple Silicon GPU. | whisper, voxtral, parakeet, canary; not faster-whisper (CTranslate2 has no Apple GPU support) |
+| `mps` | An Apple Silicon GPU. | whisper, voxtral, parakeet, canary, transformers; not faster-whisper (CTranslate2 has no Apple GPU support) |
 
 - A device the backend can't use, such as `-b faster-whisper --device mps`, stops before anything loads.
 - [Speaker labels](diarization.md) run on the same device.
@@ -76,7 +80,7 @@ device:
 | Backend | `auto` on an NVIDIA GPU | `auto` on an Apple GPU | `auto` on the CPU | `--compute-type` also takes |
 |---|---|---|---|---|
 | faster-whisper | float16, or the next of int8_float16, int8, float32 the GPU supports | (no Apple GPU) | int8, or float32 | CTranslate2's types: `int8`, `int8_float32`, `int8_float16`, `int8_bfloat16`, `int16`, `float16`, `bfloat16`, `float32`, and `default` (the type the model was saved in) |
-| voxtral, parakeet, canary | bfloat16, or float16 on a GPU without bfloat16 | float16 | float32 | `float32`, `float16`, `bfloat16` |
+| voxtral, parakeet, canary, transformers | bfloat16, or float16 on a GPU without bfloat16 | float16 | float32 | `float32`, `float16`, `bfloat16` |
 | whisper | fp16 | fp16 | fp32 | (nothing else) |
 
 faster-whisper asks CTranslate2 which types the device supports, so a GPU without fast float16 runs in int8 instead
@@ -94,18 +98,125 @@ Python; `transcribe --list-backends` lists them, with their defaults:
 |---|---|---|---|
 | faster-whisper | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | faster-whisper | `cpu_threads` | `0` | Threads on the CPU; 0 uses `OMP_NUM_THREADS` if set, else 4. |
-| voxtral, parakeet, canary | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
+| faster-whisper | `num_workers` | `1` | Transcriptions the model runs at once when several threads of a program share it; see [Speed](#speed-batches-beams-and-threads). |
+| faster-whisper | `batch_size` | `1` | From 2 up, the batched pipeline, as `--batch-size` sets it; see [Speed](#speed-batches-beams-and-threads). |
+| voxtral, canary | `batch_size` | `8` | Chunks of ~30 s transcribed at once. |
+| parakeet | `batch_size` | `2` | Chunks of up to 120 s transcribed at once. |
+| faster-whisper | `beam_size` | `5` | Beams in beam search, as `--beam-size` sets it; 1 decodes greedily. |
+| whisper | `beam_size` | `1` | The same; openai-whisper decodes greedily by default. |
+| whisper, faster-whisper | `condition_on_previous_text` | `true` | Prompt each 30 s window with the text before it; see [Made-up text](#made-up-text). |
+| whisper, faster-whisper | `no_speech_threshold` | `0.6` | Skip a window as silence when its no-speech probability is above this and its text is improbable. |
+| whisper, faster-whisper | `hallucination_silence_threshold` | `0` (off) | Skip silences longer than this many seconds around text that looks made up. |
+| voxtral, parakeet, canary, transformers | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | voxtral, canary | `max_new_tokens` | `500` | Most tokens of text per ~30 s chunk; see [Text limit per chunk](#text-limit-per-chunk). |
 | all | `vad_threshold`, `vad_min_silence`, `vad_padding` | `0.5`, `2.0`, `0.4` | Tune `--vad`; see [Voice activity detection](#voice-activity-detection). |
 
 ```bash
 transcribe talk.mp3 -O cpu_threads=8
 transcribe talk.mp3 -b canary -l de -O max_new_tokens=1000 --device cuda:1
+transcribe talk.mp3 -O condition_on_previous_text=false
 ```
 
 - Values are converted to the option's type: numbers, `true`/`false`, or one of the listed choices.
 - An option the backend doesn't have stops before anything loads, with a message that lists the ones it has; so does
   a value that doesn't fit.
+- `--batch-size N` and `--beam-size N` are shortcuts for `-O batch_size=N` and `-O beam_size=N`, and win over them.
+
+## Speed: batches, beams and threads
+
+`--batch-size` and `--beam-size` trade memory, or a little accuracy, for speed. Both stop before anything loads with a
+backend that doesn't have them.
+
+**faster-whisper's batched pipeline,** `--batch-size N` with N from 2 up: voice activity detection cuts the audio at
+its pauses into pieces of speech of up to 30 s, and the model decodes N pieces at once. faster-whisper's own
+benchmarks find it several times faster on a GPU, where 8 or 16 is a good start; on the CPU it gains less, mostly on
+long recordings (see the numbers below). What changes:
+
+- **Silence is skipped,** as with `--vad`, which the pipeline needs to cut the audio.
+- **Each piece is one segment,** of up to 30 s, instead of a sentence or two. Word timings, with `--word-timestamps`
+  or `--max-line-width` (which turns them on for subtitles), still split subtitles into short cues. (Asking the
+  pipeline to predict timestamps would split the pieces, but loses text: it decodes each piece once.)
+- **No temperature fallback and no conditioning:** each piece is decoded once, on its own. So
+  `condition_on_previous_text`, `no_speech_threshold` and `hallucination_silence_threshold` don't apply, and setting
+  them warns.
+
+**Chunked backends:** Voxtral and Canary cut long audio into ~30 s chunks and Parakeet into chunks of up to 120 s, and
+transcribe `batch_size` chunks at once: 8, or 2 for Parakeet, the same 4 minutes of audio. Lower it if a long
+recording runs out of GPU memory, raise it on a large GPU. A batch pads its shorter chunks to the longest one, which
+costs time on the CPU when the last chunk of a recording is short; `-O batch_size=1` turns batching off.
+
+**Beam size:** faster-whisper keeps 5 candidate transcripts (beams) at each step and openai-whisper 1, which is greedy
+decoding. `--beam-size 1` makes faster-whisper up to twice as fast on the CPU, usually at a small cost in accuracy;
+`--beam-size 5` makes openai-whisper search like faster-whisper: slower, and often a little more accurate.
+
+**Threads:** `-O cpu_threads=N` sets the threads faster-whisper uses on the CPU (default: `OMP_NUM_THREADS`, else 4).
+`-O num_workers=N` lets N threads of a Python program transcribe with one faster-whisper model at the same time, each
+worker taking memory of its own; `transcribe` and `transcribe-server` transcribe one file at a time, so they don't
+gain from it.
+
+### Measured
+
+faster-whisper `tiny` in int8 on 4 CPUs (a cloud VM's Intel Xeon @ 2.1 GHz). First with the
+[benchmark harness](#benchmarks), on the first 20 clips of each set (`--limit 20`: 7.3 minutes of short recordings,
+2.5 to 43 s each, in English, German and Spanish), all in one run:
+
+| Options | RTFx | WER LibriSpeech | WER FLEURS (de, es) |
+|---|--:|--:|--:|
+| (the defaults: 5 beams, no batches) | 11.3 | 0.076 | 0.215 (0.273, 0.153) |
+| `--beam-size 1` | 13.1 | 0.100 | 0.244 (0.294, 0.191) |
+| `--batch-size 4` | 14.1 | 0.074 | 0.173 (0.216, 0.128) |
+| `--batch-size 8` | 14.8 | 0.074 | 0.173 (0.216, 0.128) |
+| `--batch-size 4 --beam-size 1` | 19.3 | 0.089 | 0.421 (0.265, 0.583) |
+| `-O condition_on_previous_text=false` | 11.8 | 0.076 | 0.215 (0.273, 0.153) |
+| `-O hallucination_silence_threshold=2` | 11.9 | 0.076 | 0.215 (0.273, 0.153) |
+
+Then on a longer recording, the integration tests' long clip (104 s: two voices, sentences with 1 s pauses):
+
+| Options | RTFx | WER |
+|---|--:|--:|
+| (the defaults) | 18.6 | 0.000 |
+| `--beam-size 1` | 35.2 | 0.000 |
+| `--batch-size 8` | 41.0 | 0.019 |
+| `--batch-size 8 --beam-size 1` | 48.0 | 0.000 |
+
+- **Greedy decoding** is up to twice as fast, and a little less accurate on harder speech.
+- **The batched pipeline** is faster on the CPU too, and skipping silence made its transcripts of the short clips a
+  little more accurate here. Short recordings make one piece each, so the speed comes from long ones.
+- **Batched and greedy together** were the fastest, but on one Spanish clip the model fell into a loop ("Ciudad de
+  Ciudad de ..."), which the batched pipeline has no fallback to stop: 103 errors in that 23-word clip instead of 6.
+  Keep the default beams with `--batch-size`, unless speed matters most.
+- `condition_on_previous_text` and `hallucination_silence_threshold` cost next to nothing; on these clips, with no
+  long silences, they change nothing either.
+
+## Made-up text
+
+Whisper models sometimes write text nobody said, mostly in silence and long pauses: a phrase over and over, or "Thank
+you." at the end. Ways to avoid it, for whisper and faster-whisper:
+
+| Option | What it does | Cost |
+|---|---|---|
+| `-O condition_on_previous_text=false` | Transcribes each 30 s window without the text before it as a prompt, so one made-up phrase doesn't set off the next. | Names may be spelled differently from one window to the next. |
+| `--vad` (faster-whisper) | Skips silence before transcribing. | Very quiet speech may be skipped too. Pauses shorter than 2 s stay. |
+| `--batch-size 4` (faster-whisper) | The batched pipeline skips silence too, cutting at shorter pauses, and decodes each piece on its own. | Segments of up to 30 s; see [Speed](#speed-batches-beams-and-threads). |
+| `-O hallucination_silence_threshold=2` | Skips silences longer than 2 s around text that looks made up. | Needs word timings, which it computes; may drop real words next to a pause. |
+| `-O no_speech_threshold=0.4` | Drops a window as silence when its no-speech probability is above this (default 0.6) and its text is improbable. Lower drops more. | Can drop real speech; the default is Whisper's own. |
+
+faster-whisper `turbo` on the CPU, on the long clip (104 s, see above) followed by 1 or 3 s of silence. With the
+defaults it adds text at the end, and the word error rate rises from 0 to about 0.2:
+
+| Options | 1 s of silence: WER, and the made-up text | 3 s of silence | RTFx (3 s) |
+|---|---|---|--:|
+| (the defaults) | 0.210: "That was a speech recognition test. Yes, I sent it to the whole team and I asked you after lunch. Thank you. Thank you, Gemma." | 0.214: "All right, thank you to the text test. Thank you." | 1.1 |
+| `-O condition_on_previous_text=false` | **0.000**, none | **0.000**, none | 3.3 |
+| `--vad` | 0.190: "A reality test. Thank you." | 0.167, none (but 25 real words dropped) | 4.3 |
+| `--batch-size 4` | **0.000**, none | **0.000**, none | 4.9 |
+| `-O hallucination_silence_threshold=2` | 0.090, none (but 19 real words dropped) | 0.090, none (the same) | 2.9 |
+| `-O no_speech_threshold=0.3` | (not measured) | 0.257: "We did a speech recognition test. Let's take down and do this text. ..." | 1.1 |
+
+`condition_on_previous_text=false` and the batched pipeline kept every word and made up none. They were also faster:
+Whisper's temperature fallback, which decodes a window again when its text looks wrong, had nothing to retry (the batched pipeline has none). `--vad`
+and `hallucination_silence_threshold` dropped real words. Measured once, on one clip, so take it as a hint of what to
+try first, not as a rule.
 
 ## Text limit per chunk
 
@@ -122,9 +233,9 @@ the recording.
 
 | Backend | How it skips the silence |
 |---|---|
-| faster-whisper | Its built-in filter: the stretches of speech joined end to end, the timestamps moved back. |
+| faster-whisper | Its built-in filter: the stretches of speech joined end to end, the timestamps moved back. The batched pipeline (`--batch-size` 2 or more) always filters, with the same settings. |
 | whisper | The same, with the same detector and settings. |
-| voxtral, parakeet, canary | Chunks cut at the edges of the speech, so no chunk holds the silence between two stretches of speech; a stretch longer than a chunk is cut in its quietest moment, as without `--vad`. Canary and Voxtral, which time each chunk as a whole, then give a segment per stretch of speech. |
+| voxtral, parakeet, canary, transformers | Chunks cut at the edges of the speech, so no chunk holds the silence between two stretches of speech; a stretch longer than a chunk is cut in its quietest moment, as without `--vad`. Canary and Voxtral, which time each chunk as a whole, then give a segment per stretch of speech. |
 
 - **No speech:** a recording without speech gives an empty transcript without running the model, and the command says
   `No speech found in …` on stderr.
@@ -149,6 +260,60 @@ transcribe meeting.mp3 -b canary -l de --vad -O vad_min_silence=0.5 -O vad_thres
 In Python, `speech_toolkit.vad.detect_speech(samples)` gives the stretches of speech of decoded audio as `(start, end)`
 pairs in seconds, and `speech_toolkit.media.split_audio(samples, 30, regions=...)` cuts chunks from them; see the
 [API reference](reference/vad.md).
+
+## Any Hugging Face model (`transformers`)
+
+`-b transformers` runs most speech recognition models on the Hugging Face Hub through transformers' speech recognition
+pipeline, with no code per model: Whisper fine-tunes and distil-whisper, CTC models such as wav2vec2, HuBERT and MMS,
+and the other models the pipeline supports, such as Moonshine and Granite Speech. Install the
+[`transformers` extra](install.md#extras) and give `-m` a repo id or a local model folder:
+
+```bash
+transcribe talk.mp3 -b transformers -m openai/whisper-small
+transcribe talk.mp3 -b transformers -m facebook/wav2vec2-base-960h --word-timestamps -o talk.json
+transcribe talk.mp3 -b transformers -m ./models/my-whisper-fine-tune -l de
+```
+
+In Python: `Transcriber("transformers", "openai/whisper-small")`. `transcribe --list-models -b transformers` lists a
+few models that work well; without `-m`, the backend loads `openai/whisper-large-v3-turbo`.
+
+**What a model can do** is read from it once it has loaded, from the kind of model the pipeline makes of it and, for
+Whisper, from its generation config:
+
+| Kind of model | For example | Timestamps | Word timestamps | `-l` | Detects the language | Translates |
+|---|---|---|---|---|---|---|
+| Whisper, multilingual | `openai/whisper-small`, `openai/whisper-large-v3-turbo`, fine-tunes | per segment | yes, if its generation config has `alignment_heads` (OpenAI's models do) | yes | yes, unless its generation config sets a language, as distil-whisper's English models do | yes (turbo isn't trained for it: a warning says so) |
+| Whisper, English-only | `openai/whisper-small.en` | per segment | as above | no: English | no | no |
+| CTC | `facebook/wav2vec2-base-960h`, HuBERT, MMS | per segment, made from the words | yes | no | no | no |
+| Others: sequence-to-sequence models, speech LLMs | `moonshine-ai/moonshine-tiny`, Granite Speech | per ~30 s chunk | no | no | no | no |
+
+- **Segments:** with word timestamps, a Whisper model's segments are made from its words, like a CTC model's: a segment
+  ends after a sentence, before a pause of more than a second, or at 30 s.
+- **Language:** a multilingual Whisper model takes a language code (`-l de`) or, as Whisper does, detects the
+  language in the first 30 s and keeps it for the rest. Other models can't be told the language, so they ignore `-l`
+  with a warning (an English-only Whisper model takes `-l en` silently).
+- **Long recordings** are cut into chunks of up to 30 s, in pauses, and each chunk goes to the model whole. The
+  pipeline's own `chunk_length_s`, whose merging of overlapping chunks is experimental for sequence-to-sequence models,
+  isn't used.
+- **Precision and devices** are as for the other transformers backends: `--compute-type` and `--device`, including
+  `cuda:N` and `mps`.
+- **Dedicated backends do more** for some models: `-b parakeet` gives Parakeet TDT's word timestamps, which the
+  pipeline doesn't, and `-b canary` and `-b voxtral` know their models' prompts and token limits.
+- **Not supported yet:** models that need `trust_remote_code`; MMS's language adapters (it loads its default,
+  English); and models whose feature extractor expects another sampling rate than 16 kHz need `torchaudio` installed,
+  which the pipeline uses to resample.
+
+**When requests are checked.** Before a model loads, the backend's capabilities are what *some* models can do, so
+`-t translate` and `--word-timestamps` pass the checks made then (the model name's shape, the device and the options
+are checked as for every backend). Once the model has loaded, the backend's capabilities are that model's:
+
+- A translation the model can't do stops with `UnsupportedOptionError` before any audio is decoded, as with any
+  backend that can't translate.
+- `--word-timestamps` for a model without them prints a warning and is skipped, as with any backend without them. So
+  `--diarize` and `--max-line-width` don't ask such a model for word timings.
+- The server rejects both requests with a 400 error.
+- Called directly (`get_backend("transformers")`), the backend raises `UnsupportedOptionError` for a task, word
+  timestamps or a language the model can't take, before it reads the audio.
 
 ## Adding a backend
 
@@ -204,8 +369,15 @@ pip install -e ".[whisper]" -r requirements-bench.txt     # plus the extras of t
 python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny
 ```
 
-Each `-m` is a model of the `-b` before it. The table goes to stdout and the results to a JSON file, which
-`python -m benchmarks.compare BEFORE.json AFTER.json` compares. The first run downloads the evaluation set (about 40 MB)
+Each `-m` is a model of the `-b` before it, and each `-O KEY=VALUE` a [backend option](#backend-options) for its models,
+so one run compares settings:
+
+```bash
+python -m benchmarks.run -b faster-whisper -m tiny -b faster-whisper -m tiny -O beam_size=1
+```
+
+The table goes to stdout and the results to a JSON file, which `python -m benchmarks.compare BEFORE.json AFTER.json`
+compares. The first run downloads the evaluation set (about 40 MB)
 and checks every clip against its SHA-256.
 
 **On a GPU,** pass `--device cuda`; the table then names the GPU and shows its peak memory. For example:

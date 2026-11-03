@@ -90,6 +90,7 @@ _STREAM_CHUNK_BYTES = 1024 * 1024  # how much of a file object is read at a time
 _MAX_REASON_CHARS = 200  # ffmpeg's reason in an error message is cut to this length
 _LOG_CONTEXT = re.compile(r"\[([^\]]*)\]\s*")  # the "[mp3 @ 0x55d5c8a0b2c0] " that starts many of ffmpeg's lines
 _SUMMARY = re.compile(r"^Error opening (?:input|output) files?: ")  # ffmpeg 6+ ends with this; keep only the reason
+_INPUT_CONTEXT = re.compile(r"^in#\d+/?")  # an input's log context, "in#0" or "in#0/concat"
 
 
 def collect_files(
@@ -299,8 +300,11 @@ def _failure_reason(stderr: bytes, returncode: int, url: str) -> str:
     """Why ffmpeg failed, in one line: a known problem in our words, else ffmpeg's last line, made safe to show."""
     messages = _ffmpeg_messages(stderr)
     for context, message in messages:
-        if message.startswith("Format not on whitelist"):  # ffmpeg names the demuxer as the message's context
-            return f"the input's format ({context or 'unknown'}) isn't allowed in strict mode"
+        if message.startswith("Format not on whitelist"):
+            # Older ffmpeg names the demuxer as the message's context ("[concat @ …]"); ffmpeg 9 names only the input
+            # ("[in#0 @ …]"), so then the format goes unnamed.
+            name = _INPUT_CONTEXT.sub("", context)
+            return f"the input's format{f' ({name})' if name else ''} isn't allowed in strict mode"
         if "does not contain any stream" in message:
             return "the input has no audio stream"
         if "partial file" in message and url == _PIPE:

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Tuple, Union, cast
 
 from ..errors import ModelNotFoundError
-from ..formats import format_for_path, render, write_text
+from ..formats import SpeakerNames, format_for_path, render, write_text
 from ..media import AudioSource
 from ..types import SCHEMA_VERSION, Segment
 from .config import DEVICE_KINDS, MODEL_SOURCE_NAMES, BackendOption, Device, check_device, model_source, parse_options
@@ -263,19 +263,78 @@ class TranscriptionResult:
         except ValueError as e:
             raise ValueError(f"{source}: {e}") from e
 
-    def render(self, fmt: str = "txt", max_line_width: Optional[int] = None) -> str:
-        """The result as ``txt``, ``srt``, ``vtt`` or ``json`` text (speaker-labelled after diarization).
+    def render(
+        self,
+        fmt: str = "txt",
+        max_line_width: Optional[int] = None,
+        *,
+        max_lines: Optional[int] = None,
+        max_cue_duration: Optional[float] = None,
+        speaker_names: Optional[SpeakerNames] = None,
+        timestamps: bool = False,
+        word_level: bool = False,
+        file_id: Optional[str] = None,
+    ) -> str:
+        """The result as ``txt``, ``srt``, ``vtt``, ``json``, ``tsv`` or ``rttm`` text (speaker-labelled after
+        diarization; rttm needs it).
 
-        *max_line_width* splits subtitles into lines of at most that many characters, two per cue.
+        Args:
+            fmt: The format.
+            max_line_width: srt, vtt: split cues into lines of at most this many columns, two per cue.
+            max_lines: srt, vtt: with *max_line_width*, at most this many lines per cue (default 2).
+            max_cue_duration: srt, vtt: split cues that would last longer than this many seconds.
+            speaker_names: Every format: rename the speakers, in the order they first speak (``["Alice", "Bob"]`` or
+                ``"Alice,Bob"``; an empty name keeps that label), or with a mapping (``{"SPEAKER_01": "Bob"}``).
+            timestamps: txt: one line per segment, starting with its time: ``[00:01:02] text``.
+            word_level: vtt: mark when each word starts, with ``<00:00:01.200>`` tags, in cues with word timings.
+            file_id: rttm: the file ID its lines start with (default: ``"audio"``).
+
+        Raises:
+            UnsupportedOptionError: For an unknown format, *max_lines* without *max_line_width*, a value that doesn't
+                fit, or rttm for a result without speaker labels.
         """
-        return render(self.to_dict(), fmt, max_line_width)
+        return render(
+            self.to_dict(),
+            fmt,
+            max_line_width,
+            max_lines=max_lines,
+            max_cue_duration=max_cue_duration,
+            speaker_names=speaker_names,
+            timestamps=timestamps,
+            word_level=word_level,
+            file_id=file_id,
+        )
 
     def save(
-        self, path: Union[str, "os.PathLike[str]"], fmt: Optional[str] = None, max_line_width: Optional[int] = None
+        self,
+        path: Union[str, "os.PathLike[str]"],
+        fmt: Optional[str] = None,
+        max_line_width: Optional[int] = None,
+        *,
+        max_lines: Optional[int] = None,
+        max_cue_duration: Optional[float] = None,
+        speaker_names: Optional[SpeakerNames] = None,
+        timestamps: bool = False,
+        word_level: bool = False,
+        file_id: Optional[str] = None,
     ) -> Path:
-        """Write the result to *path*, in *fmt* or else the format its extension names (default txt)."""
+        """Write the result to *path*, in *fmt* or else the format its extension names (default txt).
+
+        The other arguments are :meth:`render`'s; rttm's *file_id* defaults to the file's name without its extension
+        (``meeting.rttm`` gives ``meeting``).
+        """
         dest = Path(path)
-        write_text(dest, self.render(fmt or format_for_path(dest), max_line_width))
+        text = self.render(
+            fmt or format_for_path(dest),
+            max_line_width,
+            max_lines=max_lines,
+            max_cue_duration=max_cue_duration,
+            speaker_names=speaker_names,
+            timestamps=timestamps,
+            word_level=word_level,
+            file_id=dest.stem if file_id is None else file_id,
+        )
+        write_text(dest, text)
         return dest
 
 
