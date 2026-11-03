@@ -7,7 +7,7 @@ name = "speech-transcription-toolkit"
 dynamic = ["version"]
 description = "Offline speech-to-text: Whisper, faster-whisper, Voxtral, Parakeet or Canary, optional speaker diarization, TXT/SRT/VTT/JSON output."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Konstantin Perikov" }]
@@ -19,7 +19,6 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -33,7 +32,7 @@ dependencies = [
     "faster-whisper>=1.2.1",
     # faster-whisper 1.2.1 still passes av.open(metadata_errors=...), which PyAV 19 removed
     # (SYSTRAN/faster-whisper#1492); drop this cap, and its entry in dependabot.yml, once a faster-whisper release
-    # supports PyAV 19. PyAV 17 is the last series with Python 3.10 wheels; 18 needs Python 3.11.
+    # supports PyAV 19.
     "av>=17.0.0,<19",
     "numpy>=1.26",
 ]
@@ -78,7 +77,7 @@ speech_toolkit = ["py.typed"]
 
 [tool.black]
 line-length = 120
-target-version = ['py310']
+target-version = ['py311']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -120,7 +119,7 @@ skip = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

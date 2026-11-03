@@ -116,7 +116,7 @@ class TestJson:
 class TestRender:
     @pytest.mark.parametrize("fmt", FORMATS)
     def test_every_format_renders(self, fmt):
-        assert isinstance(render(RESULT, fmt), str)
+        assert isinstance(render(DIARIZED if fmt == "rttm" else RESULT, fmt), str)  # rttm needs speakers
 
     def test_render_dispatches(self):
         assert render(RESULT, "srt") == to_srt(RESULT)

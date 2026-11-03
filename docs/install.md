@@ -1,6 +1,6 @@
 # Installation
 
-You need Python 3.10 or newer, and [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`
+You need Python 3.11 or newer, and [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`
 (`apt install ffmpeg` / `brew install ffmpeg`). Every backend, speaker diarization and `ogg2wav` use ffmpeg to decode audio.
 
 ```bash

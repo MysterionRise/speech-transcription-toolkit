@@ -86,7 +86,7 @@ Packaging lives in `pyproject.toml` (setuptools; version from `speech_toolkit.__
 - When testing `sys.exit()`, expect `SystemExit` (e.g. `pytest.raises(SystemExit, match=...)`).
 - Warnings raised by `speech_toolkit` fail the test (`filterwarnings` in `pyproject.toml`); expect them with `pytest.warns` or a `@pytest.mark.filterwarnings` mark.
 - Integration tests (`tests/integration/`, all marked `integration`, which plain `pytest` deselects) run real models on the flite samples in `tests/data/` (`samples.json` has their text; `python tests/data/make_samples.py` regenerates them). They check WER against per-backend thresholds (`MAX_WER` in `tests/integration/helpers.py`), timestamps and stdout. A test whose extra isn't installed is skipped (it fails with `INTEGRATION_REQUIRE_EXTRAS=1`, as in CI); the diarization test also needs `HF_TOKEN`.
-- CI: unit tests on Python 3.10–3.14, plus macOS and Windows, without torch; the Integration Tests job runs `pytest -m integration` (not on draft PRs). `.github/workflows/nightly.yml` runs both against the newest release of every dependency and opens an issue when they fail.
+- CI: unit tests on Python 3.11–3.14, plus macOS and Windows, without torch; the Integration Tests job runs `pytest -m integration` (not on draft PRs). `.github/workflows/nightly.yml` runs both against the newest release of every dependency and opens an issue when they fail.
 
 ## External Requirements
 
