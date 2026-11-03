@@ -11,6 +11,8 @@ collected with towncrier when a release is made.
 
 ## [0.5.0](https://github.com/MysterionRise/speech-transcription-toolkit/releases/tag/v0.5.0) - 2026-10-29
 
+The first release on PyPI. It also contains everything listed under [0.4.0](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CHANGELOG.md#040---2026-10-22), which wasn't published on its own.
+
 ### Added
 
 - `-m` takes Hugging Face repo ids and local models (a CTranslate2 folder for faster-whisper, a `.pt` file for whisper), and `--device` takes `auto`, `cuda:N` and, except with faster-whisper, `mps` for Apple GPUs. `--compute-type` sets the precision, and `-O key=value` sets a backend's options, such as faster-whisper's `cpu_threads` or Canary's and Voxtral's `max_new_tokens` (`compute_type=` and `options=` in Python); `--list-backends` lists them. ([#29](https://github.com/MysterionRise/speech-transcription-toolkit/issues/29))
@@ -34,7 +36,9 @@ collected with towncrier when a release is made.
 - Folder scans leave out hidden files and the `._*` files macOS writes on other disks, and pick up more audio and video files (`.aif`, `.aiff`, `.amr`, `.caf`, `.m4b`, `.mka`, `.3gp`, `.avi`, `.m2ts`, `.m4v`, `.mpeg`, `.mpg`, `.mts`). Output files are written under a temporary name and then renamed, so Ctrl-C never leaves a half-written one, and on Windows a transcript redirected to a file or a pipe is written as UTF-8 instead of failing on characters the code page lacks. ([#32](https://github.com/MysterionRise/speech-transcription-toolkit/issues/32))
 
 
-## [0.4.0](https://github.com/MysterionRise/speech-transcription-toolkit/releases/tag/v0.4.0) - 2026-10-22
+## 0.4.0 - 2026-10-22
+
+Not published on its own: these changes were first released in 0.5.0.
 
 ### Security
 
