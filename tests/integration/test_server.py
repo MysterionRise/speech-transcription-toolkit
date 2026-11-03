@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
-from typing import Any, Iterator
+import uuid
+from typing import Any, Dict, Iterator, Tuple
 
 import pytest
 
@@ -110,6 +112,23 @@ def create_transcription(client: Any, path: pathlib.Path, **options: Any) -> Any
         return client.audio.transcriptions.create(model="whisper-1", file=audio, **options)
 
 
+def post_form(url: str, fields: Dict[str, str], path: pathlib.Path) -> Tuple[str, bytes]:
+    """POST *fields* and the file at *path* as a form, as the SDK can't send them: its Content-Type and body."""
+    boundary = uuid.uuid4().hex
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+        for name, value in fields.items()
+    ]
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n\r\n')
+    body = "".join(parts).encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # localhost, never through a proxy
+    with opener.open(request, timeout=300) as response:
+        return response.headers["Content-Type"], response.read()
+
+
 def test_json(client, speech):
     assert_wer(create_transcription(client, speech.path).text, speech, "faster-whisper")
 
@@ -141,3 +160,35 @@ def test_audio_over_the_length_limit(client, tmp_path):
 
     with pytest.raises(BadRequestError, match=f"longer than this server's {MAX_AUDIO_SECONDS} s limit"):
         create_transcription(client, path)
+
+
+def test_streaming(client, speech):
+    """The SDK streams the transcript: a delta per segment as faster-whisper decodes it, then the whole text."""
+    with speech.path.open("rb") as audio:
+        events = list(client.audio.transcriptions.create(model="gpt-4o-mini-transcribe", file=audio, stream=True))
+
+    *deltas, done = events
+    assert deltas and {event.type for event in deltas} == {"transcript.text.delta"}
+    assert done.type == "transcript.text.done"
+    assert "".join(event.delta for event in deltas) == done.text
+    assert_wer(done.text, speech, "faster-whisper")
+
+
+def test_whisper_1_ignores_stream(server, speech):
+    """As OpenAI does: a client that asks whisper-1 for a stream gets JSON, with usage in seconds of audio."""
+    fields = {"model": "whisper-1", "stream": "true"}
+    content_type, body = post_form(f"{server.url}/audio/transcriptions", fields, speech.path)
+
+    assert content_type == "application/json"
+    response = json.loads(body)
+    assert response["usage"]["type"] == "duration"
+    assert response["usage"]["seconds"] == pytest.approx(speech.duration, abs=1)  # whole seconds, rounded up
+    assert_wer(response["text"], speech, "faster-whisper")
+
+
+def test_translation_from_the_requested_language(server, speech):
+    """/v1/audio/translations takes the language of the audio, an extension to OpenAI's API."""
+    fields = {"model": "whisper-1", "language": "en"}
+    _, body = post_form(f"{server.url}/audio/translations", fields, speech.path)
+
+    assert_wer(json.loads(body)["text"], speech, "faster-whisper")

@@ -15,6 +15,8 @@ numpy>=1.26
 fastapi==0.142.2
 httpx==0.28.1
 python-multipart==0.0.32
+# The official OpenAI SDK, which the server's tests drive through the TestClient (tests/test_server_stream.py)
+openai==3.42.1
 
 # Code quality
 black==26.5.1
