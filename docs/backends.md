@@ -98,17 +98,124 @@ Python; `transcribe --list-backends` lists them, with their defaults:
 |---|---|---|---|
 | faster-whisper | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | faster-whisper | `cpu_threads` | `0` | Threads on the CPU; 0 uses `OMP_NUM_THREADS` if set, else 4. |
+| faster-whisper | `num_workers` | `1` | Transcriptions the model runs at once when several threads of a program share it; see [Speed](#speed-batches-beams-and-threads). |
+| faster-whisper | `batch_size` | `1` | From 2 up, the batched pipeline, as `--batch-size` sets it; see [Speed](#speed-batches-beams-and-threads). |
+| voxtral, canary | `batch_size` | `8` | Chunks of ~30 s transcribed at once. |
+| parakeet | `batch_size` | `2` | Chunks of up to 120 s transcribed at once. |
+| faster-whisper | `beam_size` | `5` | Beams in beam search, as `--beam-size` sets it; 1 decodes greedily. |
+| whisper | `beam_size` | `1` | The same; openai-whisper decodes greedily by default. |
+| whisper, faster-whisper | `condition_on_previous_text` | `true` | Prompt each 30 s window with the text before it; see [Made-up text](#made-up-text). |
+| whisper, faster-whisper | `no_speech_threshold` | `0.6` | Skip a window as silence when its no-speech probability is above this and its text is improbable. |
+| whisper, faster-whisper | `hallucination_silence_threshold` | `0` (off) | Skip silences longer than this many seconds around text that looks made up. |
 | voxtral, parakeet, canary, transformers | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | voxtral, canary | `max_new_tokens` | `500` | Most tokens of text per ~30 s chunk; see [Text limit per chunk](#text-limit-per-chunk). |
 
 ```bash
 transcribe talk.mp3 -O cpu_threads=8
 transcribe talk.mp3 -b canary -l de -O max_new_tokens=1000 --device cuda:1
+transcribe talk.mp3 -O condition_on_previous_text=false
 ```
 
 - Values are converted to the option's type: numbers, `true`/`false`, or one of the listed choices.
 - An option the backend doesn't have stops before anything loads, with a message that lists the ones it has; so does
   a value that doesn't fit.
+- `--batch-size N` and `--beam-size N` are shortcuts for `-O batch_size=N` and `-O beam_size=N`, and win over them.
+
+## Speed: batches, beams and threads
+
+`--batch-size` and `--beam-size` trade memory, or a little accuracy, for speed. Both stop before anything loads with a
+backend that doesn't have them.
+
+**faster-whisper's batched pipeline,** `--batch-size N` with N from 2 up: voice activity detection cuts the audio at
+its pauses into pieces of speech of up to 30 s, and the model decodes N pieces at once. faster-whisper's own
+benchmarks find it several times faster on a GPU, where 8 or 16 is a good start; on the CPU it gains less, mostly on
+long recordings (see the numbers below). What changes:
+
+- **Silence is skipped,** as with `--vad`, which the pipeline needs to cut the audio.
+- **Each piece is one segment,** of up to 30 s, instead of a sentence or two. Word timings, with `--word-timestamps`
+  or `--max-line-width` (which turns them on for subtitles), still split subtitles into short cues. (Asking the
+  pipeline to predict timestamps would split the pieces, but loses text: it decodes each piece once.)
+- **No temperature fallback and no conditioning:** each piece is decoded once, on its own. So
+  `condition_on_previous_text`, `no_speech_threshold` and `hallucination_silence_threshold` don't apply, and setting
+  them warns.
+
+**Chunked backends:** Voxtral and Canary cut long audio into ~30 s chunks and Parakeet into chunks of up to 120 s, and
+transcribe `batch_size` chunks at once: 8, or 2 for Parakeet, the same 4 minutes of audio. Lower it if a long
+recording runs out of GPU memory, raise it on a large GPU. A batch pads its shorter chunks to the longest one, which
+costs time on the CPU when the last chunk of a recording is short; `-O batch_size=1` turns batching off.
+
+**Beam size:** faster-whisper keeps 5 candidate transcripts (beams) at each step and openai-whisper 1, which is greedy
+decoding. `--beam-size 1` makes faster-whisper up to twice as fast on the CPU, usually at a small cost in accuracy;
+`--beam-size 5` makes openai-whisper search like faster-whisper: slower, and often a little more accurate.
+
+**Threads:** `-O cpu_threads=N` sets the threads faster-whisper uses on the CPU (default: `OMP_NUM_THREADS`, else 4).
+`-O num_workers=N` lets N threads of a Python program transcribe with one faster-whisper model at the same time, each
+worker taking memory of its own; `transcribe` and `transcribe-server` transcribe one file at a time, so they don't
+gain from it.
+
+### Measured
+
+faster-whisper `tiny` in int8 on 4 CPUs (a cloud VM's Intel Xeon @ 2.1 GHz). First with the
+[benchmark harness](#benchmarks), on the first 20 clips of each set (`--limit 20`: 7.3 minutes of short recordings,
+2.5 to 43 s each, in English, German and Spanish), all in one run:
+
+| Options | RTFx | WER LibriSpeech | WER FLEURS (de, es) |
+|---|--:|--:|--:|
+| (the defaults: 5 beams, no batches) | 11.3 | 0.076 | 0.215 (0.273, 0.153) |
+| `--beam-size 1` | 13.1 | 0.100 | 0.244 (0.294, 0.191) |
+| `--batch-size 4` | 14.1 | 0.074 | 0.173 (0.216, 0.128) |
+| `--batch-size 8` | 14.8 | 0.074 | 0.173 (0.216, 0.128) |
+| `--batch-size 4 --beam-size 1` | 19.3 | 0.089 | 0.421 (0.265, 0.583) |
+| `-O condition_on_previous_text=false` | 11.8 | 0.076 | 0.215 (0.273, 0.153) |
+| `-O hallucination_silence_threshold=2` | 11.9 | 0.076 | 0.215 (0.273, 0.153) |
+
+Then on a longer recording, the integration tests' long clip (104 s: two voices, sentences with 1 s pauses):
+
+| Options | RTFx | WER |
+|---|--:|--:|
+| (the defaults) | 18.6 | 0.000 |
+| `--beam-size 1` | 35.2 | 0.000 |
+| `--batch-size 8` | 41.0 | 0.019 |
+| `--batch-size 8 --beam-size 1` | 48.0 | 0.000 |
+
+- **Greedy decoding** is up to twice as fast, and a little less accurate on harder speech.
+- **The batched pipeline** is faster on the CPU too, and skipping silence made its transcripts of the short clips a
+  little more accurate here. Short recordings make one piece each, so the speed comes from long ones.
+- **Batched and greedy together** were the fastest, but on one Spanish clip the model fell into a loop ("Ciudad de
+  Ciudad de ..."), which the batched pipeline has no fallback to stop: 103 errors in that 23-word clip instead of 6.
+  Keep the default beams with `--batch-size`, unless speed matters most.
+- `condition_on_previous_text` and `hallucination_silence_threshold` cost next to nothing; on these clips, with no
+  long silences, they change nothing either.
+
+## Made-up text
+
+Whisper models sometimes write text nobody said, mostly in silence and long pauses: a phrase over and over, or "Thank
+you." at the end. Ways to avoid it, for whisper and faster-whisper:
+
+| Option | What it does | Cost |
+|---|---|---|
+| `-O condition_on_previous_text=false` | Transcribes each 30 s window without the text before it as a prompt, so one made-up phrase doesn't set off the next. | Names may be spelled differently from one window to the next. |
+| `--vad` (faster-whisper) | Skips silence before transcribing. | Very quiet speech may be skipped too. Pauses shorter than 2 s stay. |
+| `--batch-size 4` (faster-whisper) | The batched pipeline skips silence too, cutting at shorter pauses, and decodes each piece on its own. | Segments of up to 30 s; see [Speed](#speed-batches-beams-and-threads). |
+| `-O hallucination_silence_threshold=2` | Skips silences longer than 2 s around text that looks made up. | Needs word timings, which it computes; may drop real words next to a pause. |
+| `-O no_speech_threshold=0.4` | Drops a window as silence when its no-speech probability is above this (default 0.6) and its text is improbable. Lower drops more. | Can drop real speech; the default is Whisper's own. |
+
+faster-whisper `turbo` on the CPU, on the long clip (104 s, see above) followed by 1 or 3 s of silence. With the
+defaults it adds text at the end, and the word error rate rises from 0 to about 0.2:
+
+| Options | 1 s of silence: WER, and the made-up text | 3 s of silence | RTFx (3 s) |
+|---|---|---|--:|
+| (the defaults) | 0.210: "That was a speech recognition test. Yes, I sent it to the whole team and I asked you after lunch. Thank you. Thank you, Gemma." | 0.214: "All right, thank you to the text test. Thank you." | 1.1 |
+| `-O condition_on_previous_text=false` | **0.000**, none | **0.000**, none | 3.3 |
+| `--vad` | 0.190: "A reality test. Thank you." | 0.167, none (but 25 real words dropped) | 4.3 |
+| `--batch-size 4` | **0.000**, none | **0.000**, none | 4.9 |
+| `-O hallucination_silence_threshold=2` | 0.090, none (but 19 real words dropped) | 0.090, none (the same) | 2.9 |
+| `-O no_speech_threshold=0.3` | (not measured) | 0.257: "We did a speech recognition test. Let's take down and do this text. ..." | 1.1 |
+
+`condition_on_previous_text=false` and the batched pipeline kept every word and made up none. They were also faster:
+Whisper's temperature fallback, which decodes a window again when its text looks wrong, had nothing to retry (the batched pipeline has none). `--vad`
+and `hallucination_silence_threshold` dropped real words. Measured once, on one clip, so take it as a hint of what to
+try first, not as a rule.
 
 ## Text limit per chunk
 
@@ -222,8 +329,15 @@ pip install -e ".[whisper]" -r requirements-bench.txt     # plus the extras of t
 python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny
 ```
 
-Each `-m` is a model of the `-b` before it. The table goes to stdout and the results to a JSON file, which
-`python -m benchmarks.compare BEFORE.json AFTER.json` compares. The first run downloads the evaluation set (about 40 MB)
+Each `-m` is a model of the `-b` before it, and each `-O KEY=VALUE` a [backend option](#backend-options) for its models,
+so one run compares settings:
+
+```bash
+python -m benchmarks.run -b faster-whisper -m tiny -b faster-whisper -m tiny -O beam_size=1
+```
+
+The table goes to stdout and the results to a JSON file, which `python -m benchmarks.compare BEFORE.json AFTER.json`
+compares. The first run downloads the evaluation set (about 40 MB)
 and checks every clip against its SHA-256.
 
 **On a GPU,** pass `--device cuda`; the table then names the GPU and shows its peak memory. For example:

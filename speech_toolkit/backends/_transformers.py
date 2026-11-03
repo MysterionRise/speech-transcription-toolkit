@@ -44,6 +44,12 @@ MAX_NEW_TOKENS_OPTION = BackendOption(
     "Most tokens of text per ~30 s chunk; a chunk that reaches it may be cut off, with a warning",
     minimum=1,
 )
+# Canary and Voxtral transcribe this many of their ~30 s chunks at a time (the batch_size option): more is faster on a
+# GPU and takes more memory. Parakeet, whose chunks are four times as long, takes the same option with its own default.
+BATCH_SIZE = 8
+BATCH_SIZE_OPTION = BackendOption(
+    int, BATCH_SIZE, "Chunks transcribed at a time; more is faster on a GPU and takes more memory", minimum=1
+)
 
 
 def torch_device(torch: Any, device: Device) -> str:

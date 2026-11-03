@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, 
 
 from ..errors import ModelLoadError, SpeechToolkitWarning, UnsupportedOptionError
 from ..media import SAMPLE_RATE, load_audio, split_audio
-from ._transformers import MAX_NEW_TOKENS_OPTION, _cut_off_warning, _rows_at_limit, _TransformersBackend
+from ._transformers import (
+    BATCH_SIZE_OPTION,
+    MAX_NEW_TOKENS_OPTION,
+    _cut_off_warning,
+    _rows_at_limit,
+    _TransformersBackend,
+)
 from .base import TranscriptionResult, report_progress
 from .config import BackendOption
 
@@ -27,7 +33,6 @@ logger = logging.getLogger(__name__)
 # Voxtral's transcription mode returns text without timestamps, so audio is split into
 # chunks of up to 30 s (cut in pauses) and each chunk becomes one coarsely timestamped segment.
 CHUNK_SECONDS = 30
-BATCH_SIZE = 8
 
 
 class VoxtralBackend(_TransformersBackend):
@@ -58,6 +63,7 @@ class VoxtralBackend(_TransformersBackend):
     OPTIONS: Mapping[str, BackendOption] = {
         **_TransformersBackend.OPTIONS,
         "max_new_tokens": MAX_NEW_TOKENS_OPTION,
+        "batch_size": BATCH_SIZE_OPTION,
     }
 
     @classmethod
@@ -82,7 +88,8 @@ class VoxtralBackend(_TransformersBackend):
                 also passed to report_progress(), whatever *verbose* is.
 
         Returns:
-            TranscriptionResult with one segment per ~30 s chunk of audio. A chunk whose text reaches the
+            TranscriptionResult with one segment per ~30 s chunk of audio; the model transcribes ``batch_size`` chunks
+            (an option, 8 by default) at a time. A chunk whose text reaches the
             max_new_tokens option's limit may be cut off: one warning per file gives the number of such chunks and the
             first one's times.
 
@@ -106,8 +113,9 @@ class VoxtralBackend(_TransformersBackend):
 
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens
-        for first in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[first : first + BATCH_SIZE]
+        batch_size = self._options["batch_size"]
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
             texts, at_limit = self._transcribe_batch([samples for _, samples in batch], language)
             for index, ((start, samples), text) in enumerate(zip(batch, texts), start=first):
                 segments.append({"id": index, "start": start, "end": start + len(samples) / SAMPLE_RATE, "text": text})

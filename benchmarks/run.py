@@ -4,8 +4,10 @@
     python -m benchmarks.run -b faster-whisper -m tiny -m base -b whisper -m tiny --device cpu
     python -m benchmarks.run -b parakeet                             # the backend's default model
     python -m benchmarks.run -b faster-whisper -m tiny --sets librispeech --limit 10    # a quick look
+    python -m benchmarks.run -b faster-whisper -m tiny -b faster-whisper -m tiny -O beam_size=1   # before and after
 
-Each ``-m`` names a model of the ``-b`` before it, so adding a model or a backend is one more option. The table goes
+Each ``-m`` names a model of the ``-b`` before it, so adding a model or a backend is one more option; each ``-O``
+sets a backend option for the models of the ``-b`` before it, which the results keep with each model. The table goes
 to stdout as Markdown, progress to stderr, and the results to a JSON file (``--json``; by default
 ``benchmarks/results/<time>.json``) that ``python -m benchmarks.compare`` compares with another.
 
@@ -38,6 +40,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from benchmarks import SCHEMA
+from benchmarks.compare import model_label, options_label
 from benchmarks.data import (
     MANIFEST,
     Clip,
@@ -66,10 +69,10 @@ class BenchmarkError(RuntimeError):
 
 
 class _Backend(argparse.Action):
-    """-b BACKEND: starts a new entry, which the -m options after it add models to."""
+    """-b BACKEND: starts a new entry, which the -m and -O options after it add models and backend options to."""
 
     def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, value: Any, option: Any = None):
-        namespace.specs = [*(namespace.specs or []), (value, [])]
+        namespace.specs = [*(namespace.specs or []), (value, [], {})]
 
 
 class _Model(argparse.Action):
@@ -79,6 +82,18 @@ class _Model(argparse.Action):
         if not namespace.specs:
             parser.error("-m/--model names a model of the -b/--backend before it: give -b first")
         namespace.specs[-1][1].append(value)
+
+
+class _Option(argparse.Action):
+    """-O KEY=VALUE: a backend option for the models of the -b before it, as transcribe -O takes it."""
+
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, value: Any, option: Any = None):
+        if not namespace.specs:
+            parser.error("-O/--option sets an option of the -b/--backend before it: give -b first")
+        key, equals, text = value.partition("=")
+        if not equals or not key.strip():
+            parser.error(f"-O/--option takes KEY=VALUE, such as beam_size=1, not {value!r}")
+        namespace.specs[-1][2][key.strip().replace("-", "_")] = text
 
 
 def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
@@ -95,6 +110,15 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         dest="specs",
         action=_Model,
         help="a model of the -b before it (repeatable; default: the backend's default model)",
+    )
+    parser.add_argument(
+        "-O",
+        "--option",
+        dest="specs",
+        action=_Option,
+        metavar="KEY=VALUE",
+        help="a backend option for the models of the -b before it, such as beam_size=1 (repeatable); "
+        "transcribe --list-backends lists them",
     )
     parser.add_argument(
         "--device", choices=("cpu", "cuda"), help="where the models run (default: as the backend picks)"
@@ -122,16 +146,26 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     return args
 
 
-def model_list(specs: Sequence[Tuple[str, List[str]]]) -> List[Tuple[str, str]]:
-    """The (backend, model) pairs to measure: the -m options of each -b, or the backend's default model."""
+Spec = Tuple[str, List[str], Dict[str, Any]]  # a -b: the backend, its -m models and its -O options
+
+
+def model_list(specs: Sequence[Spec]) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """What to measure: (backend, model, options) for the -m options of each -b, or the backend's default model, with
+    the -O options of that -b, checked against the backend's and converted to their types.
+
+    Raises:
+        ValueError: For an unknown backend, or an option the backend doesn't take or a value that doesn't fit.
+    """
     from speech_toolkit.backends import get_backend_class
 
-    pairs: List[Tuple[str, str]] = []
-    for backend, models in specs:
-        for model in models or [get_backend_class(backend).default_model()]:
-            if (backend, model) not in pairs:
-                pairs.append((backend, model))
-    return pairs
+    entries: List[Tuple[str, str, Dict[str, Any]]] = []
+    for backend, models, options in specs:
+        backend_class = get_backend_class(backend)
+        checked = backend_class.check_options(options)
+        for model in models or [backend_class.default_model()]:
+            if (backend, model, checked) not in entries:
+                entries.append((backend, model, checked))
+    return entries
 
 
 def reset_seeds(seed: int = SEED) -> None:
@@ -169,23 +203,24 @@ def measure(
     clips: Sequence[Clip],
     data_dir: pathlib.Path,
     log: Log = log_to_stderr,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Load *model* of *backend* and transcribe *clips*, in this process.
+    """Load *model* of *backend*, with the backend *options* (as model_list() gives them), and transcribe *clips*, in
+    this process.
 
     Returns the measurements: where the model ran, its load time, peak memory, and per clip the audio's length, the
     transcription's seconds and the transcript (scored later, by summarize()).
     """
     from speech_toolkit import Transcriber
 
+    name = f"{backend} {model_label(model, options_label(options))}"
     sampler = _gpu_sampler(device)
     try:
         started = time.perf_counter()
-        transcriber = Transcriber(backend, model, device=device)
+        transcriber = Transcriber(backend, model, device=device, options=options)
         load_seconds = time.perf_counter() - started
         devices, precision = transcriber_devices(transcriber)
-        log(
-            f"{backend} {model}: loaded in {load_seconds:.1f} s on {devices['model']} ({precision or 'precision unknown'})"
-        )
+        log(f"{name}: loaded in {load_seconds:.1f} s on {devices['model']} ({precision or 'precision unknown'})")
         measured: Dict[str, Dict[str, Any]] = {}
         for index, clip in enumerate(clips):
             audio = load_audio(data_dir / clip.audio)  # decoded once per clip, outside the timed region
@@ -194,7 +229,7 @@ def measure(
             seconds, text = _transcribe(transcriber, audio, clip.language)
             measured[clip.id] = {"audio_seconds": len(audio) / SAMPLE_RATE, "seconds": seconds, "text": text}
             if (index + 1) % PROGRESS_EVERY == 0 or index + 1 == len(clips):
-                log(f"{backend} {model}: {index + 1}/{len(clips)} clips")
+                log(f"{name}: {index + 1}/{len(clips)} clips")
         torch_bytes, sampled = torch_peak(), sampler.peak_above_baseline() if sampler else None
     finally:
         if sampler is not None:
@@ -204,6 +239,7 @@ def measure(
     return {
         "backend": backend,
         "model": model,
+        "options": dict(options or {}),  # the ones given, not the defaults
         "device": devices["model"],
         "precision": precision,
         "gpu": gpu_name(devices["model"]),
@@ -238,6 +274,7 @@ def measure_isolated(
     clips: Sequence[Clip],
     data_dir: pathlib.Path,
     manifest: pathlib.Path,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """measure(), in a new process (``python -m benchmarks.run --worker JOB OUT``) so that its peak memory is its own.
 
@@ -246,14 +283,16 @@ def measure_isolated(
     """
     with tempfile.TemporaryDirectory(prefix="speech-toolkit-benchmark-") as folder:
         job, out = pathlib.Path(folder) / "job.json", pathlib.Path(folder) / "measured.json"
-        settings = {"backend": backend, "model": model, "device": device, "data_dir": str(data_dir)}
+        settings = {"backend": backend, "model": model, "options": options or {}, "device": device}
+        settings["data_dir"] = str(data_dir)
         job.write_text(
             json.dumps({**settings, "manifest": str(manifest), "clips": [clip.id for clip in clips]}), encoding="utf-8"
         )
         command = [sys.executable, "-m", "benchmarks.run", "--worker", str(job), str(out)]
         done = subprocess.run(command, cwd=ROOT, env=_worker_env(), stdout=_stderr(), check=False)  # nosec B603
         if done.returncode != 0 or not out.is_file():
-            raise BenchmarkError(f"measuring {backend} {model} failed (exit status {done.returncode}); see above")
+            name = f"{backend} {model_label(model, options_label(options))}"
+            raise BenchmarkError(f"measuring {name} failed (exit status {done.returncode}); see above")
         measured: Dict[str, Any] = json.loads(out.read_text(encoding="utf-8"))
         return measured
 
@@ -264,7 +303,8 @@ def worker(job_file: pathlib.Path, out: pathlib.Path) -> None:
     by_id = {clip.id: clip for clip in load_manifest(pathlib.Path(job["manifest"])).clips}
     clips = [by_id[clip_id] for clip_id in job["clips"]]
     with contextlib.redirect_stdout(sys.stderr):  # libraries that print: stdout is the parent's table
-        measured = measure(job["backend"], job["model"], job["device"], clips, pathlib.Path(job["data_dir"]))
+        data_dir = pathlib.Path(job["data_dir"])
+        measured = measure(job["backend"], job["model"], job["device"], clips, data_dir, options=job.get("options"))
     out.write_text(json.dumps(measured), encoding="utf-8")
 
 
@@ -364,7 +404,8 @@ def markdown(results: Dict[str, Any]) -> str:
     for entry in entries:
         device = entry["device"] + (f" ({entry['gpu']})" if entry.get("gpu") else "")
         gpu = _cell(entry["peak_gpu_bytes"], 0, MIB, "~" if entry["peak_gpu_sampled"] else "")
-        row = [entry["backend"], entry["model"], device, entry["precision"] or "-", _cell(entry["load_seconds"], 1)]
+        model = model_label(entry["model"], options_label(entry.get("options")))
+        row = [entry["backend"], model, device, entry["precision"] or "-", _cell(entry["load_seconds"], 1)]
         row += [_cell(entry["audio_seconds"], 0), _cell(entry["rtfx"], 1), _cell(entry["peak_rss_bytes"], 0, MIB), gpu]
         row += [_cell(entry["sets"][name]["wer"], 3) if name in entry["sets"] else "-" for name in sets]
         lines.append("| " + " | ".join(row) + " |")
@@ -384,7 +425,8 @@ def _language_table(entries: List[Dict[str, Any]], sets: List[str]) -> List[str]
             _cell(entry["sets"].get(name, {}).get("languages", {}).get(language, {}).get("wer"), 3)
             for name, language in columns
         ]
-        lines.append("| " + " | ".join([entry["backend"], entry["model"], *cells]) + " |")
+        model = model_label(entry["model"], options_label(entry.get("options")))
+        lines.append("| " + " | ".join([entry["backend"], model, *cells]) + " |")
     return lines
 
 
@@ -405,21 +447,22 @@ def default_json() -> pathlib.Path:
 
 
 def measure_all(
-    args: argparse.Namespace, models: List[Tuple[str, str]], clips: List[Clip], data_dir: pathlib.Path
+    args: argparse.Namespace, models: List[Tuple[str, str, Dict[str, Any]]], clips: List[Clip], data_dir: pathlib.Path
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Measure and score *models*; returns the results, and a message per model that failed."""
     results: List[Dict[str, Any]] = []
     failed: List[str] = []
-    for backend, model in models:
-        log_to_stderr(f"Measuring {backend} {model} on {len(clips)} clips")
+    for backend, model, options in models:
+        name = f"{backend} {model_label(model, options_label(options))}"
+        log_to_stderr(f"Measuring {name} on {len(clips)} clips")
         try:
             if args.in_process:
-                measured = measure(backend, model, args.device, clips, data_dir)
+                measured = measure(backend, model, args.device, clips, data_dir, options=options)
             else:
-                measured = measure_isolated(backend, model, args.device, clips, data_dir, args.manifest)
+                measured = measure_isolated(backend, model, args.device, clips, data_dir, args.manifest, options)
         except (BenchmarkError, ImportError, RuntimeError, ValueError, OSError) as e:
-            failed.append(f"{backend} {model}: {e}")
-            log_to_stderr(f"Error: {backend} {model}: {e}")
+            failed.append(f"{name}: {e}")
+            log_to_stderr(f"Error: {name}: {e}")
             continue
         results.append(summarize(measured, clips))
     return results, failed
@@ -427,7 +470,7 @@ def measure_all(
 
 def run(args: argparse.Namespace) -> List[str]:
     """Measure the models of *args*, print the table, write the JSON; returns the failures."""
-    # An unknown backend, or missing scoring packages, fail before anything is downloaded or measured.
+    # An unknown backend or backend option, or missing scoring packages, fail before anything is downloaded or measured.
     models = model_list(args.specs)
     normalizer("en")
     score("a", "a", "en")

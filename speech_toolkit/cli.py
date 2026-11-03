@@ -190,6 +190,7 @@ Examples:
     add_general_options(parser)
     add_output_options(parser)
     add_accuracy_options(parser)
+    add_inference_options(parser)
     add_diarization_options(parser)
     add_information_options(parser)
 
@@ -388,6 +389,51 @@ def add_accuracy_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+# The flags that set a backend option, a shortcut for -O: --batch-size 8 is -O batch_size=8.
+OPTION_FLAGS = {"batch_size": "--batch-size", "beam_size": "--beam-size"}
+
+
+def add_inference_options(parser: argparse.ArgumentParser) -> None:
+    """--batch-size and --beam-size, which set the backend options of those names; their help lists the backends
+    that declare them."""
+    inference = parser.add_argument_group("inference")
+    inference.add_argument(
+        "--batch-size",
+        type=positive_int,
+        metavar="N",
+        help="Transcribe N pieces of audio at a time: faster on a GPU, with more memory. From 2 up, faster-whisper "
+        "uses its batched pipeline, which skips silence like --vad and makes a segment of each piece of up to 30 s "
+        f"({', '.join(backends_with_option('batch_size')) or 'no backend'}; the same as -O batch_size=N).",
+    )
+    inference.add_argument(
+        "--beam-size",
+        type=positive_int,
+        metavar="N",
+        help="Beams in beam search; 1 decodes greedily, the fastest (default: 5 on faster-whisper, 1 on whisper) "
+        f"({', '.join(backends_with_option('beam_size')) or 'no backend'}; the same as -O beam_size=N).",
+    )
+
+
+def flag_options(args: argparse.Namespace) -> dict[str, int]:
+    """The backend options that --batch-size and --beam-size set, which win over -O.
+
+    Raises:
+        UnsupportedOptionError: If the backend doesn't have the option a flag sets; the message names the backends
+            that do.
+    """
+    backend_class = get_backend_class(args.backend)
+    options: dict[str, int] = {}
+    for name, flag in OPTION_FLAGS.items():
+        value = getattr(args, name, None)  # transcribe-server's arguments have neither
+        if value is None:
+            continue
+        if name not in backend_class.OPTIONS:
+            having = ", ".join(backends_with_option(name)) or "none"
+            raise UnsupportedOptionError(f"the {args.backend} backend takes no {flag}; the backends that do: {having}")
+        options[name] = value
+    return options
+
+
 def add_diarization_options(parser: argparse.ArgumentParser) -> None:
     """Speaker labels with pyannote.audio."""
     diarization = parser.add_argument_group("speaker diarization")
@@ -531,13 +577,14 @@ def plan_outputs(args: argparse.Namespace, formats: Sequence[str]) -> List[Job]:
 def load_transcriber(args: argparse.Namespace) -> Transcriber:
     """Load the selected backend's model (its default if --model is not given) and, with --diarize, pyannote.
 
-    A model name, --device, --compute-type or -O option the backend can't take fails first, before the message that
-    the model loads.
+    A model name, --device, --compute-type, -O option, --batch-size or --beam-size the backend can't take fails first,
+    before the message that the model loads.
     """
     backend_class = get_backend_class(args.backend)
     model_name = args.model or backend_class.default_model()
     compute_type = getattr(args, "compute_type", None)
     options = dict(getattr(args, "options", None) or ())  # the last -O for a key wins
+    options.update(flag_options(args))
     check_load_arguments(backend_class, model_name, args.device, compute_type, options)
     if not args.quiet:
         print(f"Loading {args.backend} model '{model_name}'...", file=sys.stderr)

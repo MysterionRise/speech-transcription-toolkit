@@ -86,11 +86,10 @@ def test_warns_once_naming_the_cut_off_chunk(voxtral, audio_file):
 def test_one_warning_for_several_cut_off_chunks(voxtral, audio_file):
     generates(voxtral, [[5, 6], [5, EOS]], [[7, 8]])
     voxtral.processor.batch_decode.side_effect = [["one", "two"], ["three"]]
-    limit(voxtral, 2)
+    voxtral.backend.load_model("voxtral-mini", options={"max_new_tokens": 2, "batch_size": 2})
 
-    with patch("speech_toolkit.backends.voxtral_backend.BATCH_SIZE", 2):
-        with pytest.warns(SpeechToolkitWarning) as warned:
-            voxtral.backend.transcribe(audio_file, verbose=False)
+    with pytest.warns(SpeechToolkitWarning) as warned:
+        voxtral.backend.transcribe(audio_file, verbose=False)
 
     assert [(warning.category, str(warning.message)) for warning in warned] == [
         (

@@ -24,6 +24,11 @@ Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` 
 - `--vad` skips silence, which stops made-up text in quiet parts (faster-whisper, the default backend).
 - `--max-line-width 42` splits subtitles into readable lines, and `--max-cue-duration 6` keeps cues short.
 - `--word-timestamps` adds per-word timings to JSON.
+- `-O condition_on_previous_text=false` stops Whisper repeating a made-up phrase; see
+  [Made-up text](backends.md#made-up-text).
+
+**Faster:** `--batch-size 8` transcribes several pieces of audio at once, on a GPU above all (faster-whisper's batched
+pipeline), and `--beam-size 1` decodes greedily. See [Speed](backends.md#speed-batches-beams-and-threads).
 
 ### Several files and formats
 
@@ -141,6 +146,8 @@ $ transcribe --detect-language talk.mp3 -f json
 | `--prompt TEXT` | Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper). |
 | `--vad` | Skip silence before transcribing (faster-whisper). |
 | `--word-timestamps` | Add per-word timings to the JSON output (whisper, faster-whisper, parakeet). |
+| `--batch-size N` | Transcribe N pieces of audio at once: faster on a GPU, with more memory (faster-whisper, voxtral, parakeet, canary). From 2 up, faster-whisper uses its batched pipeline, which skips silence like `--vad` and makes a segment of each piece of up to 30 s. The same as `-O batch_size=N`; see [Speed](backends.md#speed-batches-beams-and-threads). |
+| `--beam-size N` | Beams in beam search; 1 decodes greedily, the fastest (whisper, default 1; faster-whisper, default 5). The same as `-O beam_size=N`. |
 | `--diarize` | Label speakers with pyannote.audio. See [Speaker labels](diarization.md). |
 | `--num-speakers N` | Exact number of speakers, if known (needs `--diarize`). |
 | `--min-speakers N`, `--max-speakers N` | Bounds on the number of speakers (needs `--diarize`). |

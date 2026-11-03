@@ -15,11 +15,44 @@ from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Uni
 
 from ..errors import BackendUnavailableError, ModelLoadError
 from .base import TranscriptionBackend, TranscriptionResult
+from .config import BackendOption
 
 if TYPE_CHECKING:  # pragma: no cover
     import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Whisper's controls against made-up text, which openai-whisper and faster-whisper share, with the same names and
+# defaults. Both decode 30 s windows one after another; faster-whisper's batched pipeline ignores these (it skips
+# silence with voice activity detection instead).
+HALLUCINATION_OPTIONS: Mapping[str, BackendOption] = {
+    "condition_on_previous_text": BackendOption(
+        bool,
+        True,
+        "Prompt each 30 s window with the text before it; false is less prone to repetition loops, if less consistent",
+    ),
+    "no_speech_threshold": BackendOption(
+        float,
+        0.6,
+        "Skip a 30 s window as silence when its no-speech probability is above this and its text is improbable",
+        minimum=0,
+    ),
+    "hallucination_silence_threshold": BackendOption(
+        float,
+        0.0,
+        "Skip silences longer than this many seconds around text that looks made up; turns on word timings (0: off)",
+        minimum=0,
+    ),
+}
+
+
+def decoding_arguments(options: Mapping[str, Any], declared: Mapping[str, BackendOption]) -> Dict[str, Any]:
+    """The keyword arguments of the model's transcribe() for the *options* in effect: the ones that differ from their
+    defaults in *declared*, which are the library's own (a hallucination_silence_threshold of 0, off, is its None).
+
+    Leaving the others out keeps the call as it was before the options existed.
+    """
+    return {name: options[name] for name in declared if options[name] != declared[name].default}
 
 
 class WhisperBackend(TranscriptionBackend):
@@ -39,6 +72,11 @@ class WhisperBackend(TranscriptionBackend):
     requires = ("whisper",)
     MODEL_SOURCES = {"file": "a local checkpoint file (.pt)"}  # openai-whisper loads no repo ids or folders
     DEVICES = frozenset({"cpu", "cuda", "mps"})
+    # Keyword arguments of the model's transcribe(), all with openai-whisper's defaults.
+    OPTIONS: Mapping[str, BackendOption] = {
+        "beam_size": BackendOption(int, 1, "Beams in beam search; 1 decodes greedily, the fastest", minimum=1),
+        **HALLUCINATION_OPTIONS,
+    }
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -76,7 +114,8 @@ class WhisperBackend(TranscriptionBackend):
         Args:
             model_name: One of the available model names (tiny ... large-v3, turbo), or a local checkpoint file.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), 'mps', or None or 'auto' for the GPU when torch sees one.
-            options: The backend has no options, so only an empty mapping is accepted.
+            options: Values for ``OPTIONS``: ``beam_size``, ``condition_on_previous_text``, ``no_speech_threshold``
+                and ``hallucination_silence_threshold``, which transcribe() passes on to openai-whisper.
 
         Raises:
             ModelNotFoundError: If model_name is not recognized.
@@ -185,7 +224,10 @@ class WhisperBackend(TranscriptionBackend):
             kwargs["language"] = language
         if prompt:
             kwargs["initial_prompt"] = prompt
-        if word_timestamps:
+        # The options set; beam_size goes on to the decoder, which searches greedily without it.
+        kwargs.update(decoding_arguments(self._options, self.OPTIONS))
+        # hallucination_silence_threshold works on word timings: they are computed for it, and kept if asked for.
+        if word_timestamps or kwargs.get("hallucination_silence_threshold"):
             kwargs["word_timestamps"] = True
 
         # Run transcription
@@ -193,7 +235,7 @@ class WhisperBackend(TranscriptionBackend):
         raw_result: Dict[str, Any] = self._model.transcribe(audio, **kwargs)
 
         # Convert to standardized format
-        segments = [_segment(seg) for seg in raw_result.get("segments", [])]
+        segments = [_segment(seg, words=word_timestamps) for seg in raw_result.get("segments", [])]
 
         return TranscriptionResult(
             text=raw_result.get("text", ""),
@@ -204,8 +246,8 @@ class WhisperBackend(TranscriptionBackend):
         )
 
 
-def _segment(seg: Dict[str, Any]) -> Dict[str, Any]:
-    """Whisper's segment dict in the standard format (with "words" when word timestamps were asked for)."""
+def _segment(seg: Dict[str, Any], words: bool = True) -> Dict[str, Any]:
+    """Whisper's segment dict in the standard format, with "words" when it has them and *words* is true."""
     segment = {
         "start": seg["start"],
         "end": seg["end"],
@@ -217,7 +259,7 @@ def _segment(seg: Dict[str, Any]) -> Dict[str, Any]:
         "compression_ratio": seg.get("compression_ratio"),
         "no_speech_prob": seg.get("no_speech_prob"),
     }
-    if seg.get("words"):
+    if words and seg.get("words"):
         segment["words"] = [
             {"word": w["word"], "start": w["start"], "end": w["end"], "probability": w.get("probability")}
             for w in seg["words"]

@@ -301,8 +301,11 @@ class TestCommittedFiles:
         args = run.parse_args(shlex.split(options.replace("\\\n", " ")))
         baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
 
-        measured = {(backend, model, args.device) for backend, model in run.model_list(args.specs)}
-        assert measured == {(entry["backend"], entry["model"], entry["device"]) for entry in baseline["results"]}
+        measured = {
+            (backend, model, args.device, compare.options_label(options))
+            for backend, model, options in run.model_list(args.specs)
+        }
+        assert measured == {compare._key(entry) for entry in baseline["results"]}
         assert any("benchmarks.compare benchmarks/baseline.json" in step.get("run", "") for step in steps)
         assert "benchmarks/**" in workflow[True]["pull_request"]["paths"]  # PyYAML reads the key "on" as True
 
@@ -695,17 +698,17 @@ class TestArguments:
     def test_each_model_belongs_to_the_backend_before_it(self):
         args = run.parse_args(["-b", "faster-whisper", "-m", "tiny", "-m", "base", "-b", "whisper", "-m", "tiny"])
 
-        assert args.specs == [("faster-whisper", ["tiny", "base"]), ("whisper", ["tiny"])]
+        assert args.specs == [("faster-whisper", ["tiny", "base"], {}), ("whisper", ["tiny"], {})]
         assert run.model_list(args.specs) == [
-            ("faster-whisper", "tiny"),
-            ("faster-whisper", "base"),
-            ("whisper", "tiny"),
+            ("faster-whisper", "tiny", {}),
+            ("faster-whisper", "base", {}),
+            ("whisper", "tiny", {}),
         ]
 
     def test_a_backend_without_models_gets_its_default_one_once(self):
         args = run.parse_args(["-b", "parakeet", "-b", "parakeet"])
 
-        assert run.model_list(args.specs) == [("parakeet", "parakeet-tdt-0.6b-v3")]
+        assert run.model_list(args.specs) == [("parakeet", "parakeet-tdt-0.6b-v3", {})]
 
     @pytest.mark.parametrize("argv", [[], ["-m", "tiny"], ["-b", "whisper", "--limit", "0"]])
     def test_refuses(self, argv):
