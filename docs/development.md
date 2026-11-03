@@ -23,6 +23,7 @@ speech_toolkit/
 ├── media.py        folder scanning, ffmpeg decoding, splitting long audio in pauses
 ├── server.py       transcribe-server, the OpenAI-compatible API
 ├── types.py        the Segment and Word TypedDicts, and the JSON schema version
+├── vad.py          voice activity detection for --vad: faster-whisper's Silero model, shared by every backend
 ├── convert.py      the ogg2wav command
 └── backends/       the backend registry, the TranscriptionBackend base class, option and device parsing
                     (config.py), the shared transformers loader (_transformers.py) and one module per backend

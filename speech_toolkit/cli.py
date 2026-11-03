@@ -380,7 +380,8 @@ def add_accuracy_options(parser: argparse.ArgumentParser) -> None:
     accuracy.add_argument(
         "--vad",
         action="store_true",
-        help=f"Skip silence first; avoids made-up text in quiet parts ({_supported_by('vad')}).",
+        help="Skip silence, transcribing only the speech (voice activity detection): avoids made-up text in silent "
+        f"parts. The -O vad_ options tune it ({_supported_by('vad')}).",
     )
     accuracy.add_argument(
         "--word-timestamps",

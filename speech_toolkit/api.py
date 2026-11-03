@@ -258,7 +258,10 @@ class Transcriber:
                 capability. Another task, or a translation the backend can't do, raises
                 :class:`~speech_toolkit.UnsupportedOptionError` before any audio is decoded.
             prompt: Names, terms or a sample sentence that guide spelling (whisper, faster-whisper).
-            vad: Skip silence first, which avoids made-up text in quiet parts (faster-whisper).
+            vad: Transcribe only the speech, found with voice activity detection (:mod:`speech_toolkit.vad`), which
+                avoids made-up text in silent parts; the timestamps stay those of the recording. Every built-in
+                backend supports it, and its ``vad_`` options tune it. A backend that takes samples gets the audio
+                decoded here, and audio without speech returns an empty result without reaching the model.
             word_timestamps: Add per-word timings to each segment's ``"words"``. The default (None) turns
                 them on when diarizing, so speaker labels can change mid-segment.
             num_speakers, min_speakers, max_speakers: Speaker-count hints for diarization. Hints that can't be honoured,
@@ -268,9 +271,9 @@ class Transcriber:
                 ``speech_toolkit`` logger (they show once you configure logging, as the ``transcribe`` command does).
                 Before 0.5.0 those backends printed them.
             progress: Called with a :class:`~speech_toolkit.ProgressEvent` as each stage advances: ``"decode"`` (when
-                the audio is decoded here), ``"transcribe"`` with each new segment, and ``"diarize"``. Within a stage,
-                ``done`` never decreases. It runs in the calling thread, and an exception it raises propagates from
-                here, which is how to cancel a transcription.
+                the audio is decoded here), ``"transcribe"`` with each new segment (voice activity detection is part
+                of it), and ``"diarize"``. Within a stage, ``done`` never decreases. It runs in the calling thread, and
+                an exception it raises propagates from here, which is how to cancel a transcription.
 
         Options the backend doesn't support are skipped with a warning.
 
@@ -294,7 +297,8 @@ class Transcriber:
         name = _name(audio)
         # The backend and diarization report progress, and name the recording, through this call's context.
         with _transcription_call(name, progress) as call:
-            source = self._source(audio)
+            # Voice activity detection needs the samples: decoded here once, they also serve diarization.
+            source = self._source(audio, samples="vad" in options)
             total = None if isinstance(source, pathlib.Path) else len(source) / SAMPLE_RATE
             logger.debug("Transcribing %s with %s '%s'", name or "audio", self.backend_name, self.model_name)
             started = time.perf_counter()
@@ -308,6 +312,8 @@ class Transcriber:
             if result.duration is None and total is not None:  # a backend's own duration is kept
                 result.duration = total
             logger.debug("Transcribed in %.1f s: %d segments", time.perf_counter() - started, len(result.segments))
+            if "vad" in options and not result.segments:
+                logger.info("No speech found in %s", name or "the audio")
             _end_transcribe_stage(call, result)
             if self._pipeline is not None:
                 turns = diarize_audio(
@@ -320,19 +326,20 @@ class Transcriber:
                 result.speaker_segments = merge_diarization({"segments": result.segments}, turns)
         return result
 
-    def _source(self, audio: AudioInput) -> _Source:
+    def _source(self, audio: AudioInput, *, samples: bool = False) -> _Source:
         """What to transcribe and diarize: the file given, or the samples, decoded here once when they're needed.
 
-        They are needed for in-memory input, and for diarization when the backend takes samples: both then get the
-        same array. Otherwise the backend reads the file itself, and so does diarization. Decoding is reported as the
-        "decode" stage.
+        They are needed for in-memory input, and when the backend takes samples, for diarization and when *samples*
+        asks for them (voice activity detection): the backend and diarization then get the same array, decoded with
+        load_audio(). Otherwise the backend reads the file itself, and so does diarization. Decoding is reported as
+        the "decode" stage.
         """
         if not isinstance(audio, (str, os.PathLike)):
             if isinstance(audio, (bytes, bytearray, memoryview)) or callable(getattr(audio, "read", None)):
                 return _decoding(lambda: _decode(audio))
             return _decode(audio)  # the samples themselves
         path = pathlib.Path(audio)
-        if not (self.diarize and self.supports("waveform")):
+        if not ((self.diarize or samples) and self.supports("waveform")):
             return path
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {path}")

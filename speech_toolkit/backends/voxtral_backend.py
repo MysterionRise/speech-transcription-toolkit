@@ -49,7 +49,7 @@ class VoxtralBackend(_TransformersBackend):
 
     name = "voxtral"
     description = "Mistral Voxtral - open-weight multilingual speech-to-text"
-    capabilities = frozenset({"waveform"})  # transcription only, and it doesn't report the language
+    capabilities = frozenset({"vad", "waveform"})  # transcription only, and it doesn't report the language
     requires = ("torch", "transformers", "mistral_common")
     EXTRA = "voxtral"
     NEEDS = "torch, transformers>=5.17 and mistral-common[audio]"
@@ -77,6 +77,8 @@ class VoxtralBackend(_TransformersBackend):
         language: Optional[str] = None,
         task: str = "transcribe",
         verbose: bool = True,
+        *,
+        vad: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio using Voxtral.
 
@@ -86,6 +88,9 @@ class VoxtralBackend(_TransformersBackend):
             task: Only 'transcribe' is supported.
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. The segments of each batch of chunks are
                 also passed to report_progress(), whatever *verbose* is.
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                chunks are cut at its edges, so each stretch of speech gets segments of its own, and audio without
+                speech reaches no model.
 
         Returns:
             TranscriptionResult with one segment per ~30 s chunk of audio; the model transcribes ``batch_size`` chunks
@@ -109,7 +114,7 @@ class VoxtralBackend(_TransformersBackend):
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
-        chunks = split_audio(audio, CHUNK_SECONDS)
+        chunks = split_audio(audio, CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
 
         segments: List[Dict[str, Any]] = []
         cut_off: List[Dict[str, Any]] = []  # the segments of chunks that reached max_new_tokens

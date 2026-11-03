@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError
+from ..vad import VAD_OPTIONS, SpeechRegion, detect_speech
+from ..vad import settings as vad_settings
 from .base import TranscriptionBackend, recording_name
 from .config import BackendOption, Device
 
@@ -92,7 +94,7 @@ class _TransformersBackend(TranscriptionBackend):
     NEEDS = "torch and transformers"  # what it needs, in words
     MODEL_SOURCES = {"hub": "", "directory": ""}
     DEVICES = frozenset({"cpu", "cuda", "mps"})
-    OPTIONS: Mapping[str, BackendOption] = {"compute_type": COMPUTE_TYPE_OPTION}
+    OPTIONS: Mapping[str, BackendOption] = {"compute_type": COMPUTE_TYPE_OPTION, **VAD_OPTIONS}
 
     def __init__(self) -> None:
         super().__init__()
@@ -118,7 +120,8 @@ class _TransformersBackend(TranscriptionBackend):
             model_name: One of ``MODELS``, a Hugging Face repo id (org/name) or a local model folder.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), 'mps' (an Apple GPU), or None or 'auto' for CUDA when
                 torch sees a GPU, else the CPU.
-            options: Values for ``OPTIONS``, such as ``{"compute_type": "float16"}``.
+            options: Values for ``OPTIONS``, such as ``{"compute_type": "float16"}``; the ``vad_`` settings tune
+                ``transcribe(vad=True)``.
 
         Raises:
             ModelNotFoundError: If model_name is none of these.
@@ -156,6 +159,10 @@ class _TransformersBackend(TranscriptionBackend):
         self._model_name = model_name
         self._device = on
         self._options = settings
+
+    def _speech(self, audio: "np.ndarray") -> List[SpeechRegion]:
+        """The stretches of speech in *audio*, for ``transcribe(vad=True)``: what the chunks are cut from."""
+        return detect_speech(audio, **vad_settings(self._options))
 
     def _check_ready(self, audio_path: Union[Path, "np.ndarray"]) -> None:
         if self._model is None or self._processor is None:

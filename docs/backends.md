@@ -41,7 +41,7 @@ option.
 | `translate`: translate to English (`-t translate`) | yes, except turbo | yes, except turbo | no | no | yes |
 | `language_detection`: detect the language and report it | yes | yes | no | no | no (needs `-l`) |
 | `prompt`: `--prompt` | yes | yes | no | no | no |
-| `vad`: `--vad` | no | yes | no | no | no |
+| `vad`: `--vad`, see [Voice activity detection](#voice-activity-detection) | yes | yes | yes | yes | yes |
 | `word_timestamps`: `--word-timestamps` | yes | yes | no | yes | no |
 
 The `transformers` backend's capabilities depend on the model it loads: see [Any Hugging Face model](#any-hugging-face-model-transformers).
@@ -109,6 +109,7 @@ Python; `transcribe --list-backends` lists them, with their defaults:
 | whisper, faster-whisper | `hallucination_silence_threshold` | `0` (off) | Skip silences longer than this many seconds around text that looks made up. |
 | voxtral, parakeet, canary, transformers | `compute_type` | `auto` | The precision, as `--compute-type` sets it. |
 | voxtral, canary | `max_new_tokens` | `500` | Most tokens of text per ~30 s chunk; see [Text limit per chunk](#text-limit-per-chunk). |
+| all | `vad_threshold`, `vad_min_silence`, `vad_padding` | `0.5`, `2.0`, `0.4` | Tune `--vad`; see [Voice activity detection](#voice-activity-detection). |
 
 ```bash
 transcribe talk.mp3 -O cpu_threads=8
@@ -224,6 +225,42 @@ that reaches the limit, from very fast speech or the model repeating itself, may
 with the chunk's time range. Check the transcript there, raise the limit with `-O max_new_tokens=1000`, or transcribe
 the file with another backend.
 
+## Voice activity detection
+
+`--vad` (`vad=True` in Python) skips the silence and transcribes only the speech, which every backend supports. That
+avoids the text Whisper models make up in long silences, and the time spent on silence; the timestamps stay those of
+the recording.
+
+| Backend | How it skips the silence |
+|---|---|
+| faster-whisper | Its built-in filter: the stretches of speech joined end to end, the timestamps moved back. The batched pipeline (`--batch-size` 2 or more) always filters, with the same settings. |
+| whisper | The same, with the same detector and settings. |
+| voxtral, parakeet, canary, transformers | Chunks cut at the edges of the speech, so no chunk holds the silence between two stretches of speech; a stretch longer than a chunk is cut in its quietest moment, as without `--vad`. Canary and Voxtral, which time each chunk as a whole, then give a segment per stretch of speech. |
+
+- **No speech:** a recording without speech gives an empty transcript without running the model, and the command says
+  `No speech found in …` on stderr.
+- **The detector** is Silero VAD, the model faster-whisper ships, so it needs nothing more. It runs on the CPU, at
+  about 10 seconds per hour of audio.
+- **Decoding:** with `--vad`, the audio is decoded once with ffmpeg, as for speaker labels; whisper and faster-whisper
+  otherwise decode files themselves.
+
+**Tuning:** three [options](#backend-options), the same for every backend:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `vad_threshold` | `0.5` | How sure, from 0 to 1, the detector must be that a 32 ms frame is speech. Raise it to skip more noise; lower it if quiet speech goes missing. |
+| `vad_min_silence` | `2.0` | Seconds of silence that end a stretch of speech; shorter pauses stay in it. Lower it, to `0.5` say, for shorter Canary and Voxtral segments. |
+| `vad_padding` | `0.4` | Seconds of audio kept before and after each stretch of speech, so its first and last words stay whole. |
+
+```bash
+transcribe talk.mp3 -b whisper --vad
+transcribe meeting.mp3 -b canary -l de --vad -O vad_min_silence=0.5 -O vad_threshold=0.6
+```
+
+In Python, `speech_toolkit.vad.detect_speech(samples)` gives the stretches of speech of decoded audio as `(start, end)`
+pairs in seconds, and `speech_toolkit.media.split_audio(samples, 30, regions=...)` cuts chunks from them; see the
+[API reference](reference/vad.md).
+
 ## Any Hugging Face model (`transformers`)
 
 `-b transformers` runs most speech recognition models on the Hugging Face Hub through transformers' speech recognition
@@ -293,6 +330,9 @@ are checked as for every backend). Once the model has loaded, the backend's capa
    - `"language_detection"`: with no language given, the backend detects it and reports it in `result.language`.
    - `"prompt"`, `"vad"` and `"word_timestamps"`: optional features, accepted as keyword-only arguments of
      `transcribe()`. `Transcriber` passes only the declared ones and warns about the rest.
+   - For `"vad"`, [`speech_toolkit.vad`](reference/vad.md) has the shared detector: `detect_speech()` finds the
+     speech, `split_audio(..., regions=...)` cuts chunks from it, `SpeechMap` joins it and moves the times back, and
+     `VAD_OPTIONS` declares the tuning options. With `"waveform"` too, `Transcriber` decodes the audio for it.
 7. **Use Whisper's format for word timings:** `segment["words"] = [{"word": " Hi", "start": 0.0, "end": 0.4}]`.
 8. **Declare what it loads** (each is optional; without it, `load_model()` gets the model name and device as given):
    - `MODEL_SOURCES`: the custom models it takes besides `available_models()`, a dict from `"hub"` (a repo id),

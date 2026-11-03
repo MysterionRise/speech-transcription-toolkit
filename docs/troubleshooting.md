@@ -19,7 +19,10 @@
   - "isn't allowed in strict mode": `load_audio(strict=True)` takes only common audio and video formats; convert the
     file, to WAV or MP3 say.
   - "decoding took longer than the … s timeout": raise `load_audio()`'s `timeout`.
-- **Made-up text in silent parts:** try `-b faster-whisper --vad`.
+- **Made-up text in silent parts:** add `--vad`, which skips silence with every backend; see
+  [Voice activity detection](backends.md#voice-activity-detection).
+- **`--vad` leaves out quiet speech, or "No speech found":** lower the threshold, `-O vad_threshold=0.3`, or raise the
+  padding, `-O vad_padding=0.8`, if first or last words are cut.
 - **Canary/Voxtral "reached its limit of 500 tokens":** the text of that chunk may be cut off; see
   [Text limit per chunk](backends.md#text-limit-per-chunk).
 - **Translation keeps the original language:** Whisper's turbo models can't translate; use `-m medium` or `-m large-v3`.

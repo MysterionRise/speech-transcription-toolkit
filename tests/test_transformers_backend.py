@@ -30,11 +30,14 @@ from speech_toolkit.backends.transformers_backend import (
 )
 from speech_toolkit.errors import BackendUnavailableError, SpeechToolkitWarning
 from speech_toolkit.media import split_audio
+from speech_toolkit.vad import VAD_OPTIONS
 
 RATE = 16000
 WHISPER_LANGUAGES = {"english": "en", "german": "de", "french": "fr"}  # a part of Whisper's TO_LANGUAGE_CODE
 # The cut split_audio() makes in 40 s of silence: the start of the last 5 s before the 30 s limit, plus half a window.
 SECOND_CHUNK = 25.05
+
+VAD_DEFAULTS = {name: option.default for name, option in VAD_OPTIONS.items()}
 
 
 def whisper_config(multilingual: bool = True, **settings: Any) -> SimpleNamespace:
@@ -128,7 +131,13 @@ class TestLoading:
         assert TransformersBackend.default_model() == "openai/whisper-large-v3-turbo"
         assert "facebook/wav2vec2-base-960h" in TransformersBackend.available_models()
         # What some models can do: the checks made before a model loads let these through.
-        assert TransformersBackend.capabilities == {"translate", "language_detection", "word_timestamps", "waveform"}
+        assert TransformersBackend.capabilities == {
+            "translate",
+            "language_detection",
+            "word_timestamps",
+            "vad",
+            "waveform",
+        }
         assert TransformersBackend.requires == ("torch", "transformers")
 
     def test_pipeline_gets_the_model_device_and_dtype(self, modules):
@@ -138,7 +147,7 @@ class TestLoading:
             "automatic-speech-recognition", model="openai/whisper-small", device="cpu", dtype=modules.torch.float32
         )
         assert (backend.is_loaded, backend.model_name, backend.device) == (True, "openai/whisper-small", "cpu")
-        assert backend.options == {"compute_type": "auto"}
+        assert backend.options == {"compute_type": "auto", **VAD_DEFAULTS}
 
     def test_gpu_and_precision(self, modules):
         modules.torch.cuda.is_available.return_value = True
@@ -162,7 +171,7 @@ class TestLoading:
         transcriber = Transcriber("transformers", "openai/whisper-small", device="cpu", compute_type="bfloat16")
 
         assert modules.transformers.pipeline.call_args.kwargs["dtype"] is modules.torch.bfloat16
-        assert transcriber.backend.options == {"compute_type": "bfloat16"}
+        assert transcriber.backend.options == {"compute_type": "bfloat16", **VAD_DEFAULTS}
         with pytest.raises(UnsupportedOptionError, match="max_new_tokens"):
             Transcriber("transformers", "openai/whisper-small", options={"max_new_tokens": 10})
 
@@ -219,7 +228,7 @@ class TestTraits:
             segment_timestamps=True,
             word_timestamps=True,
         )
-        assert backend.capabilities == {"translate", "language_detection", "word_timestamps", "waveform"}
+        assert backend.capabilities == {"translate", "language_detection", "word_timestamps", "vad", "waveform"}
 
     def test_english_only_whisper(self, modules):
         whisper_pipeline(modules.asr, whisper_config(multilingual=False))
@@ -227,7 +236,7 @@ class TestTraits:
         backend = loaded("openai/whisper-small.en")
 
         assert backend.traits.language == "en" and not backend.traits.languages
-        assert backend.capabilities == {"word_timestamps", "waveform"}
+        assert backend.capabilities == {"word_timestamps", "vad", "waveform"}
 
     @pytest.mark.parametrize("language", ["<|en|>", "english", "en"])
     def test_whisper_set_to_one_language(self, modules, language):
@@ -237,12 +246,17 @@ class TestTraits:
         backend = loaded("distil-whisper/distil-large-v3.5")
 
         assert backend.traits.language == "en"
-        assert backend.capabilities == {"translate", "word_timestamps", "waveform"}  # it doesn't detect the language
+        assert backend.capabilities == {
+            "translate",
+            "word_timestamps",
+            "vad",
+            "waveform",
+        }  # it doesn't detect the language
 
     def test_whisper_without_alignment_heads_has_no_word_timestamps(self, modules):
         whisper_pipeline(modules.asr, whisper_config(alignment_heads=None))
 
-        assert loaded("org/fine-tune").capabilities == {"translate", "language_detection", "waveform"}
+        assert loaded("org/fine-tune").capabilities == {"translate", "language_detection", "vad", "waveform"}
 
     def test_whisper_without_timestamp_tokens(self, modules):
         whisper_pipeline(modules.asr, whisper_config(no_timestamps_token_id=None))
@@ -257,7 +271,7 @@ class TestTraits:
         backend = loaded("facebook/wav2vec2-base-960h")
 
         assert backend.traits == ModelTraits(CTC, segment_timestamps=True, word_timestamps=True)
-        assert backend.capabilities == {"word_timestamps", "waveform"}
+        assert backend.capabilities == {"word_timestamps", "vad", "waveform"}
 
     def test_ctc_with_a_language_model(self):
         asr = SimpleNamespace(type="ctc_with_lm", tokenizer=SimpleNamespace())
@@ -272,15 +286,21 @@ class TestTraits:
     @pytest.mark.parametrize("kind", ["seq2seq", "tdt", "something-new"])
     def test_other_models_give_text(self, kind):
         assert read_traits(SimpleNamespace(type=kind)) == ModelTraits(TEXT)
-        assert ModelTraits(TEXT).capabilities == {"waveform"}
+        assert ModelTraits(TEXT).capabilities == {"vad", "waveform"}
 
     def test_the_class_keeps_what_some_models_can_do(self, modules):
         text_pipeline(modules.asr)
 
         backend = loaded("moonshine-ai/moonshine-tiny")
 
-        assert backend.capabilities == {"waveform"}
-        assert TransformersBackend.capabilities == {"translate", "language_detection", "word_timestamps", "waveform"}
+        assert backend.capabilities == {"vad", "waveform"}
+        assert TransformersBackend.capabilities == {
+            "translate",
+            "language_detection",
+            "word_timestamps",
+            "vad",
+            "waveform",
+        }
 
 
 ###############################################################################

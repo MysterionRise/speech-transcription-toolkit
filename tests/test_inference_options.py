@@ -29,6 +29,7 @@ from speech_toolkit import (
     cli,
 )
 from speech_toolkit.backends import BackendOption, FasterWhisperBackend, ParakeetBackend, faster_whisper_backend
+from speech_toolkit.vad import faster_whisper_parameters
 
 RATE = 16000
 
@@ -104,6 +105,7 @@ USUAL = {
     "log_progress": False,
     "initial_prompt": None,
     "vad_filter": False,
+    "vad_parameters": None,
     "word_timestamps": False,
 }
 
@@ -168,7 +170,10 @@ class TestFasterWhisper:
         # The pipeline cuts the audio where voice activity detection finds speech, also without --vad. It isn't asked
         # for timestamps (without_timestamps=False), with which it loses text.
         fw.pipeline.transcribe.assert_called_once_with(
-            str(audio), **{**USUAL, "language": "de", "vad_filter": True}, batch_size=8, beam_size=2
+            str(audio),
+            **{**USUAL, "language": "de", "vad_filter": True, "vad_parameters": faster_whisper_parameters()},
+            batch_size=8,
+            beam_size=2,
         )
         fw.model.transcribe.assert_not_called()
 

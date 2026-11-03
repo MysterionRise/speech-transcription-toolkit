@@ -13,4 +13,5 @@ the docstrings; on GitHub, each page links to the source file that holds them. F
 | [Backends](backends.md) | `list_backends()`, `register_backend()`, `TranscriptionBackend` | `speech_toolkit` |
 | | `get_backend()` | `speech_toolkit.backends` |
 | [Decoding audio](media.md) | `load_audio()` | `speech_toolkit.media` |
+| [Voice activity detection](vad.md) | `detect_speech()`, `SpeechMap`, `split_audio()` | `speech_toolkit.vad`, `speech_toolkit.media` |
 | [Server](server.md) | `create_app()` | `speech_toolkit.server` |

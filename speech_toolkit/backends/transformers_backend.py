@@ -71,7 +71,7 @@ class ModelTraits:
     @property
     def capabilities(self) -> FrozenSet[str]:
         """These traits as backend capabilities (see TranscriptionBackend)."""
-        found = {"waveform"}  # the pipeline takes the samples
+        found = {"waveform", "vad"}  # the pipeline takes the samples, and the chunks can be cut at speech
         if self.translate:
             found.add("translate")
         if self.detects_language:
@@ -133,7 +133,7 @@ class TransformersBackend(_TransformersBackend):
     )
     # What some models can do: multilingual Whisper models translate and detect the language, Whisper models with
     # alignment heads and CTC models give word timestamps. load_model() narrows them to the loaded model's.
-    capabilities = frozenset({"translate", "language_detection", "word_timestamps", "waveform"})
+    capabilities = frozenset({"translate", "language_detection", "vad", "word_timestamps", "waveform"})
     EXTRA = "transformers"
     NEEDS = "torch and transformers"
     # A few models that work well, for --list-models; -m takes any other repo id or folder. The first is the default.
@@ -222,6 +222,7 @@ class TransformersBackend(_TransformersBackend):
         task: str = "transcribe",
         verbose: bool = True,
         *,
+        vad: bool = False,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe (or with a multilingual Whisper model, translate to English) audio, in chunks of up to 30 s.
@@ -233,6 +234,8 @@ class TransformersBackend(_TransformersBackend):
             task: 'transcribe', or 'translate' to English (multilingual Whisper models).
             verbose: Log progress (chunks transcribed) at INFO rather than DEBUG. Each chunk's segments are also passed
                 to report_progress(), whatever *verbose* is.
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                chunks are cut at its edges, and audio without speech reaches no model (nor its language detection).
             word_timestamps: Give each segment its words with their timings (Whisper models with alignment heads, and
                 CTC models). Whisper's segments are then made from the words, ending at sentences and pauses.
 
@@ -255,7 +258,7 @@ class TransformersBackend(_TransformersBackend):
 
         audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
         duration = len(audio) / SAMPLE_RATE
-        chunks = split_audio(audio, self.CHUNK_SECONDS)
+        chunks = split_audio(audio, self.CHUNK_SECONDS, regions=self._speech(audio) if vad else None)
         segments: List[Dict[str, Any]] = []
         level = logging.INFO if verbose else logging.DEBUG
         for number, (offset, samples) in enumerate(chunks, start=1):

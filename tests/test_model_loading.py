@@ -47,6 +47,7 @@ from speech_toolkit.backends._transformers import torch_dtype
 from speech_toolkit.backends.config import check_device, describe_devices, model_source, parse_options
 from speech_toolkit.diarization import load_diarization_pipeline
 from speech_toolkit.server import parse_args as server_parse_args
+from speech_toolkit.vad import VAD_OPTIONS
 
 TRANSFORMERS_BACKENDS = [
     (ParakeetBackend, "ParakeetForTDT"),
@@ -60,6 +61,10 @@ REPO_ID = "someone/fine-tuned-model"
 def no_color(monkeypatch):
     """Python 3.14's argparse can colour help and errors; these tests match the plain text."""
     monkeypatch.setenv("PYTHON_COLORS", "0")
+
+
+# The vad_ options every built-in backend has, at their defaults.
+VAD_DEFAULTS = {name: option.default for name, option in VAD_OPTIONS.items()}
 
 
 @pytest.fixture
@@ -753,7 +758,7 @@ class TestOptions:
         assert error.value.code == (
             "Error: the faster-whisper backend has no option 'beam_width'; its options: compute_type, cpu_threads, "
             "num_workers, batch_size, beam_size, condition_on_previous_text, no_speech_threshold, "
-            "hallucination_silence_threshold"
+            "hallucination_silence_threshold, vad_threshold, vad_min_silence, vad_padding"
         )
         assert "Loading" not in capsys.readouterr().err
         ct2.WhisperModel.assert_not_called()
@@ -794,20 +799,34 @@ class TestOptions:
 
     def test_max_new_tokens(self, torch_modules):
         transcriber = Transcriber("canary", options={"max_new_tokens": "800"})
-        assert transcriber.backend.options == {"compute_type": "auto", "max_new_tokens": 800, "batch_size": 8}
+        assert transcriber.backend.options == {
+            "compute_type": "auto",
+            "max_new_tokens": 800,
+            "batch_size": 8,
+            **VAD_DEFAULTS,
+        }
 
         with pytest.raises(UnsupportedOptionError, match="max_new_tokens must be at least 1"):
             Transcriber("voxtral", options={"max_new_tokens": 0})
-        with pytest.raises(UnsupportedOptionError, match="its options: compute_type, batch_size$"):
+        with pytest.raises(
+            UnsupportedOptionError,
+            match="its options: compute_type, vad_threshold, vad_min_silence, vad_padding, batch_size$",
+        ):
             Transcriber("parakeet", options={"max_new_tokens": 800})
 
     def test_defaults_before_loading(self):
-        assert CanaryBackend().options == {"compute_type": "auto", "max_new_tokens": 500, "batch_size": 8}
+        assert CanaryBackend().options == {
+            "compute_type": "auto",
+            "max_new_tokens": 500,
+            "batch_size": 8,
+            **VAD_DEFAULTS,
+        }
         assert WhisperBackend().options == {
             "beam_size": 1,
             "condition_on_previous_text": True,
             "no_speech_threshold": 0.6,
             "hallucination_silence_threshold": 0.0,
+            **VAD_DEFAULTS,
         }
         backend = FasterWhisperBackend()
         backend.options["cpu_threads"] = 9  # a copy
@@ -918,8 +937,10 @@ class TestListings:
         assert faster[6].startswith("-O cpu_threads=INT: Threads on the CPU;")
         assert faster[6].endswith("(default: 0)")
 
+        assert faster[-3:] == [f"-O {name}=NUMBER: {option.describe()}" for name, option in VAD_OPTIONS.items()]
+
         whisper = backends["whisper"]
-        assert whisper[1] == "Capabilities: translate, language detection, prompt, word timestamps"
+        assert whisper[1] == "Capabilities: translate, language detection, prompt, vad, word timestamps"
         assert whisper[3:5] == [
             "Custom models: a local checkpoint file (.pt)",
             "Devices: auto, cpu, cuda, cuda:N or mps",
@@ -929,6 +950,9 @@ class TestListings:
             "-O condition_on_previous_text=true|false",
             "-O no_speech_threshold=NUMBER",
             "-O hallucination_silence_threshold=NUMBER",
+            "-O vad_threshold=NUMBER",
+            "-O vad_min_silence=NUMBER",
+            "-O vad_padding=NUMBER",
         ]
         canary = [line.split(":", 1)[0] for line in backends["canary"]]
         assert canary == [
@@ -938,6 +962,9 @@ class TestListings:
             "Custom models",
             "Devices",
             "-O compute_type=auto|float32|float16|bfloat16",
+            "-O vad_threshold=NUMBER",
+            "-O vad_min_silence=NUMBER",
+            "-O vad_padding=NUMBER",
             "-O max_new_tokens=INT",
             "-O batch_size=INT",
         ]

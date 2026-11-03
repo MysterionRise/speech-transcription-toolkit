@@ -5,6 +5,9 @@ PyTorch, so it comes with the ``whisper`` extra: ``pip install "speech-transcrip
 
 Besides the names in ``MODELS``, it loads local checkpoint files (``.pt``), the only custom models openai-whisper
 takes.
+
+With ``vad``, it transcribes only the speech that :func:`speech_toolkit.vad.detect_speech` finds, joined end to end,
+and moves the timestamps back to the recording's; Whisper makes up text in long silences otherwise.
 """
 
 from __future__ import annotations
@@ -14,6 +17,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError
+from ..media import SAMPLE_RATE, load_audio
+from ..vad import VAD_OPTIONS, SpeechMap, detect_speech
+from ..vad import settings as vad_settings
 from .base import TranscriptionBackend, TranscriptionResult
 from .config import BackendOption
 
@@ -68,15 +74,18 @@ class WhisperBackend(TranscriptionBackend):
 
     name = "whisper"
     description = "OpenAI Whisper - offline speech-to-text with multiple model sizes"
-    capabilities = frozenset({"translate", "language_detection", "prompt", "word_timestamps", "waveform"})
+    capabilities = frozenset({"translate", "language_detection", "prompt", "vad", "word_timestamps", "waveform"})
     requires = ("whisper",)
     MODEL_SOURCES = {"file": "a local checkpoint file (.pt)"}  # openai-whisper loads no repo ids or folders
     DEVICES = frozenset({"cpu", "cuda", "mps"})
-    # Keyword arguments of the model's transcribe(), all with openai-whisper's defaults.
+    # Keyword arguments of the model's transcribe(), all with openai-whisper's defaults; then the vad_ settings.
     OPTIONS: Mapping[str, BackendOption] = {
         "beam_size": BackendOption(int, 1, "Beams in beam search; 1 decodes greedily, the fastest", minimum=1),
         **HALLUCINATION_OPTIONS,
+        **VAD_OPTIONS,
     }
+    # The options that are keyword arguments of the model's transcribe().
+    DECODING_OPTIONS = ("beam_size", *HALLUCINATION_OPTIONS)
 
     # Mirrors whisper.available_models(); kept static so listing models doesn't import torch.
     MODELS = [
@@ -115,7 +124,8 @@ class WhisperBackend(TranscriptionBackend):
             model_name: One of the available model names (tiny ... large-v3, turbo), or a local checkpoint file.
             device: 'cpu', 'cuda', 'cuda:N' (the N-th GPU), 'mps', or None or 'auto' for the GPU when torch sees one.
             options: Values for ``OPTIONS``: ``beam_size``, ``condition_on_previous_text``, ``no_speech_threshold``
-                and ``hallucination_silence_threshold``, which transcribe() passes on to openai-whisper.
+                and ``hallucination_silence_threshold``, which transcribe() passes on to openai-whisper, and the
+                ``vad_`` settings.
 
         Raises:
             ModelNotFoundError: If model_name is not recognized.
@@ -185,6 +195,7 @@ class WhisperBackend(TranscriptionBackend):
         verbose: bool = True,
         *,
         prompt: Optional[str] = None,
+        vad: bool = False,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
         """Transcribe audio using Whisper.
@@ -195,10 +206,14 @@ class WhisperBackend(TranscriptionBackend):
             task: 'transcribe' or 'translate'.
             verbose: Show a progress bar during transcription.
             prompt: Names, terms or a sample sentence that guide spelling (Whisper's initial_prompt).
+            vad: Transcribe only the speech, found with the shared Silero VAD (tuned by the ``vad_`` options): the
+                stretches of speech joined end to end, the times mapped back to the recording's. A path is then
+                decoded with load_audio(), and audio without speech returns an empty result without reaching the
+                model.
             word_timestamps: Add per-word timings ("words") to each segment.
 
         Returns:
-            TranscriptionResult with transcript text and segments.
+            TranscriptionResult with transcript text and segments; its duration is known with *vad*.
 
         Raises:
             ModelLoadError: If no model is loaded.
@@ -225,14 +240,26 @@ class WhisperBackend(TranscriptionBackend):
         if prompt:
             kwargs["initial_prompt"] = prompt
         # The options set; beam_size goes on to the decoder, which searches greedily without it.
-        kwargs.update(decoding_arguments(self._options, self.OPTIONS))
+        kwargs.update(decoding_arguments(self._options, {name: self.OPTIONS[name] for name in self.DECODING_OPTIONS}))
         # hallucination_silence_threshold works on word timings: they are computed for it, and kept if asked for.
         if word_timestamps or kwargs.get("hallucination_silence_threshold"):
             kwargs["word_timestamps"] = True
 
-        # Run transcription
-        audio = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        audio: Any = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        speech: Optional[SpeechMap] = None
+        duration: Optional[float] = None
+        if vad:
+            samples = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+            duration = len(samples) / SAMPLE_RATE
+            regions = detect_speech(samples, **vad_settings(self._options))
+            if not regions:
+                return TranscriptionResult("", [], language, duration=duration)
+            speech = SpeechMap(regions)
+            audio = speech.join(samples)
+
         raw_result: Dict[str, Any] = self._model.transcribe(audio, **kwargs)
+        if speech is not None:
+            speech.restore(raw_result.get("segments", []))  # also raw's, which the result keeps
 
         # Convert to standardized format
         segments = [_segment(seg, words=word_timestamps) for seg in raw_result.get("segments", [])]
@@ -243,6 +270,7 @@ class WhisperBackend(TranscriptionBackend):
             language=raw_result.get("language"),
             language_probability=detection.probability(raw_result.get("language"), given=language),
             raw=raw_result,
+            duration=duration,
         )
 
 

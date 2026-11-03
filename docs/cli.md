@@ -21,7 +21,8 @@ Progress goes to stderr, so `transcribe a.mp3 > a.txt` gives a clean file (`-q` 
 
 **Better results:**
 - `--prompt "Kubernetes, Grafana"` helps spell names and jargon.
-- `--vad` skips silence, which stops made-up text in quiet parts (faster-whisper, the default backend).
+- `--vad` skips silence, which stops made-up text in quiet parts (every backend; see
+  [Voice activity detection](backends.md#voice-activity-detection)).
 - `--max-line-width 42` splits subtitles into readable lines, and `--max-cue-duration 6` keeps cues short.
 - `--word-timestamps` adds per-word timings to JSON.
 - `-O condition_on_previous_text=false` stops Whisper repeating a made-up phrase; see
@@ -144,7 +145,7 @@ $ transcribe --detect-language talk.mp3 -f json
 | `--timestamps` | txt: one line per segment, starting with its time: `[00:01:02] text`. |
 | `--word-level` | vtt: mark when each word starts, with `<00:00:01.200>` tags, so players can highlight the words as they are spoken. Turns on word timestamps. See [Word-level WebVTT](formats.md#word-level-webvtt). |
 | `--prompt TEXT` | Names, terms or a sample sentence that guide spelling and style (whisper, faster-whisper). |
-| `--vad` | Skip silence before transcribing (faster-whisper). |
+| `--vad` | Transcribe only the speech, skipping silence; the `vad_` options (`-O`) tune it. |
 | `--word-timestamps` | Add per-word timings to the JSON output (whisper, faster-whisper, parakeet). |
 | `--batch-size N` | Transcribe N pieces of audio at once: faster on a GPU, with more memory (faster-whisper, voxtral, parakeet, canary). From 2 up, faster-whisper uses its batched pipeline, which skips silence like `--vad` and makes a segment of each piece of up to 30 s. The same as `-O batch_size=N`; see [Speed](backends.md#speed-batches-beams-and-threads). |
 | `--beam-size N` | Beams in beam search; 1 decodes greedily, the fastest (whisper, default 1; faster-whisper, default 5). The same as `-O beam_size=N`. |

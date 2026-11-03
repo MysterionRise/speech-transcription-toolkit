@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from ..errors import BackendUnavailableError, ModelLoadError, SpeechToolkitWarning
+from ..media import SAMPLE_RATE, load_audio
 from ..types import Segment
+from ..vad import VAD_OPTIONS, faster_whisper_parameters, has_speech
+from ..vad import settings as vad_settings
 from .base import TranscriptionBackend, TranscriptionResult, report_progress
 from .config import BackendOption
 from .whisper_backend import HALLUCINATION_OPTIONS, decoding_arguments
@@ -89,6 +92,7 @@ class FasterWhisperBackend(TranscriptionBackend):
         ),
         "beam_size": BackendOption(int, 5, "Beams in beam search; 1 decodes greedily, the fastest", minimum=1),
         **HALLUCINATION_OPTIONS,
+        **VAD_OPTIONS,
     }
     # The options that are keyword arguments of the model's transcribe(), with faster-whisper's defaults.
     DECODING_OPTIONS = ("beam_size", *HALLUCINATION_OPTIONS)
@@ -142,8 +146,10 @@ class FasterWhisperBackend(TranscriptionBackend):
             options: Values for ``OPTIONS``. ``compute_type``, ``cpu_threads`` and ``num_workers`` load the model;
                 afterwards ``self.options`` shows the compute type that "auto" picked. The others are for
                 transcribe(): ``batch_size`` (above 1, faster-whisper's batched pipeline), ``beam_size``,
-                ``condition_on_previous_text``, ``no_speech_threshold`` and ``hallucination_silence_threshold``. The
-                batched pipeline ignores the last three, so setting them with a ``batch_size`` above 1 warns.
+                ``condition_on_previous_text``, ``no_speech_threshold`` and ``hallucination_silence_threshold``, and
+                the ``vad_`` settings, which tune the voice activity detection. The batched pipeline ignores
+                ``condition_on_previous_text``, ``no_speech_threshold`` and ``hallucination_silence_threshold``, so
+                setting them with a ``batch_size`` above 1 warns.
 
         Raises:
             ModelNotFoundError: If model_name is none of these.
@@ -251,8 +257,10 @@ class FasterWhisperBackend(TranscriptionBackend):
             verbose: Show faster-whisper's progress bar on stderr. Each segment is also passed to report_progress() as
                 soon as it is decoded, whatever *verbose* is.
             prompt: Names, terms or a sample sentence that guide spelling (initial_prompt).
-            vad: Skip silence with the built-in Silero VAD filter. The batched pipeline (the ``batch_size`` option
-                above 1) always does: it decodes the pieces of speech it finds.
+            vad: Skip silence with the built-in Silero VAD filter, tuned by the ``vad_`` options. A path is then
+                decoded with load_audio(), and audio without speech returns an empty result without reaching the
+                model. The batched pipeline (the ``batch_size`` option above 1) always filters, with the same
+                settings: it decodes the pieces of speech it finds.
             word_timestamps: Add per-word timings ("words") to each segment.
 
         The options the model loaded with (``beam_size`` and the others in ``DECODING_OPTIONS``) go to faster-whisper's
@@ -272,6 +280,15 @@ class FasterWhisperBackend(TranscriptionBackend):
         if isinstance(audio_path, Path) and not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        audio: Any = str(audio_path) if isinstance(audio_path, Path) else audio_path
+        settings = vad_settings(self._options)
+        if vad:
+            audio = load_audio(audio_path) if isinstance(audio_path, Path) else audio_path
+            if not has_speech(audio, threshold=settings["threshold"]):  # its filter would leave nothing to transcribe
+                duration = len(audio) / SAMPLE_RATE
+                raw = {"duration": duration, "language_probability": None}
+                return TranscriptionResult("", [], language, raw=raw, duration=duration)
+
         # The options set, as keyword arguments; the ones left at faster-whisper's defaults aren't passed.
         arguments = decoding_arguments(self._options, {name: self.OPTIONS[name] for name in self.DECODING_OPTIONS})
         model = self._model
@@ -288,12 +305,13 @@ class FasterWhisperBackend(TranscriptionBackend):
         # hallucination_silence_threshold works on word timings: they are computed for it, and kept if asked for.
         words = word_timestamps or bool(arguments.get("hallucination_silence_threshold"))
         segment_iter, info = model.transcribe(
-            str(audio_path) if isinstance(audio_path, Path) else audio_path,
+            audio,
             language=language,
             task=task,
             log_progress=verbose,
             initial_prompt=prompt,
             vad_filter=vad,
+            vad_parameters=faster_whisper_parameters(**settings) if vad else None,
             word_timestamps=words,
             **arguments,
         )
