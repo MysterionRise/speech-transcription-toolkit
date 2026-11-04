@@ -202,6 +202,16 @@ With the installed `transcribe` command, on Windows (on the GPU) unless a step s
 - [ ] **The Docker images**, if Docker is installed (#35): `docker run --rm -v "$PWD:/data"
   ghcr.io/mysterionrise/speech-transcription-toolkit transcribe /data/talk.mp3` prints the transcript, and on Windows
   with the NVIDIA Container Toolkit, the `:cuda` image with `--gpus all` runs on the GPU.
+- [ ] **Silence** (#39): `transcribe podcast.mp3 -b whisper --vad` and `-b canary --vad` make up no text in long
+  pauses; a recording of silence gives an empty transcript and `No speech found in …` on stderr.
+- [ ] **Speed** (#36): on Windows, `transcribe podcast.mp3 --batch-size 8` is clearly faster than without it, with
+  the same text in substance.
+- [ ] **Any Hub model** (#40): after `pip install "speech-transcription-toolkit[transformers]"`,
+  `transcribe talk.mp3 -b transformers -m openai/whisper-tiny` transcribes it (`--device mps` on the Mac).
+- [ ] **Languages** (#41): `transcribe --detect-language clip.mp3 talk.mp3` prints each file's language and its
+  probability, without transcribing.
+- [ ] **Saved results** (#38): `transcribe talk.mp3 -f json --outdir out`, then
+  `transcribe --from-json out/talk.json -f srt,tsv --outdir out` loads no model, and its srt matches a direct run's.
 
 ## 5. Error paths
 
@@ -241,6 +251,9 @@ From the Mac, with the same key in `KEY` (replace `windows-pc` with the Windows 
 - [ ] **An oversized upload gets 413:** send a file larger than `--max-upload-mb` (100 MB by default) with the right
   key.
 - [ ] **`/docs` is hidden when a key is set:** `curl -i http://windows-pc:8000/docs` answers 404.
+- [ ] **Streaming** (#37): with OpenAI's Python SDK, `client.audio.transcriptions.create(model="gpt-4o-transcribe",
+  file=open("talk.mp3", "rb"), stream=True)` gives `transcript.text.delta` events while the server transcribes, then
+  `transcript.text.done`.
 
 ## 7. Record the pass
 

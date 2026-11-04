@@ -19,7 +19,7 @@ speech_toolkit/
 ├── cli.py          the transcribe command
 ├── diarization.py  pyannote pipeline loading, diarization and merging speakers into segments
 ├── errors.py       the exceptions (SpeechToolkitError and its subclasses) and SpeechToolkitWarning
-├── formats.py      txt/srt/vtt/json rendering and subtitle line splitting
+├── formats.py      txt/srt/vtt/json/tsv/rttm rendering and subtitle line splitting
 ├── media.py        folder scanning, ffmpeg decoding, splitting long audio in pauses
 ├── server.py       transcribe-server, the OpenAI-compatible API
 ├── types.py        the Segment and Word TypedDicts, and the JSON schema version
