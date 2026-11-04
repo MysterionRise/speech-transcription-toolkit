@@ -1,4 +1,5 @@
-"""Offline speech-to-text with Whisper, faster-whisper, Voxtral, Parakeet or Canary, optionally labelling speakers.
+"""Offline speech-to-text with faster-whisper, Whisper, Voxtral, Parakeet, Canary or any Hugging Face speech model,
+optionally labelling speakers.
 
     from speech_toolkit import transcribe
 
