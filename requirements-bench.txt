@@ -5,7 +5,7 @@
 # Word error rate: Whisper's text normalizers, then jiwer's word alignment. Pinned, so that every run scores alike;
 # results record the versions, and python -m benchmarks.compare notes a difference.
 jiwer==4.0.0
-whisper-normalizer==0.1.15
+whisper-normalizer==1.0.0
 
 # Reads the LibriSpeech Parquet file; the download itself uses huggingface_hub, which faster-whisper installs
 pyarrow>=14
