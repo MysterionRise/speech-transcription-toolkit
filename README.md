@@ -40,7 +40,7 @@ from speech_toolkit import Transcriber, transcribe
 
 result = transcribe("talk.mp3", backend="faster-whisper", model="small")
 print(result.text)        # result.segments has start, end and text for each segment
-result.save("talk.srt")   # txt, srt, vtt or json, from the extension
+result.save("talk.srt")   # txt, srt, vtt, json, tsv or rttm, from the extension
 
 transcriber = Transcriber(backend="faster-whisper", model="small")  # load once, reuse
 for path in ["a.mp3", "b.mp3"]:

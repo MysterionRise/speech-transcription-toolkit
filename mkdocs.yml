@@ -8,8 +8,9 @@
 # outside docs/ are absolute GitHub links. A new page needs an entry in "nav" below, or the strict build fails.
 site_name: speech-transcription-toolkit
 site_description: >-
-  Offline speech-to-text from the command line or Python: faster-whisper, Whisper, Voxtral, Parakeet or Canary,
-  optional speaker labels, and txt, srt, vtt or json output.
+  Offline speech-to-text from the command line, Python or an OpenAI-compatible server: faster-whisper, Whisper,
+  Voxtral, Parakeet, Canary or any Hugging Face speech model, optional speaker labels, and txt, srt, vtt, json, tsv or
+  rttm output.
 site_url: https://mysterionrise.github.io/speech-transcription-toolkit/
 repo_url: https://github.com/MysterionRise/speech-transcription-toolkit
 repo_name: MysterionRise/speech-transcription-toolkit

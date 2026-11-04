@@ -5,7 +5,8 @@
 - [Python API](python-api.md): `Transcriber`, `transcribe()`, results and custom backends.
   - [Examples](examples.md): scripts to start from, such as subtitles for a folder or meeting notes with speakers.
   - [API reference](reference/README.md): every public class and function, from the docstrings.
-- [Backends](backends.md): Whisper, faster-whisper, Voxtral, Parakeet and Canary compared.
+- [Backends](backends.md): faster-whisper, Whisper, Voxtral, Parakeet, Canary and any Hugging Face speech model
+  compared, and voice activity detection.
 - [Speaker labels](diarization.md): who said what, with pyannote.audio.
 - [Output formats](formats.md): txt, srt, vtt, json, tsv and rttm.
 - [OpenAI-compatible server](server.md): `transcribe-server`.

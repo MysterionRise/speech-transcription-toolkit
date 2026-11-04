@@ -146,8 +146,8 @@ def _supported_by(capability: str) -> str:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="transcribe",
-        description="Transcribe audio offline with Whisper, faster-whisper, Voxtral, Parakeet or Canary, "
-        "optionally labelling speakers.",
+        description="Transcribe audio offline with faster-whisper, Whisper, Voxtral, Parakeet, Canary or any "
+        "Hugging Face speech model, optionally labelling speakers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
