@@ -19,6 +19,7 @@ backends, in ``_transformers.py``.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import logging
 import warnings
 from pathlib import Path
@@ -189,6 +190,7 @@ class TransformersBackend(_TransformersBackend):
                 f'Install with: pip install "speech-transcription-toolkit[{self.EXTRA}]"'
             ) from e
 
+        skip_broken_torchcodec()
         try:
             on = torch_device(torch, target)
             dtype = torch_dtype(torch, on, settings["compute_type"])
@@ -385,6 +387,30 @@ class TransformersBackend(_TransformersBackend):
         else:
             segments = [{"start": round(offset, 3), "end": round(end, 3), "text": str(output.get("text", "")).strip()}]
         return [segment for segment in segments if segment["text"].strip()]
+
+
+def skip_broken_torchcodec() -> None:
+    """Keep transformers' ASR pipeline away from a torchcodec that is installed but can't load.
+
+    The pipeline imports torchcodec on every call when the package is installed, to check whether its input is a
+    torchcodec decoder, though this backend always hands it decoded samples. torchcodec only loads next to the torch
+    it was built for: on Linux its PyPI wheel needs PyPI's CUDA build of torch, so with a CPU-only or other CUDA build
+    (from PyTorch's own index) every call would fail with "Could not load this library". The ``diarize`` extra
+    installs torchcodec, through pyannote.audio. When importing it fails, the pipeline is told it isn't there; nothing
+    changes when it loads or isn't installed.
+    """
+    try:
+        module: Any = importlib.import_module("transformers.pipelines.automatic_speech_recognition")
+    except ImportError:  # another transformers layout: nothing to skip
+        return
+    available = getattr(module, "is_torchcodec_available", None)
+    if available is None or not available():
+        return
+    try:
+        import torchcodec  # noqa: F401
+    except Exception as e:  # OSError or RuntimeError from its libraries, or an ImportError
+        module.is_torchcodec_available = lambda: False
+        logger.debug("torchcodec can't load, so the pipeline won't use it: %s", e)
 
 
 def _timed(items: Sequence[Mapping[str, Any]], offset: float, end: float) -> List[Tuple[float, float, str]]:
