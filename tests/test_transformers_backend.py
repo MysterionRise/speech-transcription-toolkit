@@ -6,10 +6,11 @@ models, CTC models such as wav2vec2, and text-only sequence-to-sequence models.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import sys
 import warnings
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,7 @@ from speech_toolkit.backends.transformers_backend import (
     _language_code,
     _timed,
     read_traits,
+    skip_broken_torchcodec,
 )
 from speech_toolkit.errors import BackendUnavailableError, SpeechToolkitWarning
 from speech_toolkit.media import split_audio
@@ -209,6 +211,51 @@ class TestLoading:
     def test_missing_file(self, modules, tmp_path):
         with pytest.raises(FileNotFoundError):
             loaded().transcribe(tmp_path / "missing.wav")
+
+
+class TestTorchcodec:
+    """transformers' ASR pipeline imports torchcodec on every call when it is installed; the diarize extra installs
+    it, and a build made for another torch can't load, so the backend tells the pipeline it isn't there."""
+
+    ASR_MODULE = "transformers.pipelines.automatic_speech_recognition"
+
+    @pytest.fixture
+    def asr_module(self, modules):
+        """The pipeline's module, with its check for torchcodec saying it is installed."""
+        module = SimpleNamespace(is_torchcodec_available=MagicMock(return_value=True))
+        with patch.dict(sys.modules, {self.ASR_MODULE: module}):
+            yield module
+
+    def test_a_torchcodec_that_cant_load_is_skipped(self, asr_module, caplog):
+        with patch.dict(sys.modules, {"torchcodec": None}):  # importing it fails
+            with caplog.at_level(logging.DEBUG, logger="speech_toolkit"):
+                backend = loaded()
+
+            assert asr_module.is_torchcodec_available() is False
+            assert "torchcodec can't load, so the pipeline won't use it" in caplog.text
+            backend.transcribe(np.zeros(RATE, np.float32))
+        assert len(pipeline_calls(backend._pipeline)) == 1
+
+    def test_a_torchcodec_that_loads_stays(self, asr_module):
+        check = asr_module.is_torchcodec_available
+        with patch.dict(sys.modules, {"torchcodec": ModuleType("torchcodec")}):
+            loaded()
+        assert asr_module.is_torchcodec_available is check
+
+    def test_nothing_to_do_without_torchcodec(self, asr_module):
+        asr_module.is_torchcodec_available.return_value = False
+        check = asr_module.is_torchcodec_available
+        with patch.dict(sys.modules, {"torchcodec": None}):
+            loaded()
+        assert asr_module.is_torchcodec_available is check
+
+    def test_a_transformers_without_the_check(self, modules):
+        with patch.dict(sys.modules, {self.ASR_MODULE: SimpleNamespace(), "torchcodec": None}):
+            skip_broken_torchcodec()  # nothing to change, and no error
+
+    def test_a_transformers_without_the_module(self, modules):
+        with patch.dict(sys.modules, {self.ASR_MODULE: None}):
+            skip_broken_torchcodec()
 
 
 ###############################################################################
