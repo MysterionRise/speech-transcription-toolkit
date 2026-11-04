@@ -6,6 +6,11 @@
   doesn't install with faster-whisper. See [GPU](install.md#gpu). `--device cpu` runs on the CPU without the check.
 - **Parakeet/Canary "requires extra packages":** `pip install "speech-transcription-toolkit[nvidia]"` (needs
   transformers 5.18+).
+- **"Could not load this library: …torchcodec…", or a warning that torchcodec isn't installed correctly:**
+  torchcodec, which the `diarize` extra installs, loads only next to the torch it was built for. On Linux its PyPI
+  wheel needs PyPI's torch, a CUDA build. With torch from PyTorch's own index (CPU-only, or another CUDA version),
+  install torchcodec from the same index, e.g. `pip install torchcodec --index-url https://download.pytorch.org/whl/cpu`.
+  The toolkit decodes audio with ffmpeg and doesn't need torchcodec: the transformers backend works without it.
 - **Diarization "could not download":**
   - Accept the terms of
     [pyannote/speaker-diarization-community-1](https://hf.co/pyannote/speaker-diarization-community-1).
