@@ -14,7 +14,7 @@ mkdocs-material==9.8.0
 mkdocstrings[python]==1.0.8
 mkdocstrings-python==2.0.10
 griffelib==2.4.1
-black==26.5.1  # wraps long signatures, one parameter per line; the same version as requirements-dev.txt
+black==26.10.1  # wraps long signatures, one parameter per line; the same version as requirements-dev.txt
 
 # Lists nested with 2 spaces, as on GitHub (see mkdocs.yml)
 mdx-truly-sane-lists==1.3
