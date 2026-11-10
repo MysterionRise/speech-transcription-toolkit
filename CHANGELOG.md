@@ -9,11 +9,22 @@ collected with towncrier when a release is made.
 
 <!-- towncrier release notes start -->
 
-## [0.6.0](https://github.com/MysterionRise/speech-transcription-toolkit/releases/tag/v0.6.0) - 2026-11-03
+## [0.6.1](https://github.com/MysterionRise/speech-transcription-toolkit/releases/tag/v0.6.1) - 2026-11-10
+
+The first release on PyPI. It also contains everything listed under [0.6.0](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CHANGELOG.md#060---2026-11-03), [0.5.0](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CHANGELOG.md#050---2026-10-29) and [0.4.0](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CHANGELOG.md#040---2026-10-22), which weren't published on their own.
+
+### Fixed
+
+- The transformers backend no longer fails with "Could not load this library: …torchcodec…" when torchcodec is installed but can't load. The `diarize` extra installs torchcodec, and on Linux its PyPI build needs PyPI's CUDA build of torch, so this happened with a CPU-only torch or one from another CUDA index. transformers' pipeline imported torchcodec on every call, though the backend passes it audio that ffmpeg has already decoded; the backend now tells the pipeline torchcodec isn't there. ([#90](https://github.com/MysterionRise/speech-transcription-toolkit/issues/90))
+
+
+## 0.6.0 - 2026-11-03
+
+Not published on its own: these changes were first released in 0.6.1.
 
 ### Removed
 
-- **Breaking:** Python 3.10, which reached its end of life in October 2026, is no longer supported: speech-transcription-toolkit now needs Python 3.11 or newer. On Python 3.10, pip keeps installing 0.5.0. ([#75](https://github.com/MysterionRise/speech-transcription-toolkit/issues/75))
+- **Breaking:** Python 3.10, which reached its end of life in October 2026, is no longer supported: speech-transcription-toolkit now needs Python 3.11 or newer. ([#75](https://github.com/MysterionRise/speech-transcription-toolkit/issues/75))
 
 ### Added
 
@@ -38,9 +49,9 @@ collected with towncrier when a release is made.
 - With ffmpeg 9, `load_audio(strict=True)` no longer calls a refused format `in#0` in its error: ffmpeg 9 doesn't say which format it refused, so the message now leaves the name out. ([#84](https://github.com/MysterionRise/speech-transcription-toolkit/issues/84))
 
 
-## [0.5.0](https://github.com/MysterionRise/speech-transcription-toolkit/releases/tag/v0.5.0) - 2026-10-29
+## 0.5.0 - 2026-10-29
 
-The first release on PyPI. It also contains everything listed under [0.4.0](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/CHANGELOG.md#040---2026-10-22), which wasn't published on its own.
+Not published on its own: these changes were first released in 0.6.1.
 
 ### Added
 
@@ -67,7 +78,7 @@ The first release on PyPI. It also contains everything listed under [0.4.0](http
 
 ## 0.4.0 - 2026-10-22
 
-Not published on its own: these changes were first released in 0.5.0.
+Not published on its own: these changes were first released in 0.6.1.
 
 ### Security
 

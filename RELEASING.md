@@ -38,9 +38,10 @@ The maintainer does this once; it is part of the checklist in
   - repository `speech-transcription-toolkit`
   - workflow `release.yml`
   - environment `pypi`
-- **TestPyPI:** the same on [test.pypi.org](https://test.pypi.org/), with environment `testpypi`.
+- **TestPyPI**, only for the dry run and pre-releases: the same on [test.pypi.org](https://test.pypi.org/), which
+  has its own account, with environment `testpypi`. A final release doesn't use it.
 - **GitHub, Settings → Environments:**
-  - Create `pypi`, with yourself as a required reviewer, and `testpypi`.
+  - Create `pypi`, with yourself as a required reviewer, and `testpypi` if you set up TestPyPI.
   - Optionally, under "Deployment branches and tags", limit `pypi` to tags matching `v*`.
 
 ## Making a release
@@ -60,7 +61,8 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
    - This writes the `## [0.4.0](...) - <date>` section into `CHANGELOG.md` and deletes the fragments in `changelog.d/`.
    - Read the section over: it becomes the release notes.
    - The Changelog check passes on its own because the pull request changes `CHANGELOG.md`.
-3. **Dry run on TestPyPI**, after the merge.
+3. **Optionally, a dry run on TestPyPI**, after the merge. It rehearses the upload, and needs the TestPyPI publisher:
+   without it the run fails at the upload, after CI and the build have passed.
    - Start it with **Actions → Release → Run workflow** on `main`, or with `gh workflow run release.yml --ref main`.
      It runs CI, builds, and uploads to TestPyPI.
    - Check that the run's summary shows the release notes you expect.
@@ -75,12 +77,15 @@ Steps 1 and 2 are an ordinary pull request (the release issue, such as
    - TestPyPI, like PyPI, takes each version only once, so a second dry run of the same version fails at the upload.
      To rehearse again after a fix, release a candidate: set `__version__ = "0.4.0rc1"`, merge, and push the tag
      `v0.4.0rc1`. It goes to TestPyPI and becomes a GitHub pre-release.
-4. **Run the QA pass** on the TestPyPI build, following [docs/manual-testing.md](docs/manual-testing.md): the
-   integration suite's full tier on Windows with an NVIDIA GPU, the CPU run on an Apple Silicon Mac, and the checklist.
+4. **Run the QA pass** on a wheel built from the merged commit (or the dry run's), following
+   [docs/manual-testing.md](docs/manual-testing.md): the integration suite's full tier on Windows with an NVIDIA GPU,
+   the CPU run on an Apple Silicon Mac, and the checklist.
+   - When there's no time for the full pass, run at least its
+     [quick smoke test](docs/manual-testing.md#quick-smoke-test), and say so in the QA issue.
    - Record it in a
      [Release QA issue](https://github.com/MysterionRise/speech-transcription-toolkit/issues/new?template=release-qa.yml),
      with each machine's `integration-report.md`.
-   - Tag only once it passes. A fix goes to `main` and through a release candidate, as in step 3.
+   - Tag only once it passes. A fix goes to `main` first; to rehearse it, release a candidate as in step 3.
 5. **Tag the release** on the merged commit, and push the tag:
    ```bash
    git switch main && git pull
