@@ -6,13 +6,46 @@ release, the maintainer runs a QA pass on real hardware:
 - **Windows with an NVIDIA GPU:** the integration suite's full tier on the GPU, plus the checklist below.
 - **An Apple Silicon Mac:** the integration suite on the CPU, plus the install checks.
 
-The QA pass comes between the TestPyPI dry run and pushing the release tag (see
+The QA pass comes after the release pull request is merged and before pushing the release tag (see
 [Releasing](https://github.com/MysterionRise/speech-transcription-toolkit/blob/main/RELEASING.md)). Record it in a
 [Release QA issue](https://github.com/MysterionRise/speech-transcription-toolkit/issues/new?template=release-qa.yml).
 Fix anything it finds before tagging.
 
 Plan for about two hours on Windows, most of it model downloads (about 20 GB the first time), and half an hour on the
-Mac.
+Mac. When there's no time for that, run at least the quick smoke test.
+
+## Quick smoke test
+
+About 15 minutes on the Windows machine: it shows that the release installs and that both kinds of backend run on
+the GPU. `RELEASE_COMMIT` is the merged release commit on `main`, and `talk.mp3` any recording of speech.
+
+```powershell
+py -3.12 -m venv smoke
+smoke\Scripts\Activate.ps1
+python -m pip install -U pip
+$repo = "git+https://github.com/MysterionRise/speech-transcription-toolkit@RELEASE_COMMIT"
+
+# 1. The core install: no torch, and the default backend transcribes on the CPU.
+pip install $repo
+transcribe --version                      # the version being released
+pip show torch                            # not found
+transcribe talk.mp3 -m tiny --device cpu
+
+# 2. faster-whisper on the GPU, with NVIDIA's cuBLAS from pip.
+pip install nvidia-cublas-cu12
+$sp = python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+$env:PATH = "$sp\nvidia\cublas\bin;$env:PATH"
+transcribe talk.mp3 -m small --device cuda -o talk.srt
+
+# 3. A torch backend on the GPU: torch from PyTorch's CUDA index first, then the extra.
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+pip install "speech-transcription-toolkit[whisper] @ $repo"
+transcribe talk.mp3 -b whisper -m tiny --device cuda
+```
+
+Each `transcribe` command ends without an error: the first and third print the recording's text, and the second
+writes `talk.srt`. With `--device cuda`, a backend that can't use the GPU stops with an error; it doesn't quietly run
+on the CPU.
 
 ## The integration suite
 
@@ -81,17 +114,17 @@ you are releasing. The installed wheel itself is checked by the clean installs a
    winget install --id Gyan.FFmpeg
    ffmpeg -version
    ```
-3. Get the checkout at the release commit, a new virtual environment, and the release's wheel from TestPyPI (the dry
-   run uploaded it; its dependencies come from PyPI when you install it):
+3. Get the checkout at the release commit and a new virtual environment, and build the release's wheel (the release
+   workflow builds the same one from this commit):
    ```powershell
    git clone https://github.com/MysterionRise/speech-transcription-toolkit.git
    cd speech-transcription-toolkit
-   git switch --detach RELEASE_COMMIT   # the commit the dry run built: its SHA is on the run's page
+   git switch --detach RELEASE_COMMIT   # the merged release commit on main
    py -3.12 -m venv .venv
    .venv\Scripts\Activate.ps1
    python -m pip install -U pip
-   pip download --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ --dest dist `
-       speech-transcription-toolkit==0.5.0
+   pip install build
+   python -m build --wheel
    $wheel = (Get-ChildItem dist\*.whl).FullName
    ```
    If PowerShell refuses to run `Activate.ps1`, allow local scripts once with
@@ -105,16 +138,15 @@ you are releasing. The installed wheel itself is checked by the clean installs a
 brew install ffmpeg python@3.12
 git clone https://github.com/MysterionRise/speech-transcription-toolkit.git
 cd speech-transcription-toolkit
-git switch --detach RELEASE_COMMIT   # the commit the dry run built: its SHA is on the run's page
+git switch --detach RELEASE_COMMIT   # the merged release commit on main
 python3.12 -m venv .venv && . .venv/bin/activate
-pip download --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ --dest dist \
-    speech-transcription-toolkit==0.5.0
+pip install build && python -m build --wheel
 wheel=$(ls dist/*.whl)
 ```
 
-## 2. Clean installs from the TestPyPI build
+## 2. Clean installs from the release wheel
 
-On both machines, in the new virtual environment (`$wheel` is the downloaded wheel):
+On both machines, in the new virtual environment (`$wheel` is the wheel you built):
 
 1. **The core install imports no torch:**
    ```bash

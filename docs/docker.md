@@ -8,7 +8,7 @@ server and ffmpeg, but no PyTorch:
 | `ghcr.io/mysterionrise/speech-transcription-toolkit:latest` | The CPU | about 1 GB |
 | `ghcr.io/mysterionrise/speech-transcription-toolkit:cuda` | NVIDIA GPUs, or the CPU: the CPU image plus cuBLAS (see [GPU](#gpu)) | about 2 GB |
 
-[Image tags](#image-tags) lists every tag. The images are published from v0.5.0.
+[Image tags](#image-tags) lists every tag. The images are published from v0.6.1.
 
 ## Run the server
 
@@ -148,10 +148,10 @@ reserves the GPU.
 
 | Tag | Image |
 |---|---|
-| `latest`, `<version>` (such as `0.5.0`) | CPU |
-| `cuda`, `<version>-cuda` (such as `0.5.0-cuda`) | CUDA 12 |
+| `latest`, `<version>` (such as `0.6.1`) | CPU |
+| `cuda`, `<version>-cuda` (such as `0.6.1-cuda`) | CUDA 12 |
 
-- Each release tag publishes them, from `.github/workflows/docker.yml`. A pre-release, such as `0.5.0rc1`, gets only
+- Each release tag publishes them, from `.github/workflows/docker.yml`. A pre-release, such as `0.7.0rc1`, gets only
   the version tags.
 - Pin a version in production: `latest` and `cuda` move with each release.
 - The images are for `linux/amd64`.
